@@ -3,7 +3,20 @@
 import React, { useState } from 'react';
 import { Upload, CheckCircle, Clock, MapPin, Package, FileText, DollarSign, Zap } from 'lucide-react';
 
-export default function Home() {
+import RequireAuth from '../components/RequireAuth';
+
+export default function HomePage() {
+  return (
+    <RequireAuth>
+      {/* your existing upload UI goes here */}
+    </RequireAuth>
+  );
+}
+
+
+
+
+
   const [step, setStep] = useState('upload');
   const [file, setFile] = useState(null);
   const [config, setConfig] = useState({
