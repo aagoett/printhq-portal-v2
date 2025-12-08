@@ -25,41 +25,41 @@ export default function AuthPage() {
     setSuccess('');
     setLoading(true);
 
-    try {
-      if (mode === 'signup') {
-        const result = await createCustomer(
-          formData.email,
-          formData.password,
-          formData.companyName,
-          formData.contactName
-        );
 
-        if (result.success) {
-          setSuccess('Account created! Please check your email to verify.');
-          setTimeout(() => {
-            setMode('login');
-            setSuccess('');
-          }, 3000);
-        } else {
-          setError(result.error || 'Failed to create account');
-        }
+  try {
+    if (mode === 'signup') {
+      const result = await createCustomer(
+        formData.email,
+        formData.password,
+        formData.companyName,
+        formData.contactName
+      );
+
+      if (result.success) {
+        setSuccess('Account created! You can now sign in.');
+        setMode('login');
       } else {
-        const result = await signInCustomer(formData.email, formData.password);
-
-        if (result.success) {
-          setSuccess('Logged in successfully!');
-          setTimeout(() => {
-            router.push('/dashboard');
-          }, 1000);
-        } else {
-          setError(result.error || 'Failed to log in');
-        }
+        setError(result.error || 'Failed to create account');
       }
-    } catch (err) {
-      setError(err.message || 'An error occurred');
-    } finally {
-      setLoading(false);
+    } else {
+      const result = await signInCustomer(
+        formData.email,
+        formData.password
+      );
+
+      if (result.success) {
+        // TODO: update to whatever route you want after login
+        router.push('/');
+      } else {
+        setError(result.error || 'Failed to sign in');
+      }
     }
+  } catch (err) {
+    console.error(err);
+    setError('Something went wrong. Please try again.');
+  } finally {
+    setLoading(false);
+  }
   };
 
   return (
