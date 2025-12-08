@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createCustomer, signInCustomer } from '../../lib/supabase';
+import { createCustomer, signInCustomer } from '@/lib/supabase';
 import { Lock, Mail, Building, User, Zap } from 'lucide-react';
 
 export default function AuthPage() {
