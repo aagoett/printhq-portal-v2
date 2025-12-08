@@ -47,7 +47,9 @@ export default function AuthPage() {
         const result = await signInCustomer(formData.email, formData.password);
 
         if (result.success) {
-          setSuccess('Logged in successfully!');
+  router.push('/');            // send them to the main PrintHQ screen
+}
+
           setTimeout(() => {
             router.push('/dashboard');
           }, 1000);
