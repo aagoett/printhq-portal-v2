@@ -37,7 +37,7 @@ const handleSubmit = async (e) => {
       if (result.success) {
         setSuccess('Account created! You can now sign in.');
 
-        // optional: auto-switch to login after a short delay
+        // Optional: auto switch to login after 3 seconds
         setTimeout(() => {
           setMode('login');
           setSuccess('');
@@ -52,7 +52,7 @@ const handleSubmit = async (e) => {
       );
 
       if (result.success) {
-        // TODO: change this route to whatever you want after login
+        // TODO: change this route to wherever you want after login
         router.push('/');
       } else {
         setError(result.error || 'Failed to sign in');
@@ -65,6 +65,7 @@ const handleSubmit = async (e) => {
     setLoading(false);
   }
 };
+
 
   return (
     <div style={{
