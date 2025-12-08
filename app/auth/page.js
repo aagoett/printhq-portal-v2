@@ -59,7 +59,6 @@ export default function AuthPage() {
     setError('Something went wrong. Please try again.');
   } finally {
     setLoading(false);
-  }
   };
 
   return (
