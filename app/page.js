@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import RequireAuth from './components/RequireAuth';
 import {
   Upload,
   CheckCircle,
@@ -12,9 +13,17 @@ import {
   Zap,
 } from 'lucide-react';
 
-import RequireAuth from '../components/RequireAuth';
-
+// 1) Default export: wraps everything in RequireAuth
 export default function HomePage() {
+  return (
+    <RequireAuth>
+      <MainHomePage />
+    </RequireAuth>
+  );
+}
+
+// 2) Main UI component: NO export default here
+function MainHomePage() {
   const [step, setStep] = useState('upload');
   const [file, setFile] = useState(null);
   const [config, setConfig] = useState({
@@ -27,6 +36,9 @@ export default function HomePage() {
   });
   const [quote, setQuote] = useState(null);
   const [proofApproved, setProofApproved] = useState(false);
+
+  // 👉 leave all your existing JSX and logic below this line as-is
+
 
   const products = [
     { id: 'business-cards', name: 'Business Cards', icon: '💳' },
