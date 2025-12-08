@@ -13,7 +13,7 @@ import {
   Zap,
 } from 'lucide-react';
 
-// Outer page – just wraps the real UI in RequireAuth
+// Default export: requires auth, then shows the main UI
 export default function HomePage() {
   return (
     <RequireAuth>
@@ -22,7 +22,7 @@ export default function HomePage() {
   );
 }
 
-// All your PrintHQ UI + logic lives here
+// All PrintHQ UI & logic lives here
 function MainHomePage() {
   const [step, setStep] = useState('upload');
   const [file, setFile] = useState(null);
@@ -83,7 +83,7 @@ function MainHomePage() {
           ? 'San Jose'
           : locations.find((l) => l.id === config.location)?.name,
       details: {
-        sheets: Math.ceil(parseInt(config.quantity, 10) / 8),
+        sheets: Math.ceil(parseInt(config.quantity || '0', 10) / 8) || 0,
         pressTime: '2.5 hours',
         finishingTime: '1 hour',
       },
@@ -176,8 +176,8 @@ function MainHomePage() {
         }
       `}</style>
 
-      {/* HEADER */}
       <div style={{ position: 'relative', zIndex: 1 }}>
+        {/* HEADER */}
         <header
           style={{
             padding: '2rem 3rem',
@@ -340,7 +340,7 @@ function MainHomePage() {
           </div>
         </div>
 
-        {/* MAIN AREA (UPLOAD / CONFIG / QUOTE / PROOF) */}
+        {/* MAIN CONTENT */}
         <div
           style={{
             maxWidth: '1200px',
@@ -428,9 +428,658 @@ function MainHomePage() {
             </div>
           )}
 
-          {/* (CONFIG, QUOTE, PROOF SECTIONS ARE THE SAME AS YOU ALREADY HAVE) */}
-          {/* I’m leaving your existing CONFIG / QUOTE / PROOF JSX here unchanged */}
-          {/* Just keep them exactly as in your current file, inside MainHomePage */}
+          {/* CONFIGURE */}
+          {step === 'configure' && (
+            <div
+              className="fade-in-up"
+              style={{
+                background: 'rgba(30, 41, 59, 0.6)',
+                backdropFilter: 'blur(10px)',
+                borderRadius: '12px',
+                border: '1px solid rgba(59, 130, 246, 0.3)',
+                padding: '2rem',
+              }}
+            >
+              <h2 style={{ fontSize: '2rem', marginBottom: '2rem' }}>Configure Your Job</h2>
+
+              <div style={{ marginBottom: '2rem' }}>
+                <label
+                  style={{
+                    display: 'block',
+                    marginBottom: '1rem',
+                    fontSize: '1.1rem',
+                    color: '#3b82f6',
+                  }}
+                >
+                  Product Type
+                </label>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                    gap: '1rem',
+                  }}
+                >
+                  {products.map((product) => (
+                    <div
+                      key={product.id}
+                      onClick={() => setConfig({ ...config, product: product.id })}
+                      className="hover-lift"
+                      style={{
+                        padding: '1.5rem 1rem',
+                        background:
+                          config.product === product.id
+                            ? 'linear-gradient(135deg, #3b82f6, #8b5cf6)'
+                            : 'rgba(51, 65, 85, 0.5)',
+                        border:
+                          config.product === product.id
+                            ? '2px solid #3b82f6'
+                            : '1px solid #334155',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        textAlign: 'center',
+                        transition: 'all 0.3s',
+                      }}
+                    >
+                      <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>
+                        {product.icon}
+                      </div>
+                      <div style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
+                        {product.name}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '2rem',
+                  marginBottom: '2rem',
+                }}
+              >
+                <div>
+                  <label
+                    style={{
+                      display: 'block',
+                      marginBottom: '0.5rem',
+                      fontSize: '1.1rem',
+                      color: '#3b82f6',
+                    }}
+                  >
+                    Quantity
+                  </label>
+                  <input
+                    type="number"
+                    value={config.quantity}
+                    onChange={(e) => setConfig({ ...config, quantity: e.target.value })}
+                    placeholder="e.g., 1000"
+                    style={{
+                      width: '100%',
+                      padding: '1rem',
+                      background: 'rgba(51, 65, 85, 0.5)',
+                      border: '1px solid #334155',
+                      borderRadius: '8px',
+                      color: '#f1f5f9',
+                      fontSize: '1rem',
+                    }}
+                  />
+                </div>
+                <div>
+                  <label
+                    style={{
+                      display: 'block',
+                      marginBottom: '0.5rem',
+                      fontSize: '1.1rem',
+                      color: '#3b82f6',
+                    }}
+                  >
+                    Paper Stock
+                  </label>
+                  <select
+                    value={config.paper}
+                    onChange={(e) => setConfig({ ...config, paper: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '1rem',
+                      background: 'rgba(51, 65, 85, 0.5)',
+                      border: '1px solid #334155',
+                      borderRadius: '8px',
+                      color: '#f1f5f9',
+                      fontSize: '1rem',
+                    }}
+                  >
+                    <option value="">Select paper...</option>
+                    {paperTypes.map((paper) => (
+                      <option key={paper} value={paper}>
+                        {paper}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '2rem' }}>
+                <label
+                  style={{
+                    display: 'block',
+                    marginBottom: '1rem',
+                    fontSize: '1.1rem',
+                    color: '#3b82f6',
+                  }}
+                >
+                  Finishing Options
+                </label>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+                    gap: '1rem',
+                  }}
+                >
+                  {finishingOptions.map((option) => (
+                    <div
+                      key={option}
+                      onClick={() => {
+                        const newFinishing = config.finishing.includes(option)
+                          ? config.finishing.filter((f) => f !== option)
+                          : [...config.finishing, option];
+                        setConfig({ ...config, finishing: newFinishing });
+                      }}
+                      style={{
+                        padding: '0.75rem',
+                        background: config.finishing.includes(option)
+                          ? 'rgba(59, 130, 246, 0.3)'
+                          : 'rgba(51, 65, 85, 0.5)',
+                        border: config.finishing.includes(option)
+                          ? '2px solid #3b82f6'
+                          : '1px solid #334155',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        textAlign: 'center',
+                        transition: 'all 0.3s',
+                        fontSize: '0.85rem',
+                      }}
+                    >
+                      {option}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '2rem',
+                  marginBottom: '2rem',
+                }}
+              >
+                <div>
+                  <label
+                    style={{
+                      display: 'block',
+                      marginBottom: '1rem',
+                      fontSize: '1.1rem',
+                      color: '#3b82f6',
+                    }}
+                  >
+                    Turnaround Time
+                  </label>
+                  <div style={{ display: 'flex', gap: '1rem' }}>
+                    {[
+                      { id: 'standard', label: 'Standard', icon: Clock },
+                      { id: 'rush', label: 'Rush', icon: Zap },
+                    ].map((option) => (
+                      <div
+                        key={option.id}
+                        onClick={() => setConfig({ ...config, turnaround: option.id })}
+                        className="hover-lift"
+                        style={{
+                          flex: 1,
+                          padding: '1.5rem',
+                          background:
+                            config.turnaround === option.id
+                              ? 'linear-gradient(135deg, #3b82f6, #8b5cf6)'
+                              : 'rgba(51, 65, 85, 0.5)',
+                          border:
+                            config.turnaround === option.id
+                              ? '2px solid #3b82f6'
+                              : '1px solid #334155',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          textAlign: 'center',
+                          transition: 'all 0.3s',
+                        }}
+                      >
+                        <option.icon
+                          size={24}
+                          style={{ marginBottom: '0.5rem', display: 'inline-block' }}
+                        />
+                        <div style={{ fontWeight: 'bold' }}>{option.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label
+                    style={{
+                      display: 'block',
+                      marginBottom: '1rem',
+                      fontSize: '1.1rem',
+                      color: '#3b82f6',
+                    }}
+                  >
+                    Production Location
+                  </label>
+                  <select
+                    value={config.location}
+                    onChange={(e) => setConfig({ ...config, location: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '1rem',
+                      background: 'rgba(51, 65, 85, 0.5)',
+                      border: '1px solid #334155',
+                      borderRadius: '8px',
+                      color: '#f1f5f9',
+                      fontSize: '1rem',
+                    }}
+                  >
+                    {locations.map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.name} - {loc.desc}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <button
+                onClick={calculateQuote}
+                disabled={!config.product || !config.quantity || !config.paper}
+                className="hover-lift"
+                style={{
+                  width: '100%',
+                  padding: '1.5rem',
+                  background:
+                    !config.product || !config.quantity || !config.paper
+                      ? '#334155'
+                      : 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '1.2rem',
+                  fontWeight: 'bold',
+                  cursor:
+                    !config.product || !config.quantity || !config.paper
+                      ? 'not-allowed'
+                      : 'pointer',
+                  opacity: !config.product || !config.quantity || !config.paper ? 0.5 : 1,
+                  boxShadow: '0 10px 30px rgba(59, 130, 246, 0.4)',
+                }}
+              >
+                Generate Quote →
+              </button>
+            </div>
+          )}
+
+          {/* QUOTE */}
+          {step === 'quote' && quote && (
+            <div
+              className="fade-in-up"
+              style={{
+                background: 'rgba(30, 41, 59, 0.6)',
+                backdropFilter: 'blur(10px)',
+                borderRadius: '12px',
+                border: '1px solid rgba(59, 130, 246, 0.3)',
+                padding: '3rem',
+              }}
+            >
+              <h2 style={{ fontSize: '2rem', marginBottom: '2rem', textAlign: 'center' }}>
+                Your Instant Quote
+              </h2>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '2rem',
+                  marginBottom: '3rem',
+                }}
+              >
+                <div
+                  style={{
+                    padding: '2rem',
+                    background:
+                      'linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(139, 92, 246, 0.2))',
+                    borderRadius: '12px',
+                    border:
+                      config.turnaround === 'standard'
+                        ? '3px solid #3b82f6'
+                        : '1px solid rgba(59, 130, 246, 0.3)',
+                    textAlign: 'center',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: '0.875rem',
+                      color: '#94a3b8',
+                      marginBottom: '0.5rem',
+                    }}
+                  >
+                    STANDARD
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '3rem',
+                      fontWeight: 'bold',
+                      color: '#3b82f6',
+                      marginBottom: '0.5rem',
+                    }}
+                  >
+                    ${quote.standard}
+                  </div>
+                  <div style={{ color: '#94a3b8' }}>3-5 business days</div>
+                </div>
+
+                <div
+                  style={{
+                    padding: '2rem',
+                    background:
+                      'linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(236, 72, 153, 0.2))',
+                    borderRadius: '12px',
+                    border:
+                      config.turnaround === 'rush'
+                        ? '3px solid #8b5cf6'
+                        : '1px solid rgba(139, 92, 246, 0.3)',
+                    textAlign: 'center',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: '0.875rem',
+                      color: '#94a3b8',
+                      marginBottom: '0.5rem',
+                    }}
+                  >
+                    RUSH
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '3rem',
+                      fontWeight: 'bold',
+                      color: '#8b5cf6',
+                      marginBottom: '0.5rem',
+                    }}
+                  >
+                    ${quote.rush}
+                  </div>
+                  <div style={{ color: '#94a3b8' }}>24 hours</div>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  background: 'rgba(51, 65, 85, 0.5)',
+                  borderRadius: '8px',
+                  padding: '2rem',
+                  marginBottom: '2rem',
+                }}
+              >
+                <h3 style={{ marginBottom: '1.5rem', color: '#3b82f6' }}>Job Details</h3>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '1rem',
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{ color: '#64748b', fontSize: '0.875rem' }}
+                    >
+                      Production Location
+                    </div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                      <MapPin
+                        size={16}
+                        style={{ display: 'inline', marginRight: '0.5rem' }}
+                      />
+                      {quote.location}
+                    </div>
+                  </div>
+                  <div>
+                    <div
+                      style={{ color: '#64748b', fontSize: '0.875rem' }}
+                    >
+                      Turnaround
+                    </div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                      <Clock
+                        size={16}
+                        style={{ display: 'inline', marginRight: '0.5rem' }}
+                      />
+                      {quote.turnaround}
+                    </div>
+                  </div>
+                  <div>
+                    <div
+                      style={{ color: '#64748b', fontSize: '0.875rem' }}
+                    >
+                      Sheets Required
+                    </div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                      {quote.details.sheets} sheets
+                    </div>
+                  </div>
+                  <div>
+                    <div
+                      style={{ color: '#64748b', fontSize: '0.875rem' }}
+                    >
+                      Press Time
+                    </div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                      {quote.details.pressTime}
+                    </div>
+                  </div>
+                  <div>
+                    <div
+                      style={{ color: '#64748b', fontSize: '0.875rem' }}
+                    >
+                      Finishing Time
+                    </div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                      {quote.details.finishingTime}
+                    </div>
+                  </div>
+                  <div>
+                    <div
+                      style={{ color: '#64748b', fontSize: '0.875rem' }}
+                    >
+                      Product
+                    </div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                      {products.find((p) => p.id === config.product)?.name}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setStep('proof')}
+                className="hover-lift"
+                style={{
+                  width: '100%',
+                  padding: '1.5rem',
+                  background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '1.2rem',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  boxShadow: '0 10px 30px rgba(59, 130, 246, 0.4)',
+                }}
+              >
+                Continue to Proof Review →
+              </button>
+            </div>
+          )}
+
+          {/* PROOF */}
+          {step === 'proof' && (
+            <div
+              className="fade-in-up"
+              style={{
+                background: 'rgba(30, 41, 59, 0.6)',
+                backdropFilter: 'blur(10px)',
+                borderRadius: '12px',
+                border: '1px solid rgba(59, 130, 246, 0.3)',
+                padding: '3rem',
+              }}
+            >
+              <h2 style={{ fontSize: '2rem', marginBottom: '2rem', textAlign: 'center' }}>
+                Review Your Proof
+              </h2>
+
+              <div
+                style={{
+                  background: '#fff',
+                  borderRadius: '8px',
+                  padding: '3rem',
+                  marginBottom: '2rem',
+                  textAlign: 'center',
+                  minHeight: '400px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: '2px dashed #3b82f6',
+                }}
+              >
+                <div style={{ color: '#334155' }}>
+                  <FileText
+                    size={64}
+                    color="#3b82f6"
+                    style={{
+                      marginBottom: '1rem',
+                      display: 'block',
+                      margin: '0 auto 1rem',
+                    }}
+                  />
+                  <div
+                    style={{
+                      fontSize: '1.5rem',
+                      fontWeight: 'bold',
+                      marginBottom: '0.5rem',
+                    }}
+                  >
+                    {file?.name}
+                  </div>
+                  <div style={{ color: '#64748b' }}>
+                    Your print-ready proof would appear here
+                  </div>
+                  <div
+                    style={{
+                      marginTop: '1rem',
+                      fontSize: '0.875rem',
+                      color: '#64748b',
+                    }}
+                  >
+                    ✓ Bleed verified
+                    <br />
+                    ✓ Color space: GRACoL
+                    <br />
+                    ✓ Resolution: 300 DPI
+                  </div>
+                </div>
+              </div>
+
+              {!proofApproved ? (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '1rem',
+                  }}
+                >
+                  <button
+                    onClick={() => setStep('configure')}
+                    style={{
+                      padding: '1.5rem',
+                      background: 'rgba(51, 65, 85, 0.5)',
+                      color: '#f1f5f9',
+                      border: '1px solid #334155',
+                      borderRadius: '8px',
+                      fontSize: '1.1rem',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ← Request Changes
+                  </button>
+                  <button
+                    onClick={approveProof}
+                    className="hover-lift"
+                    style={{
+                      padding: '1.5rem',
+                      background: 'linear-gradient(135deg, #10b981, #059669)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontSize: '1.1rem',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      boxShadow: '0 10px 30px rgba(16, 185, 129, 0.4)',
+                    }}
+                  >
+                    <CheckCircle
+                      size={20}
+                      style={{
+                        display: 'inline',
+                        marginRight: '0.5rem',
+                        verticalAlign: 'middle',
+                      }}
+                    />
+                    Approve &amp; Send to Production
+                  </button>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    padding: '2rem',
+                    background:
+                      'linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(5, 150, 105, 0.2))',
+                    borderRadius: '8px',
+                    border: '2px solid #10b981',
+                    textAlign: 'center',
+                  }}
+                >
+                  <CheckCircle
+                    size={48}
+                    color="#10b981"
+                    style={{
+                      marginBottom: '1rem',
+                      display: 'block',
+                      margin: '0 auto 1rem',
+                    }}
+                  />
+                  <h3
+                    style={{
+                      color: '#10b981',
+                      marginBottom: '0.5rem',
+                    }}
+                  >
+                    Proof Approved!
+                  </h3>
+                  <p style={{ color: '#94a3b8' }}>
+                    Your job has been sent to production. You'll receive email updates.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <footer
