@@ -19,50 +19,47 @@ export default function AuthPage() {
     contactName: '',
   });
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setSuccess('');
-    setLoading(true);
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  setError('');
+  setSuccess('');
+  setLoading(true);
 
-    try {
-      if (mode === 'signup') {
-        const result = await createCustomer(
-          formData.email,
-          formData.password,
-          formData.companyName,
-          formData.contactName
-        );
+  try {
+    if (mode === 'signup') {
+      const result = await createCustomer(
+        formData.email,
+        formData.password,
+        formData.companyName,
+        formData.contactName
+      );
 
-        if (result.success) {
-          setSuccess('Account created! Please check your email to verify.');
-          setTimeout(() => {
-            setMode('login');
-            setSuccess('');
-          }, 3000);
-        } else {
-          setError(result.error || 'Failed to create account');
-        }
+      if (result.success) {
+        setSuccess('Account created! Please check your email to verify.');
+        setTimeout(() => {
+          setMode('login');
+          setSuccess('');
+        }, 3000);
       } else {
-        const result = await signInCustomer(formData.email, formData.password);
-
-        if (result.success) {
-  router.push('/');            // send them to the main PrintHQ screen
-}
-
-          setTimeout(() => {
-            router.push('/dashboard');
-          }, 1000);
-        } else {
-          setError(result.error || 'Failed to log in');
-        }
+        setError(result.error || 'Failed to create account');
       }
-    } catch (err) {
-      setError(err.message || 'An error occurred');
-    } finally {
-      setLoading(false);
+    } else {
+      // LOGIN BRANCH
+      const result = await signInCustomer(formData.email, formData.password);
+
+      if (result.success) {
+        // send them to the main PrintHQ screen (home)
+        router.push('/');
+      } else {
+        setError(result.error || 'Failed to log in');
+      }
     }
-  };
+  } catch (err) {
+    setError(err.message || 'An error occurred');
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div style={{
