@@ -19,12 +19,11 @@ export default function AuthPage() {
     contactName: '',
   });
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setSuccess('');
-    setLoading(true);
-
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  setError('');
+  setSuccess('');
+  setLoading(true);
 
   try {
     if (mode === 'signup') {
@@ -37,7 +36,12 @@ export default function AuthPage() {
 
       if (result.success) {
         setSuccess('Account created! You can now sign in.');
-        setMode('login');
+
+        // optional: auto-switch to login after a short delay
+        setTimeout(() => {
+          setMode('login');
+          setSuccess('');
+        }, 3000);
       } else {
         setError(result.error || 'Failed to create account');
       }
@@ -48,7 +52,7 @@ export default function AuthPage() {
       );
 
       if (result.success) {
-        // TODO: update to whatever route you want after login
+        // TODO: change this route to whatever you want after login
         router.push('/');
       } else {
         setError(result.error || 'Failed to sign in');
@@ -59,7 +63,8 @@ export default function AuthPage() {
     setError('Something went wrong. Please try again.');
   } finally {
     setLoading(false);
-  };
+  }
+};
 
   return (
     <div style={{
