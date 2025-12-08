@@ -1,64 +1,38 @@
 'use client';
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { createCustomer, signInCustomer } from '../../lib/supabase'; 
-import { Lock, Mail, Building, User, Zap } from 'lucide-react';
-
 export default function AuthPage() {
-  const router = useRouter();
-  const [mode, setMode] = useState('login'); // 'login' or 'signup'
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-
-  const [formData, setFormData] = useState({
-    email: '',
-    password: '',
-    companyName: '',
-    contactName: '',
-  });
-
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  setError('');
-  setSuccess('');
-  setLoading(true);
-
-  try {
-    if (mode === 'signup') {
-      const result = await createCustomer(
-        formData.email,
-        formData.password,
-        formData.companyName,
-        formData.contactName
-      );
-
-      if (result.success) {
-        setSuccess('Account created! You can now sign in.');
-
-        // Optional: auto switch to login after 3 seconds
-        setTimeout(() => {
-          setMode('login');
-          setSuccess('');
-        }, 3000);
-      } else {
-        setError(result.error || 'Failed to create account');
-      }
-    } else {
-      const result = await signInCustomer(
-        formData.email,
-        formData.password
-      );
-
-      if (result.success) {
-        // TODO: change this route to wherever you want after login
-        router.push('/');
-      } else {
-        setError(result.error || 'Failed to sign in');
-      }
-    }
-  } catch (err) {
+  return (
+    <main
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }}
+    >
+      <div
+        style={{
+          padding: '2rem 2.5rem',
+          borderRadius: '0.75rem',
+          border: '1px solid #e5e7eb',
+          boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+          maxWidth: '420px',
+          width: '100%',
+          textAlign: 'center',
+        }}
+      >
+        <h1 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '0.75rem' }}>
+          Auth Coming Soon
+        </h1>
+        <p style={{ fontSize: '0.95rem', color: '#6b7280' }}>
+          This page is just a temporary placeholder so we can finish wiring up
+          Supabase and the rest of the PrintHQ portal.
+        </p>
+      </div>
+    </main>
+  );
+}
     console.error(err);
     setError('Something went wrong. Please try again.');
   } finally {
