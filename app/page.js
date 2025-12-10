@@ -107,10 +107,11 @@ export default function Home() {
   };
 
   const approveProof = async () => {
-    setProofApproved(true);
+    // FIX APPLIED: We do NOT set proofApproved(true) yet.
     
     const finalPrice = config.turnaround === 'rush' ? parseFloat(quote.rush) : parseFloat(quote.standard);
     
+    // Attempt to save to database first
     const result = await createOrder(user.id, {
       product: config.product,
       quantity: parseInt(config.quantity),
@@ -124,10 +125,15 @@ export default function Home() {
     });
 
     if (result.success) {
+      // FIX APPLIED: Only show success screen if DB write succeeded
+      setProofApproved(true);
+      
       setTimeout(() => {
         alert('✅ Job submitted to production!\nJob ID: ' + result.order.id.substring(0, 8).toUpperCase() + '\n\nYou will receive updates via email.');
       }, 500);
     } else {
+      // If DB write failed, stay on proof screen and show error
+      setProofApproved(false);
       alert('Error submitting order: ' + result.error);
     }
   };
