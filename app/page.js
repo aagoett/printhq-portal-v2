@@ -802,22 +802,52 @@ export default function Home() {
                 }}>
                   <CheckCircle size={48} color="#10b981" style={{ marginBottom: '1rem', display: 'block', margin: '0 auto 1rem' }} />
                   <h3 style={{ color: '#10b981', marginBottom: '0.5rem' }}>Proof Approved!</h3>
-                  <p style={{ color: '#94a3b8', marginBottom: '1rem' }}>Your job has been sent to production. You'll receive email updates.</p>
-                  <button
-                    onClick={() => router.push('/dashboard')}
-                    style={{
-                      padding: '1rem 2rem',
-                      background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '8px',
-                      fontSize: '1rem',
-                      fontWeight: 'bold',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    View Order History →
-                  </button>
+                  <p style={{ color: '#94a3b8', marginBottom: '1.5rem' }}>Your job has been sent to production. You'll receive email updates.</p>
+                  <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => router.push('/dashboard')}
+                      style={{
+                        padding: '1rem 2rem',
+                        background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '1rem',
+                        fontWeight: 'bold',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      View Order History →
+                    </button>
+                    <button
+                      onClick={() => {
+                        setStep('upload');
+                        setFile(null);
+                        setConfig({
+                          product: '',
+                          quantity: '',
+                          paper: '',
+                          finishing: [],
+                          turnaround: 'standard',
+                          location: 'auto'
+                        });
+                        setQuote(null);
+                        setProofApproved(false);
+                      }}
+                      style={{
+                        padding: '1rem 2rem',
+                        background: 'rgba(59, 130, 246, 0.2)',
+                        border: '1px solid #3b82f6',
+                        color: '#3b82f6',
+                        borderRadius: '8px',
+                        fontSize: '1rem',
+                        fontWeight: 'bold',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Create Another Order
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
