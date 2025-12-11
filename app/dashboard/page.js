@@ -1,5 +1,23 @@
 "use client";
 
+import BrandHeader from "@/components/BrandHeader";
+// ...rest of imports / code
+
+export default function DashboardPage() {
+  // current code...
+  return (
+    <main /* your styling here */>
+      <BrandHeader />
+      {/* existing dashboard content below */}
+      {/* ... */}
+    </main>
+  );
+}
+
+
+
+"use client";
+
 const mockJobs = [
   {
     id: "PH-4GBUS1U2",
