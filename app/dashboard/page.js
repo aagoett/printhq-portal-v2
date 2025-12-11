@@ -1,22 +1,6 @@
 "use client";
 
 import BrandHeader from "@/components/BrandHeader";
-// ...rest of imports / code
-
-export default function DashboardPage() {
-  // current code...
-  return (
-    <main /* your styling here */>
-      <BrandHeader />
-      {/* existing dashboard content below */}
-      {/* ... */}
-    </main>
-  );
-}
-
-
-
-"use client";
 
 const mockJobs = [
   {
@@ -62,7 +46,10 @@ export default function DashboardPage() {
         fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
       }}
     >
-      {/* HEADER */}
+      {/* Brand-aware header (customer logo, etc.) */}
+      <BrandHeader />
+
+      {/* DASHBOARD HEADER */}
       <header
         style={{
           display: "flex",
