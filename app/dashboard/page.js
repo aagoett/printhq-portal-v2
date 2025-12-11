@@ -1,6 +1,6 @@
 "use client";
 
-import BrandHeader from "@/components/BrandHeader";
+import BrandHeader from "../components/BrandHeader";
 
 const mockJobs = [
   {
