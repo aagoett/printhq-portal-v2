@@ -172,23 +172,25 @@ export default function DashboardPage() {
           </div>
 
           <div
-            style={{
-              fontSize: "0.85rem",
-              opacity: 0.7,
-              borderBottom: "1px solid rgba(148, 163, 184, 0.25)",
-              paddingBottom: "0.5rem",
-              marginBottom: "0.75rem",
-              display: "grid",
-              gridTemplateColumns: "1.1fr 1.2fr 1.1fr 0.9fr 0.7fr",
-              gap: "0.5rem",
-            }}
-          >
-            <span>Job</span>
-            <span>Project</span>
-            <span>Status</span>
-            <span>Proof</span>
-            <span>Due</span>
-          </div>
+              style={{
+                fontSize: "0.85rem",
+                opacity: 0.7,
+                borderBottom: "1px solid rgba(148, 163, 184, 0.25)",
+                paddingBottom: "0.5rem",
+                marginBottom: "0.75rem",
+                display: "grid",
+                gridTemplateColumns: "1.1fr 1.4fr 1.1fr 0.9fr 0.7fr 0.9fr",
+                gap: "0.5rem",
+  }}
+>
+  <span>Job</span>
+  <span>Project</span>
+  <span>Status</span>
+  <span>Proof</span>
+  <span>Due</span>
+  <span style={{ textAlign: "right" }}>Files</span>
+</div>
+
 
           <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
             {mockJobs.map((job) => (
