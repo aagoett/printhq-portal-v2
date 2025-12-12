@@ -1,6 +1,8 @@
 "use client";
 
 import BrandHeader from "../components/BrandHeader";
+import UploadFilesButton from "@/components/UploadFilesButton";
+
 
 const mockJobs = [
   {
