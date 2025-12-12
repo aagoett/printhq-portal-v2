@@ -194,29 +194,37 @@ export default function DashboardPage() {
 
           <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
             {mockJobs.map((job) => (
-              <div
-                key={job.id}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1.1fr 1.2fr 1.1fr 0.9fr 0.7fr",
-                  gap: "0.5rem",
-                  alignItems: "center",
-                  fontSize: "0.9rem",
-                  padding: "0.45rem 0.35rem",
-                  borderRadius: "0.6rem",
-                  background: "rgba(15, 23, 42, 0.8)",
-                  border: "1px solid rgba(31, 41, 55, 0.8)",
-                }}
-              >
-                <span style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
-                  {job.id}
-                </span>
-                <span>{job.name}</span>
-                <Badge tone={statusTone(job.status)}>{job.status}</Badge>
-                <Badge tone={proofTone(job.proofStatus)}>{job.proofStatus}</Badge>
-                <span style={{ opacity: 0.8 }}>{job.dueDate}</span>
-              </div>
-            ))}
+  <div
+    key={job.id}
+    style={{
+      display: "grid",
+      gridTemplateColumns: "1.1fr 1.4fr 1.1fr 0.9fr 0.7fr 0.9fr",
+      gap: "0.5rem",
+      alignItems: "center",
+      fontSize: "0.9rem",
+      padding: "0.45rem 0.35rem",
+      borderRadius: "0.6rem",
+      background: "rgba(15, 23, 42, 0.8)",
+      border: "1px solid rgba(31, 41, 55, 0.8)",
+    }}
+  >
+    <span style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+      {job.id}
+    </span>
+
+    <span>{job.name}</span>
+
+    <Badge tone={statusTone(job.status)}>{job.status}</Badge>
+
+    <Badge tone={proofTone(job.proofStatus)}>{job.proofStatus}</Badge>
+
+    <span style={{ opacity: 0.8 }}>{job.dueDate}</span>
+
+    {/* New: Upload button for this job */}
+    <UploadFilesButton jobId={job.id} />
+  </div>
+))}
+
           </div>
         </div>
 
