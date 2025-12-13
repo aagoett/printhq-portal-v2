@@ -52,8 +52,9 @@ export default function UploadFilesButton({ jobId }) {
 
       if (uploadsToInsert.length > 0) {
         const { error: insertError } = await supabase
-          .from("files")
-          .insert(uploadsToInsert);
+        .from("job_files")
+        .insert(uploadsToInsert);
+
 
         if (insertError) {
           console.error("DB insert error", insertError);
