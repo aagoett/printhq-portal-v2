@@ -1,8 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error("Missing Supabase env vars (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY)");
+}
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export default function NewJobPage() {
   const router = useRouter();
@@ -14,28 +23,25 @@ export default function NewJobPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function handleSubmit(e) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      const { error: insertError } = await supabase
-        .from("jobs")
-        .insert([
-          {
-            project_name: projectName,
-            status,
-            proof_status: proofStatus,
-            due_date: dueDate || null,
-          },
-        ]);
+      const { error: insertError } = await supabase.from("jobs").insert([
+        {
+          project_name: projectName,
+          status,
+          proof_status: proofStatus,
+          due_date: dueDate || null,
+        },
+      ]);
 
       if (insertError) throw insertError;
 
-      // back to dashboard to see the job
       router.push("/dashboard");
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
       setError(err.message || "Something went wrong creating the job.");
     } finally {
@@ -82,7 +88,10 @@ export default function NewJobPage() {
           Enter the basics for this job. We’ll wire in more fields later.
         </p>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+        <form
+          onSubmit={handleSubmit}
+          style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}
+        >
           <div>
             <label
               style={{
