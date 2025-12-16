@@ -1,185 +1,270 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { supabase } from '../../../lib/supabase';
-
-// If you already have this component, keep the import path correct for YOUR repo:
-import UploadFilesButton from '../../../components/UploadFilesButton';
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 
 export default function NewJobPage() {
   const router = useRouter();
 
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [projectName, setProjectName] = useState("");
+  const [status, setStatus] = useState("Waiting for Files");
+  const [proofStatus, setProofStatus] = useState("Not Created");
+  const [dueDate, setDueDate] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  // Minimal MVP fields. Expand later.
-  const [form, setForm] = useState({
-    job_name: '',
-    product: 'Postcard',
-    quantity: 1000,
-    due_date: '',
-    notes: '',
-  });
-
-  const onChange = (key) => (e) => {
-    const val = e.target.type === 'number' ? Number(e.target.value) : e.target.value;
-    setForm((p) => ({ ...p, [key]: val }));
-  };
-
-  async function handleCreateJob() {
-    setError('');
-    setSaving(true);
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
 
     try {
-      // Must be signed in
-      const { data: auth } = await supabase.auth.getUser();
-      const userId = auth?.user?.id;
-      if (!userId) throw new Error('Not signed in.');
-
-      // Create the job (status defaults to WAITING_FOR_FILES)
-      const { data: job, error: jobErr } = await supabase
-        .from('jobs')
+      const { error: insertError } = await supabase
+        .from("jobs")
         .insert([
           {
-            job_name: form.job_name.trim(),
-            product: form.product,
-            quantity: form.quantity,
-            due_date: form.due_date || null,
-            notes: form.notes || null,
-            status: 'WAITING_FOR_FILES',
-            user_id: userId,
+            project_name: projectName,
+            status,
+            proof_status: proofStatus,
+            due_date: dueDate || null,
           },
-        ])
-        .select('*')
-        .single();
+        ]);
 
-      if (jobErr) throw jobErr;
-      if (!job?.id) throw new Error('Job created but no id returned.');
+      if (insertError) throw insertError;
 
-      // Go to job detail page (you can build this next)
-      router.push(`/jobs/${job.id}`);
-    } catch (e) {
-      console.error(e);
-      setError(e?.message || 'Failed to create job.');
+      // back to dashboard to see the job
+      router.push("/dashboard");
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Something went wrong creating the job.");
     } finally {
-      setSaving(false);
+      setLoading(false);
     }
   }
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: 24 }}>
-      <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 6 }}>Submit a New Job</h1>
-      <p style={{ opacity: 0.8, marginBottom: 18 }}>
-        Create the job first, then upload files on the next screen.
-      </p>
-
-      {error ? (
-        <div
-          style={{
-            background: '#3b0d0d',
-            border: '1px solid #7f1d1d',
-            padding: 12,
-            borderRadius: 10,
-            marginBottom: 16,
-            color: '#fecaca',
-          }}
-        >
-          {error}
-        </div>
-      ) : null}
-
+    <main
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background:
+          "radial-gradient(circle at top, #111827 0, #020617 45%, #000 100%)",
+        padding: "2rem",
+        color: "#e5e7eb",
+        fontFamily:
+          "system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif",
+      }}
+    >
       <div
         style={{
-          display: 'grid',
-          gap: 14,
-          background: 'rgba(255,255,255,0.04)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          padding: 16,
-          borderRadius: 14,
+          width: "100%",
+          maxWidth: "520px",
+          background: "rgba(15, 23, 42, 0.95)",
+          borderRadius: "1.5rem",
+          border: "1px solid rgba(148, 163, 184, 0.35)",
+          boxShadow: "0 24px 60px rgba(15, 23, 42, 0.9)",
+          padding: "1.75rem 2rem 2rem",
         }}
       >
-        <label style={{ display: 'grid', gap: 6 }}>
-          <span>Job name *</span>
-          <input
-            value={form.job_name}
-            onChange={onChange('job_name')}
-            placeholder="e.g., INS Card - Front"
-            style={inputStyle}
-          />
-        </label>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span>Product</span>
-            <select value={form.product} onChange={onChange('product')} style={inputStyle}>
-              <option>Postcard</option>
-              <option>Flyer</option>
-              <option>Brochure</option>
-              <option>Booklet</option>
-              <option>Business Card</option>
-              <option>Poster</option>
-              <option>Other</option>
-            </select>
-          </label>
-
-          <label style={{ display: 'grid', gap: 6 }}>
-            <span>Quantity</span>
-            <input
-              type="number"
-              min={1}
-              value={form.quantity}
-              onChange={onChange('quantity')}
-              style={inputStyle}
-            />
-          </label>
-        </div>
-
-        <label style={{ display: 'grid', gap: 6 }}>
-          <span>Due date</span>
-          <input type="date" value={form.due_date} onChange={onChange('due_date')} style={inputStyle} />
-        </label>
-
-        <label style={{ display: 'grid', gap: 6 }}>
-          <span>Notes</span>
-          <textarea
-            value={form.notes}
-            onChange={onChange('notes')}
-            placeholder="Paper, finishing, special instructions..."
-            rows={4}
-            style={{ ...inputStyle, resize: 'vertical' }}
-          />
-        </label>
-
-        <button
-          onClick={handleCreateJob}
-          disabled={saving || !form.job_name.trim()}
+        <h1
           style={{
-            padding: '12px 14px',
-            borderRadius: 12,
-            border: '1px solid rgba(255,255,255,0.12)',
-            background: saving ? 'rgba(255,255,255,0.08)' : 'rgba(59,130,246,0.9)',
-            cursor: saving ? 'not-allowed' : 'pointer',
+            fontSize: "1.5rem",
             fontWeight: 700,
+            marginBottom: "0.25rem",
           }}
         >
-          {saving ? 'Creating…' : 'Create Job'}
-        </button>
-      </div>
+          New Job / Quote
+        </h1>
+        <p style={{ opacity: 0.7, marginBottom: "1.4rem", fontSize: "0.9rem" }}>
+          Enter the basics for this job. We’ll wire in more fields later.
+        </p>
 
-      <div style={{ marginTop: 20, opacity: 0.8, fontSize: 13 }}>
-        Next: we build <code>/jobs/[id]</code> where the customer uploads files + sees proof status.
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+          <div>
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.8rem",
+                marginBottom: "0.25rem",
+                opacity: 0.8,
+              }}
+            >
+              Project Name
+            </label>
+            <input
+              type="text"
+              required
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "0.55rem 0.75rem",
+                borderRadius: "0.6rem",
+                border: "1px solid rgba(51, 65, 85, 0.9)",
+                background: "#020617",
+                color: "#e5e7eb",
+                fontSize: "0.9rem",
+              }}
+              placeholder="Brochure – New Product Line"
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: "0.75rem" }}>
+            <div style={{ flex: 1 }}>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "0.8rem",
+                  marginBottom: "0.25rem",
+                  opacity: 0.8,
+                }}
+              >
+                Status
+              </label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "0.55rem 0.75rem",
+                  borderRadius: "0.6rem",
+                  border: "1px solid rgba(51, 65, 85, 0.9)",
+                  background: "#020617",
+                  color: "#e5e7eb",
+                  fontSize: "0.9rem",
+                }}
+              >
+                <option>Waiting for Files</option>
+                <option>In Production</option>
+                <option>Proof Ready</option>
+                <option>On Hold</option>
+              </select>
+            </div>
+
+            <div style={{ flex: 1 }}>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "0.8rem",
+                  marginBottom: "0.25rem",
+                  opacity: 0.8,
+                }}
+              >
+                Proof Status
+              </label>
+              <select
+                value={proofStatus}
+                onChange={(e) => setProofStatus(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "0.55rem 0.75rem",
+                  borderRadius: "0.6rem",
+                  border: "1px solid rgba(51, 65, 85, 0.9)",
+                  background: "#020617",
+                  color: "#e5e7eb",
+                  fontSize: "0.9rem",
+                }}
+              >
+                <option>Not Created</option>
+                <option>Needs Your Approval</option>
+                <option>Approved</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.8rem",
+                marginBottom: "0.25rem",
+                opacity: 0.8,
+              }}
+            >
+              Due Date (optional)
+            </label>
+            <input
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "0.55rem 0.75rem",
+                borderRadius: "0.6rem",
+                border: "1px solid rgba(51, 65, 85, 0.9)",
+                background: "#020617",
+                color: "#e5e7eb",
+                fontSize: "0.9rem",
+              }}
+            />
+          </div>
+
+          {error && (
+            <div
+              style={{
+                marginTop: "0.35rem",
+                padding: "0.5rem 0.75rem",
+                borderRadius: "0.6rem",
+                background: "rgba(248, 113, 113, 0.15)",
+                border: "1px solid rgba(248, 113, 113, 0.6)",
+                fontSize: "0.8rem",
+              }}
+            >
+              {error}
+            </div>
+          )}
+
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginTop: "1.1rem",
+              gap: "0.75rem",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => router.push("/dashboard")}
+              style={{
+                flex: 1,
+                padding: "0.6rem 0.9rem",
+                borderRadius: "999px",
+                border: "1px solid rgba(148, 163, 184, 0.6)",
+                background: "transparent",
+                color: "#e5e7eb",
+                fontSize: "0.9rem",
+                cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+
+            <button
+              type="submit"
+              disabled={loading}
+              style={{
+                flex: 1,
+                padding: "0.6rem 0.9rem",
+                borderRadius: "999px",
+                border: "none",
+                background:
+                  "linear-gradient(to right, #4f46e5 0%, #22c55e 100%)",
+                color: "#f9fafb",
+                fontWeight: 600,
+                fontSize: "0.9rem",
+                cursor: loading ? "wait" : "pointer",
+                opacity: loading ? 0.7 : 1,
+                boxShadow: "0 16px 40px rgba(79, 70, 229, 0.45)",
+              }}
+            >
+              {loading ? "Creating…" : "Create Job"}
+            </button>
+          </div>
+        </form>
       </div>
-    </div>
+    </main>
   );
 }
-
-const inputStyle = {
-  width: '100%',
-  padding: '10px 12px',
-  borderRadius: 10,
-  border: '1px solid rgba(255,255,255,0.12)',
-  background: 'rgba(0,0,0,0.25)',
-  color: 'white',
-  outline: 'none',
-};
