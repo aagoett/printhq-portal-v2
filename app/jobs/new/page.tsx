@@ -18,16 +18,6 @@ type Shipping = {
   notes: string;
 };
 
-function makeJobCode() {
-  // Example: JOB-20251216-7F3K2
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const rand = Math.random().toString(36).slice(2, 7).toUpperCase();
-  return `JOB-${y}${m}${day}-${rand}`;
-}
-
 export default function NewJobPage() {
   const router = useRouter();
 
@@ -138,59 +128,10 @@ export default function NewJobPage() {
 
     if (upErr) throw new Error(upErr.message);
 
+    // If bucket is public this will work; if private, keep storage_path only
     const { data: pub } = supabase.storage.from("art-files").getPublicUrl(path);
+
     return { storage_path: path, public_url: pub?.publicUrl ?? null };
-  }
-
-  async function getOrCreateCustomerId() {
-    const { data, error } = await supabase.auth.getUser();
-    if (error) throw new Error(error.message);
-    const user = data?.user;
-    if (!user) throw new Error("You’re not logged in.");
-
-    // ✅ Correct mapping: customers.user_id == auth.users.id
-    const { data: existing, error: findErr } = await supabase
-      .from("customers")
-      .select("id, user_id, email, company_name")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (findErr) throw new Error(findErr.message);
-    if (existing?.id) return existing.id as string;
-
-    // If it doesn't exist (older accounts), create it.
-    const companyName =
-      (user.user_metadata?.companyName as string | undefined) ||
-      (user.user_metadata?.company_name as string | undefined) ||
-      user.email ||
-      "Customer";
-
-    const { data: created, error: createErr } = await supabase
-      .from("customers")
-      .insert({
-        user_id: user.id,
-        email: user.email,
-        company_name: companyName,
-      })
-      .select("id")
-      .single();
-
-    if (createErr) throw new Error(createErr.message);
-    return created.id as string;
-  }
-
-  async function insertJob(payload: any) {
-    // Try with notes first (if your jobs table has it).
-    let res = await supabase.from("jobs").insert(payload).select("*").single();
-
-    // If notes column doesn't exist, retry without notes.
-    if (res.error && /column "notes" of relation "jobs" does not exist/i.test(res.error.message)) {
-      const { notes: _drop, ...withoutNotes } = payload;
-      res = await supabase.from("jobs").insert(withoutNotes).select("*").single();
-    }
-
-    if (res.error) throw new Error(res.error.message);
-    return res.data;
   }
 
   async function handleSubmit() {
@@ -203,8 +144,33 @@ export default function NewJobPage() {
 
     setLoading(true);
     try {
-      const customerId = await getOrCreateCustomerId();
+      // 1) Get logged in user
+      const {
+        data: { user },
+        error: userErr,
+      } = await supabase.auth.getUser();
 
+      if (userErr) throw new Error(userErr.message);
+      if (!user) throw new Error("You’re not logged in.");
+
+      // 2) CUSTOMER LOOKUP (REPLACED)
+      // Map auth.users.id -> customers.user_id -> customers.id
+      const { data: customer, error: custErr } = await supabase
+        .from("customers")
+        .select("id, user_id, email, company_name, contact_name")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (custErr) throw new Error(custErr.message);
+      if (!customer?.id) {
+        throw new Error(
+          "Could not find your customer record (customers.user_id does not match auth user id)."
+        );
+      }
+
+      const customerId = customer.id;
+
+      // 3) Build a readable details block (customer-facing)
       const detailsBlock = [
         `Product: ${productType}`,
         `Qty: ${quantity}`,
@@ -213,9 +179,9 @@ export default function NewJobPage() {
         colors ? `Colors: ${colors}` : null,
         finishing.length ? `Finishing: ${finishing.join(", ")}` : null,
         `Turnaround: ${turnaround === "rush" ? "Rush" : "Standard"}`,
-        `Delivery: ${shipping.deliveryType === "pickup" ? "Pickup" : "Ship"}`,
+        shipping.deliveryType === "pickup" ? `Delivery: Pickup` : `Delivery: Ship`,
         shipping.deliveryType === "ship"
-          ? `Ship To: ${shipping.recipientName}${shipping.company ? ` (${shipping.company})` : ""}, ${shipping.address1}${shipping.address2 ? ` ${shipping.address2}` : ""}, ${shipping.city}, ${shipping.state} ${shipping.zip}`
+          ? `Ship To: ${shipping.recipientName}, ${shipping.company ? shipping.company + ", " : ""}${shipping.address1}${shipping.address2 ? " " + shipping.address2 : ""}, ${shipping.city}, ${shipping.state} ${shipping.zip}`
           : null,
         shipping.phone ? `Phone: ${shipping.phone}` : null,
         shipping.notes ? `Shipping Notes: ${shipping.notes}` : null,
@@ -224,25 +190,59 @@ export default function NewJobPage() {
         .filter(Boolean)
         .join("\n");
 
-      // ✅ Always provide job_code so you never hit NOT NULL again
+      // 4) Insert the job
+      // IMPORTANT:
+      // - If jobs.job_code is NOT NULL, you MUST either:
+      //   (A) have a DB trigger that auto-generates job_code, OR
+      //   (B) set job_code here.
+      //
+      // If you already added the DB trigger (recommended), leave job_code out.
+
       const jobPayload: any = {
-        job_code: makeJobCode(),
         customer_id: customerId,
         project_name: title.trim(),
-
-        // internal workflow defaults (customer doesn't touch these)
         status: "Submitted",
         proof_status: "Not Created",
         due_date: null,
-
-        // optional — will auto-fallback if column doesn't exist
-        notes: detailsBlock,
       };
 
-      const jobRow = await insertJob(jobPayload);
+      // If your jobs table has a notes column, this is great.
+      // If it doesn't, the insert will error with "Could not find the 'notes' column".
+      // So we attempt once with notes; if it fails specifically due to missing column, retry without.
+      jobPayload.notes = detailsBlock;
+
+      // If you want to set job_code client-side instead of DB trigger, uncomment this:
+      // jobPayload.job_code = `J${Date.now()}`;
+
+      let jobRow: any = null;
+
+      const attempt1 = await supabase.from("jobs").insert(jobPayload).select("*").single();
+
+      if (attempt1.error) {
+        const msg = attempt1.error.message || "";
+
+        // Retry without notes if notes column doesn't exist yet
+        if (msg.toLowerCase().includes("could not find the 'notes' column")) {
+          const { notes: _n, ...withoutNotes } = jobPayload;
+
+          const attempt2 = await supabase
+            .from("jobs")
+            .insert(withoutNotes)
+            .select("*")
+            .single();
+
+          if (attempt2.error) throw new Error(attempt2.error.message);
+          jobRow = attempt2.data;
+        } else {
+          throw new Error(msg);
+        }
+      } else {
+        jobRow = attempt1.data;
+      }
+
       const jobId = jobRow.id as string;
 
-      // Upload files + record rows
+      // 5) Upload files + create records in job_files table
       for (const f of files) {
         const up = await uploadToStorage(jobId, f);
 
@@ -300,6 +300,7 @@ export default function NewJobPage() {
           </div>
         ) : null}
 
+        {/* Section: Basics */}
         <Section title="Job Details">
           <Field label="Job Name (what should we call this?)" required>
             <input
@@ -425,6 +426,7 @@ export default function NewJobPage() {
           </Field>
         </Section>
 
+        {/* Section: Upload */}
         <Section title="Upload Artwork">
           <p style={{ opacity: 0.8, marginTop: 0 }}>
             Preferred: PDF. Also accepted: AI, PSD, INDD (packaged), JPG/PNG.
@@ -451,6 +453,7 @@ export default function NewJobPage() {
           ) : null}
         </Section>
 
+        {/* Section: Delivery */}
         <Section title="Delivery">
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
             <Pill
@@ -551,6 +554,7 @@ export default function NewJobPage() {
           )}
         </Section>
 
+        {/* Actions */}
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <button
             type="button"
