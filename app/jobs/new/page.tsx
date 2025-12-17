@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "../../../lib/supabase";
 
 type Size = { w: string; h: string; unit: "in" | "mm" };
 type Shipping = {
