@@ -18,6 +18,16 @@ type Shipping = {
   notes: string;
 };
 
+function makeJobCode() {
+  // Example: JOB-20251216-7F3K2
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const rand = Math.random().toString(36).slice(2, 7).toUpperCase();
+  return `JOB-${y}${m}${day}-${rand}`;
+}
+
 export default function NewJobPage() {
   const router = useRouter();
 
@@ -128,10 +138,59 @@ export default function NewJobPage() {
 
     if (upErr) throw new Error(upErr.message);
 
-    // Optional: public URL if bucket is public; otherwise keep storage path
     const { data: pub } = supabase.storage.from("art-files").getPublicUrl(path);
-
     return { storage_path: path, public_url: pub?.publicUrl ?? null };
+  }
+
+  async function getOrCreateCustomerId() {
+    const { data, error } = await supabase.auth.getUser();
+    if (error) throw new Error(error.message);
+    const user = data?.user;
+    if (!user) throw new Error("You’re not logged in.");
+
+    // ✅ Correct mapping: customers.user_id == auth.users.id
+    const { data: existing, error: findErr } = await supabase
+      .from("customers")
+      .select("id, user_id, email, company_name")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (findErr) throw new Error(findErr.message);
+    if (existing?.id) return existing.id as string;
+
+    // If it doesn't exist (older accounts), create it.
+    const companyName =
+      (user.user_metadata?.companyName as string | undefined) ||
+      (user.user_metadata?.company_name as string | undefined) ||
+      user.email ||
+      "Customer";
+
+    const { data: created, error: createErr } = await supabase
+      .from("customers")
+      .insert({
+        user_id: user.id,
+        email: user.email,
+        company_name: companyName,
+      })
+      .select("id")
+      .single();
+
+    if (createErr) throw new Error(createErr.message);
+    return created.id as string;
+  }
+
+  async function insertJob(payload: any) {
+    // Try with notes first (if your jobs table has it).
+    let res = await supabase.from("jobs").insert(payload).select("*").single();
+
+    // If notes column doesn't exist, retry without notes.
+    if (res.error && /column "notes" of relation "jobs" does not exist/i.test(res.error.message)) {
+      const { notes: _drop, ...withoutNotes } = payload;
+      res = await supabase.from("jobs").insert(withoutNotes).select("*").single();
+    }
+
+    if (res.error) throw new Error(res.error.message);
+    return res.data;
   }
 
   async function handleSubmit() {
@@ -144,57 +203,7 @@ export default function NewJobPage() {
 
     setLoading(true);
     try {
-      // Identify customer
-      const {
-        data: { user },
-        error: userErr,
-      } = await supabase.auth.getUser();
-
-      if (userErr) throw new Error(userErr.message);
-      if (!user) throw new Error("You’re not logged in.");
-
-      // Map auth user -> customers row (assumes customers.id = auth user id OR customers has email match)
-      // Try by id first:
-      const { data: custById } = await supabase
-        .from("customers")
-        .select("id,email")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      let customerId = custById?.id as string | undefined;
-
-      // Fallback: email match
-      if (!customerId && user.email) {
-        const { data: custByEmail } = await supabase
-          .from("customers")
-          .select("id,email")
-          .eq("email", user.email)
-          .maybeSingle();
-
-        customerId = custByEmail?.id as string | undefined;
-      }
-
-      if (!customerId) {
-        throw new Error(
-          "Could not find your customer record in the customers table. (We can fix this mapping.)"
-        );
-      }
-
-      // Create the job request (customer-facing fields only)
-      const jobPayload: any = {
-        customer_id: customerId,
-        project_name: title.trim(),
-        // Keep these nullable if you don’t want internal workflow yet
-        status: "Submitted",
-        proof_status: "Not Created",
-        due_date: null,
-        // Store details in a structured JSON column if you have it.
-        // If you DON'T have it yet, we can add it later.
-        // For now we’ll also write a readable notes block.
-      };
-
-      // If you added a "job_code" column already, you can set later (server-side).
-      // jobPayload.job_code = null;
+      const customerId = await getOrCreateCustomerId();
 
       const detailsBlock = [
         `Product: ${productType}`,
@@ -204,9 +213,9 @@ export default function NewJobPage() {
         colors ? `Colors: ${colors}` : null,
         finishing.length ? `Finishing: ${finishing.join(", ")}` : null,
         `Turnaround: ${turnaround === "rush" ? "Rush" : "Standard"}`,
-        shipping.deliveryType === "pickup" ? `Delivery: Pickup` : `Delivery: Ship`,
+        `Delivery: ${shipping.deliveryType === "pickup" ? "Pickup" : "Ship"}`,
         shipping.deliveryType === "ship"
-          ? `Ship To: ${shipping.recipientName}, ${shipping.company ? shipping.company + ", " : ""}${shipping.address1}${shipping.address2 ? " " + shipping.address2 : ""}, ${shipping.city}, ${shipping.state} ${shipping.zip}`
+          ? `Ship To: ${shipping.recipientName}${shipping.company ? ` (${shipping.company})` : ""}, ${shipping.address1}${shipping.address2 ? ` ${shipping.address2}` : ""}, ${shipping.city}, ${shipping.state} ${shipping.zip}`
           : null,
         shipping.phone ? `Phone: ${shipping.phone}` : null,
         shipping.notes ? `Shipping Notes: ${shipping.notes}` : null,
@@ -215,23 +224,25 @@ export default function NewJobPage() {
         .filter(Boolean)
         .join("\n");
 
-      // If your jobs table has a "customer_notes" column, use it.
-      // Otherwise we’ll append to "project_name"?? No. Better: store in a "notes" column if you have one.
-      // If you DON'T have one, we can add it next. For now, write to project_name only? Not ideal.
-      // We'll try to write "notes" and ignore error if column doesn't exist.
-      jobPayload.notes = detailsBlock;
+      // ✅ Always provide job_code so you never hit NOT NULL again
+      const jobPayload: any = {
+        job_code: makeJobCode(),
+        customer_id: customerId,
+        project_name: title.trim(),
 
-      const { data: jobRow, error: jobErr } = await supabase
-        .from("jobs")
-        .insert(jobPayload)
-        .select("*")
-        .single();
+        // internal workflow defaults (customer doesn't touch these)
+        status: "Submitted",
+        proof_status: "Not Created",
+        due_date: null,
 
-      if (jobErr) throw new Error(jobErr.message);
+        // optional — will auto-fallback if column doesn't exist
+        notes: detailsBlock,
+      };
 
+      const jobRow = await insertJob(jobPayload);
       const jobId = jobRow.id as string;
 
-      // Upload files + create records in job_files table (assumes job_files exists)
+      // Upload files + record rows
       for (const f of files) {
         const up = await uploadToStorage(jobId, f);
 
@@ -289,7 +300,6 @@ export default function NewJobPage() {
           </div>
         ) : null}
 
-        {/* Section: Basics */}
         <Section title="Job Details">
           <Field label="Job Name (what should we call this?)" required>
             <input
@@ -415,7 +425,6 @@ export default function NewJobPage() {
           </Field>
         </Section>
 
-        {/* Section: Upload */}
         <Section title="Upload Artwork">
           <p style={{ opacity: 0.8, marginTop: 0 }}>
             Preferred: PDF. Also accepted: AI, PSD, INDD (packaged), JPG/PNG.
@@ -442,7 +451,6 @@ export default function NewJobPage() {
           ) : null}
         </Section>
 
-        {/* Section: Delivery */}
         <Section title="Delivery">
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
             <Pill
@@ -543,7 +551,6 @@ export default function NewJobPage() {
           )}
         </Section>
 
-        {/* Actions */}
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <button
             type="button"
