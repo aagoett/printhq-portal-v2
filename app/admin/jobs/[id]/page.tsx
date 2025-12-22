@@ -3,6 +3,8 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../../../lib/supabase"; 
+// Import the server action we just created
+import { sendEmailNotification } from "../../../actions"; 
 
 export default function AdminJobDetails() {
   const { id } = useParams();
@@ -46,6 +48,7 @@ export default function AdminJobDetails() {
     setUploadingProof(true);
 
     try {
+      // 1. Upload file
       const fileExt = file.name.split('.').pop();
       const fileName = `proof-${Date.now()}.${fileExt}`;
       const filePath = `${id}/${fileName}`;
@@ -53,10 +56,13 @@ export default function AdminJobDetails() {
       const { error: uploadError } = await supabase.storage.from('job-files').upload(filePath, file);
       if (uploadError) throw uploadError;
 
+      // 2. Get Public URL
       const { data: { publicUrl } } = supabase.storage.from('job-files').getPublicUrl(filePath);
 
+      // 3. Update Database
       await supabase.from('jobs').update({ proof_url: publicUrl, proof_status: 'Needs Approval', status: 'Proofing' }).eq('id', id);
       
+      // 4. Send Chat Message
       await supabase.from("messages").insert({
         job_id: id,
         user_id: (await supabase.auth.getUser()).data.user?.id,
@@ -64,7 +70,19 @@ export default function AdminJobDetails() {
         content: `A new proof has been uploaded: ${file.name}. Status changed to Proofing.`
       });
 
-      alert("Proof uploaded successfully!");
+      // ---------------------------------------------------------
+      // 5. 📧 SEND EMAIL NOTIFICATION
+      // ---------------------------------------------------------
+      // NOTE: On the Resend "Free" tier, you can only send emails to the address you signed up with.
+      // Change the 'to' address below to YOUR email for testing.
+      await sendEmailNotification({
+        to: "andrew@printedunion.com", 
+        subject: `ACTION REQUIRED: Proof Ready for ${job.project_name}`,
+        message: `A new proof is ready for review for job <strong>${job.project_name}</strong>. Please log in to approve or reject it.`
+      });
+      // ---------------------------------------------------------
+
+      alert("Proof uploaded & Email Notification Sent!");
       fetchJobData();
     } catch (error) {
       console.error("Upload failed", error);
@@ -99,7 +117,7 @@ export default function AdminJobDetails() {
           <div style={{ display: "flex", gap: "1rem", marginBottom: "0.5rem" }}>
             <button onClick={() => router.back()} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer" }}>← Back</button>
             
-            {/* NEW TICKET BUTTON */}
+            {/* TICKET BUTTON */}
             <a 
               href={`/admin/jobs/${id}/ticket`} 
               target="_blank" 
