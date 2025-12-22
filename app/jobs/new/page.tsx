@@ -248,12 +248,10 @@ export default function NewJobPage() {
 
       // 4) Insert job
       const jobPayload: any = {
-        customer_id: customerId,
+        customer_id: customerId, // Links to your Customers table
+        user_id: user.id,        // <--- ✅ Links to Supabase Auth (REQUIRED for Dashboard)
         project_name: title.trim(),
-        status: "Submitted",
-        proof_status: "Not Created",
-        due_date: null,
-        notes: detailsBlock,
+        // ... rest of fields
       };
 
       let jobRow: any = null;
