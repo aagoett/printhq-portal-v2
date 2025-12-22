@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { supabase } from "../../lib/supabase"; // Adjust path if needed (likely ../../lib/supabase)
+import { supabase } from "../../lib/supabase";
 
 export default function DashboardPage() {
   const [jobs, setJobs] = useState<any[]>([]);
@@ -11,15 +11,13 @@ export default function DashboardPage() {
   useEffect(() => {
     async function fetchData() {
       try {
-        // 1. Get current user
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
-        // 2. Fetch jobs matching this user
         const { data, error } = await supabase
           .from("jobs")
           .select("*")
-          .eq("user_id", user.id) // <--- THIS is what connects the job to you
+          .eq("user_id", user.id)
           .order("created_at", { ascending: false });
 
         if (error) {
@@ -36,7 +34,6 @@ export default function DashboardPage() {
     fetchData();
   }, []);
 
-  // Calculate stats dynamically
   const activeJobs = jobs.length;
   const needsApproval = jobs.filter((j) => j.proof_status === "Needs Approval").length;
   const waitingForFiles = jobs.filter((j) => j.status === "Waiting for Files").length;
@@ -47,13 +44,10 @@ export default function DashboardPage() {
         minHeight: "100vh",
         padding: "2rem 3rem",
         color: "#f9fafb",
-        background:
-          "radial-gradient(circle at top, #111827 0%, #020617 45%, #000 100%)",
-        fontFamily:
-          "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+        background: "radial-gradient(circle at top, #111827 0%, #020617 45%, #000 100%)",
+        fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
       }}
     >
-      {/* Header */}
       <header
         style={{
           display: "flex",
@@ -110,7 +104,6 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {/* Top stats */}
       <section
         style={{
           display: "grid",
@@ -124,7 +117,6 @@ export default function DashboardPage() {
         <StatCard title="Waiting for Files" value={waitingForFiles} subtitle="Jobs created but not ready" />
       </section>
 
-      {/* Main grid */}
       <section
         style={{
           display: "grid",
@@ -132,7 +124,6 @@ export default function DashboardPage() {
           gap: "1.5rem",
         }}
       >
-        {/* Jobs table */}
         <div style={panelStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem" }}>
             <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Your Active Jobs</h2>
@@ -147,7 +138,6 @@ export default function DashboardPage() {
                 No jobs yet. Click <b>“New Job / Quote”</b> to get started.
               </div>
             ) : (
-              // ✅ ACTUAL DATA TABLE
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
                 <thead>
                   <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", textAlign: "left" }}>
@@ -164,6 +154,7 @@ export default function DashboardPage() {
                       <td style={{ padding: "1rem 0" }}>
                         <div style={{ fontWeight: 700 }}>{job.job_code || "---"}</div>
                       </td>
+                      {/* ✅ THIS IS THE FIXED SECTION: CLICKABLE LINK */}
                       <td style={{ padding: "1rem 0" }}>
                         <Link 
                           href={`/jobs/${job.id}`} 
@@ -209,7 +200,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Right column */}
         <div style={{ display: "grid", gap: "1.5rem" }}>
           <div style={panelStyle}>
             <h2 style={{ margin: 0, fontSize: "1.1rem" }}>Proofs & Approvals</h2>
