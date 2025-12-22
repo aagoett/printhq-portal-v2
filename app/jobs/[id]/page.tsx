@@ -10,19 +10,22 @@ export default function JobDetailsPage() {
 
   const [job, setJob] = useState<any>(null);
   const [files, setFiles] = useState<any[]>([]);
+  const [messages, setMessages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // Messaging State (UI only for now)
+  
+  // Messaging State
   const [msgInput, setMsgInput] = useState("");
-  const [messages, setMessages] = useState([
-    { id: 1, sender: "system", text: "Job created successfully.", time: "Just now" },
-  ]);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
   useEffect(() => {
-    async function fetchJobDetails() {
+    async function fetchAllData() {
       if (!id) return;
 
       try {
+        // 0. Get Current User (so we know who is sending messages)
+        const { data: { user } } = await supabase.auth.getUser();
+        setCurrentUser(user);
+
         // 1. Fetch Job Data
         const { data: jobData, error: jobErr } = await supabase
           .from("jobs")
@@ -34,13 +37,21 @@ export default function JobDetailsPage() {
         setJob(jobData);
 
         // 2. Fetch Associated Files
-        const { data: fileData, error: fileErr } = await supabase
+        const { data: fileData } = await supabase
           .from("job_files")
           .select("*")
           .eq("job_id", id);
+        
+        setFiles(fileData || []);
 
-        if (fileErr) console.error("Error fetching files:", fileErr);
-        else setFiles(fileData || []);
+        // 3. Fetch Messages
+        const { data: msgData } = await supabase
+          .from("messages")
+          .select("*")
+          .eq("job_id", id)
+          .order("created_at", { ascending: true }); // Oldest first
+
+        setMessages(msgData || []);
 
       } catch (err) {
         console.error("Error loading job:", err);
@@ -49,8 +60,42 @@ export default function JobDetailsPage() {
       }
     }
 
-    fetchJobDetails();
+    fetchAllData();
   }, [id]);
+
+  // Function to send a message
+  async function sendMessage() {
+    if (!msgInput.trim() || !currentUser || !job) return;
+
+    try {
+      const newMsg = {
+        job_id: job.id,
+        user_id: currentUser.id,
+        sender_name: "You", // You can customize this later to pull from profile
+        content: msgInput.trim(),
+      };
+
+      // Insert into DB
+      const { error } = await supabase.from("messages").insert(newMsg);
+      if (error) throw error;
+
+      // Clear input
+      setMsgInput("");
+
+      // Refresh messages list
+      const { data: freshMsgs } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("job_id", id)
+        .order("created_at", { ascending: true });
+        
+      setMessages(freshMsgs || []);
+
+    } catch (err) {
+      console.error("Failed to send message:", err);
+      alert("Failed to send message.");
+    }
+  }
 
   if (loading) {
     return (
@@ -192,18 +237,36 @@ export default function JobDetailsPage() {
             }}>
               
               {/* Message List */}
-              <div style={{ flex: 1, overflowY: "auto", marginBottom: "1rem" }}>
-                {messages.map((m) => (
-                  <div key={m.id} style={{ marginBottom: "1rem", opacity: 0.9 }}>
-                    <div style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: "0.2rem", color: m.sender === "system" ? "#4ade80" : "#fff" }}>
-                      {m.sender === "system" ? "PrintHQ System" : "You"}
-                      <span style={{ fontWeight: 400, opacity: 0.6, marginLeft: "0.5rem" }}>{m.time}</span>
-                    </div>
-                    <div style={{ background: "rgba(255,255,255,0.05)", padding: "0.6rem 0.8rem", borderRadius: "8px", fontSize: "0.9rem" }}>
-                      {m.text}
-                    </div>
+              <div style={{ flex: 1, overflowY: "auto", marginBottom: "1rem", paddingRight: "0.5rem" }}>
+                {messages.length === 0 ? (
+                  <div style={{ opacity: 0.5, fontStyle: "italic", fontSize: "0.9rem" }}>
+                    No messages yet. Start the conversation!
                   </div>
-                ))}
+                ) : (
+                  messages.map((m) => {
+                    const isMe = m.user_id === currentUser?.id;
+                    return (
+                      <div key={m.id} style={{ marginBottom: "1rem", opacity: 0.9, textAlign: isMe ? "right" : "left" }}>
+                        <div style={{ fontSize: "0.8rem", fontWeight: 700, marginBottom: "0.2rem", color: isMe ? "#fff" : "#4ade80" }}>
+                          {isMe ? "You" : m.sender_name}
+                          <span style={{ fontWeight: 400, opacity: 0.6, marginLeft: "0.5rem" }}>
+                            {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <div style={{ 
+                          background: isMe ? "rgba(79, 70, 229, 0.4)" : "rgba(255,255,255,0.05)", 
+                          padding: "0.6rem 0.8rem", 
+                          borderRadius: "8px", 
+                          fontSize: "0.9rem",
+                          display: "inline-block",
+                          maxWidth: "85%"
+                        }}>
+                          {m.content}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
 
               {/* Input Area */}
@@ -224,25 +287,22 @@ export default function JobDetailsPage() {
                     resize: "none"
                   }}
                 />
-                <button style={{
-                  width: "100%",
-                  padding: "0.6rem",
-                  background: "#4f46e5",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: "8px",
-                  fontWeight: 600,
-                  cursor: "pointer"
-                }} onClick={() => {
-                  if(!msgInput.trim()) return;
-                  setMessages([...messages, { id: Date.now(), sender: "user", text: msgInput, time: "Just now" }]);
-                  setMsgInput("");
-                }}>
+                <button 
+                  onClick={sendMessage}
+                  disabled={!msgInput.trim()}
+                  style={{
+                    width: "100%",
+                    padding: "0.6rem",
+                    background: msgInput.trim() ? "#4f46e5" : "rgba(79, 70, 229, 0.5)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "8px",
+                    fontWeight: 600,
+                    cursor: msgInput.trim() ? "pointer" : "not-allowed"
+                  }} 
+                >
                   Send Message
                 </button>
-                <div style={{ fontSize: "0.75rem", opacity: 0.5, textAlign: "center", marginTop: "0.5rem" }}>
-                  (Messaging UI demo - backend connection coming next)
-                </div>
               </div>
             </div>
           </Section>
