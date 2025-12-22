@@ -26,7 +26,7 @@ export default function NewJobPage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>("");
 
-  // ✅ ADDED: Progress Bar State
+  // Progress Bar State
   const [progress, setProgress] = useState(0);
   const [uploadSuccess, setUploadSuccess] = useState(false);
 
@@ -138,7 +138,8 @@ export default function NewJobPage() {
   }
 
   /**
-   * Inserts a job file row, but adapts to whichever schema you actually have.
+   * Inserts a job file row. 
+   * Note: The 'id' field is intentionally omitted so the database generates a unique UUID.
    */
   async function insertJobFileRow(args: {
     jobId: string;
@@ -158,7 +159,6 @@ export default function NewJobPage() {
       file_name: file.name,
       file_type: file.type || null,
       size: file.size || null, 
-      // ✅ CORRECT: No 'id' passed here, so DB generates it
     };
 
     const r1 = await supabase.from("job_files").insert(payload1);
@@ -174,8 +174,8 @@ export default function NewJobPage() {
       path,
       file_name: file.name,
       file_type: file.type || null,
-      file_size: file.size || null,      // some tables use file_size
-      storage_path: path,                // some tables use storage_path instead of path
+      file_size: file.size || null,      
+      storage_path: path,                
     };
 
     if (msg1.includes("could not find the 'path' column")) {
@@ -185,7 +185,6 @@ export default function NewJobPage() {
     const r2 = await supabase.from("job_files").insert(payload2);
     if (!r2.error) return;
 
-    // If both failed, throw the better error message
     throw new Error(r2.error.message || r1.error.message || "Failed to insert job file record.");
   }
 
@@ -208,7 +207,7 @@ export default function NewJobPage() {
       if (userErr) throw new Error(userErr.message);
       if (!user) throw new Error("You’re not logged in.");
 
-      // 2) CUSTOMER LOOKUP (customers.user_id -> customers.id)
+      // 2) CUSTOMER LOOKUP
       const { data: customer, error: custErr } = await supabase
         .from("customers")
         .select("id, user_id, email, company_name, contact_name")
@@ -223,7 +222,7 @@ export default function NewJobPage() {
       }
       const customerId = customer.id;
 
-      // 3) Build a readable details block
+      // 3) Build details block
       const detailsBlock = [
         `Product: ${productType}`,
         `Qty: ${quantity}`,
@@ -263,8 +262,6 @@ export default function NewJobPage() {
 
       if (attempt1.error) {
         const msg = attempt1.error.message || "";
-
-        // Retry without notes if notes column doesn't exist
         if (msg.toLowerCase().includes("could not find the 'notes' column")) {
           const { notes: _n, ...withoutNotes } = jobPayload;
           const attempt2 = await supabase.from("jobs").insert(withoutNotes).select("*").single();
@@ -280,7 +277,6 @@ export default function NewJobPage() {
       const jobId = jobRow.id as string;
 
       // 5) Upload files + insert job_files rows
-      // ✅ UPDATED LOGIC FOR PROGRESS BAR
       let completedCount = 0;
 
       for (const f of files) {
@@ -305,6 +301,8 @@ export default function NewJobPage() {
 
       // Delay redirect so user sees "COMPLETE!"
       setTimeout(() => {
+        // ✅ REFRESH THE ROUTER CACHE BEFORE REDIRECTING
+        router.refresh(); 
         router.push("/dashboard");
       }, 2000);
 
@@ -312,7 +310,6 @@ export default function NewJobPage() {
       setErr(e?.message || "Something went wrong.");
       setLoading(false); // Only stop loading if there is an error
     } 
-    // removed 'finally' block so loading/success state stays visible during timeout
   }
 
   return (
