@@ -20,11 +20,21 @@ type Shipping = {
 
 const FILE_BUCKET = "art-files";
 
+// app/jobs/new/page.tsx
+
 export default function NewJobPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>("");
+
+  // 👇 ADD THESE TWO LINES HERE 👇
+  const [progress, setProgress] = useState(0);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+
+  // Core job info (customer-facing)
+  const [title, setTitle] = useState("");
+  // ... rest of your code
 
   // Core job info (customer-facing)
   const [title, setTitle] = useState("");
