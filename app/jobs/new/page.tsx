@@ -291,6 +291,8 @@ export default function NewJobPage() {
       const jobId = jobRow.id as string;
 
       // 5) Upload files + insert job_files rows
+      let completedCount = 0; // 1. Start a counter
+
       for (const f of files) {
         const up = await uploadToStorage(jobId, f);
 
@@ -301,8 +303,27 @@ export default function NewJobPage() {
           bucket: up.bucket,
           path: up.path,
         });
+
+        // 2. Update progress after each file
+        completedCount++;
+        const percent = Math.round((completedCount / files.length) * 100);
+        setProgress(percent);
       }
 
+      // 3. Show Success State
+      setUploadSuccess(true);
+      
+      // 4. Wait 2 seconds so user sees "COMPLETE!", then redirect
+      setTimeout(() => {
+        router.push("/dashboard");
+      }, 2000);
+
+    } catch (e: any) {
+      setErr(e?.message || "Something went wrong.");
+      setLoading(false); // Only turn off loading if there is an error
+    } 
+    // IMPORTANT: The "finally" block is removed so the success message stays visible!
+  }
       router.push("/dashboard");
     } catch (e: any) {
       setErr(e?.message || "Something went wrong.");
