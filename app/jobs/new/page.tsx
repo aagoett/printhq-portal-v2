@@ -20,21 +20,15 @@ type Shipping = {
 
 const FILE_BUCKET = "art-files";
 
-// app/jobs/new/page.tsx
-
 export default function NewJobPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>("");
 
-  // 👇 ADD THESE TWO LINES HERE 👇
+  // ✅ ADDED: Progress Bar State
   const [progress, setProgress] = useState(0);
   const [uploadSuccess, setUploadSuccess] = useState(false);
-
-  // Core job info (customer-facing)
-  const [title, setTitle] = useState("");
-  // ... rest of your code
 
   // Core job info (customer-facing)
   const [title, setTitle] = useState("");
@@ -145,7 +139,6 @@ export default function NewJobPage() {
 
   /**
    * Inserts a job file row, but adapts to whichever schema you actually have.
-   * Your screenshots show NOT NULL on bucket + path.
    */
   async function insertJobFileRow(args: {
     jobId: string;
@@ -156,7 +149,7 @@ export default function NewJobPage() {
   }) {
     const { jobId, userId, file, bucket, path } = args;
 
-    // Attempt #1: schema with bucket/path + file metadata (common in your screenshots)
+    // Attempt #1: schema with bucket/path + file metadata
     const payload1: any = {
       job_id: jobId,
       user_id: userId,
@@ -164,7 +157,8 @@ export default function NewJobPage() {
       path,
       file_name: file.name,
       file_type: file.type || null,
-      size: file.size || null, // some tables use `size`
+      size: file.size || null, 
+      // ✅ CORRECT: No 'id' passed here, so DB generates it
     };
 
     const r1 = await supabase.from("job_files").insert(payload1);
@@ -172,8 +166,7 @@ export default function NewJobPage() {
 
     const msg1 = (r1.error.message || "").toLowerCase();
 
-    // Attempt #2: alternate column names you’ve hit before (file_size, storage_path, etc.)
-    // Map to what your table *might* actually be:
+    // Attempt #2: alternate column names
     const payload2: any = {
       job_id: jobId,
       user_id: userId,
@@ -185,13 +178,9 @@ export default function NewJobPage() {
       storage_path: path,                // some tables use storage_path instead of path
     };
 
-    // If your table does NOT have `path` but does have `storage_path`, remove path.
     if (msg1.includes("could not find the 'path' column")) {
       delete payload2.path;
     }
-
-    // If your table does NOT have `bucket`, but your DB error says it does NOT NULL (yours does),
-    // you would *not* delete it. Keeping it here is correct for your current setup.
 
     const r2 = await supabase.from("job_files").insert(payload2);
     if (!r2.error) return;
@@ -291,7 +280,8 @@ export default function NewJobPage() {
       const jobId = jobRow.id as string;
 
       // 5) Upload files + insert job_files rows
-      let completedCount = 0; // 1. Start a counter
+      // ✅ UPDATED LOGIC FOR PROGRESS BAR
+      let completedCount = 0;
 
       for (const f of files) {
         const up = await uploadToStorage(jobId, f);
@@ -304,32 +294,25 @@ export default function NewJobPage() {
           path: up.path,
         });
 
-        // 2. Update progress after each file
+        // Update progress
         completedCount++;
         const percent = Math.round((completedCount / files.length) * 100);
         setProgress(percent);
       }
 
-      // 3. Show Success State
+      // Show Success State
       setUploadSuccess(true);
-      
-      // 4. Wait 2 seconds so user sees "COMPLETE!", then redirect
+
+      // Delay redirect so user sees "COMPLETE!"
       setTimeout(() => {
         router.push("/dashboard");
       }, 2000);
 
     } catch (e: any) {
       setErr(e?.message || "Something went wrong.");
-      setLoading(false); // Only turn off loading if there is an error
+      setLoading(false); // Only stop loading if there is an error
     } 
-    // IMPORTANT: The "finally" block is removed so the success message stays visible!
-  }
-      router.push("/dashboard");
-    } catch (e: any) {
-      setErr(e?.message || "Something went wrong.");
-    } finally {
-      setLoading(false);
-    }
+    // removed 'finally' block so loading/success state stays visible during timeout
   }
 
   return (
@@ -617,6 +600,32 @@ export default function NewJobPage() {
           )}
         </Section>
 
+        {/* ✅ PROGRESS BAR UI */}
+        {loading && (
+          <div style={{ marginBottom: 20 }}>
+            {/* The Text Label */}
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 14, fontWeight: 600 }}>
+              <span style={{ color: uploadSuccess ? "#22c55e" : "#f9fafb" }}>
+                {uploadSuccess ? "FILE UPLOAD COMPLETE!" : "Uploading files..."}
+              </span>
+              <span>{progress}%</span>
+            </div>
+
+            {/* The Bar Track */}
+            <div style={{ width: "100%", height: 10, background: "rgba(255,255,255,0.1)", borderRadius: 5, overflow: "hidden" }}>
+              {/* The Moving Fill */}
+              <div 
+                style={{ 
+                  width: `${progress}%`, 
+                  height: "100%", 
+                  background: uploadSuccess ? "#22c55e" : "#4f46e5", // Turns green when done
+                  transition: "width 0.3s ease" 
+                }} 
+              />
+            </div>
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <button
             type="button"
@@ -634,7 +643,7 @@ export default function NewJobPage() {
               minWidth: 220,
             }}
           >
-            {loading ? "Submitting…" : "Submit Job"}
+            {loading ? (uploadSuccess ? "Complete!" : "Submitting…") : "Submit Job"}
           </button>
 
           <button
