@@ -113,15 +113,28 @@ export default function AdminJobDetails() {
               borderRadius: "6px", 
               border: "1px solid #475569",
               fontSize: "0.9rem",
-              minWidth: "160px"
+              minWidth: "200px" // Made it slightly wider for the longer names
             }}
           >
-            <option value="Submitted">Submitted</option>
-            <option value="Waiting for Files">Waiting for Files</option>
-            <option value="Proofing">Proofing</option>
-            <option value="In Production">In Production</option>
-            <option value="Shipped">Shipped</option>
-            <option value="Completed">Completed</option>
+            <optgroup label="Intake" style={{ color: "#94a3b8" }}>
+              <option value="Waiting for Files" style={{ color: "#fff" }}>Waiting for Files</option>
+              <option value="Submitted" style={{ color: "#fff" }}>Submitted (New Order)</option>
+            </optgroup>
+
+            <optgroup label="Pre-Production" style={{ color: "#94a3b8" }}>
+              <option value="Proofing" style={{ color: "#fff" }}>Proofing (Wait for Approval)</option>
+              <option value="Production Ready" style={{ color: "#fff" }}>Production Ready</option>
+            </optgroup>
+
+            <optgroup label="Manufacturing" style={{ color: "#94a3b8" }}>
+              <option value="In Production" style={{ color: "#fff" }}>In Production (Printing)</option>
+              <option value="Bindery" style={{ color: "#fff" }}>Bindery / Finishing</option>
+            </optgroup>
+
+            <optgroup label="Fulfillment" style={{ color: "#94a3b8" }}>
+              <option value="Shipping" style={{ color: "#fff" }}>Shipping / Pickup</option>
+              <option value="Completed" style={{ color: "#fff" }}>Completed</option>
+            </optgroup>
           </select>
         </div>
       </div>
