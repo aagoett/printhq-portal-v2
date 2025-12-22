@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { supabase } from "../../lib/supabase"; // Check this path matches your project structure
+import Link from "next/link"; // <--- ✅ ADDED THIS IMPORT
+import { supabase } from "../../lib/supabase";
 
 export default function AdminDashboard() {
   const [jobs, setJobs] = useState<any[]>([]);
@@ -81,11 +82,28 @@ export default function AdminDashboard() {
                   <td style={{ padding: "1rem", opacity: 0.7 }}>
                     {new Date(job.created_at).toLocaleDateString()}
                   </td>
+                  
+                  {/* ✅ FIXED SECTION: Now a Link instead of a Button */}
                   <td style={{ padding: "1rem" }}>
-                    <button style={{ padding: "0.4rem 0.8rem", background: "#3b82f6", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "0.85rem" }}>
+                    <Link 
+                      href={`/admin/jobs/${job.id}`}
+                      style={{ 
+                        display: "inline-block",
+                        padding: "0.4rem 0.8rem", 
+                        background: "#3b82f6", 
+                        color: "#fff", 
+                        borderRadius: "6px", 
+                        textDecoration: "none", // Remove underline
+                        fontSize: "0.85rem",
+                        fontWeight: 600,
+                        border: "none",
+                        cursor: "pointer"
+                      }}
+                    >
                       Manage
-                    </button>
+                    </Link>
                   </td>
+
                 </tr>
               ))
             )}
