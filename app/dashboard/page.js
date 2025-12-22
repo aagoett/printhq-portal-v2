@@ -1,12 +1,42 @@
 "use client";
 
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import { supabase } from "../../lib/supabase"; // Adjust path if needed (likely ../../lib/supabase)
 
 export default function DashboardPage() {
-  // If you already fetch jobs from Supabase elsewhere, you can plug that back in.
-  // For now, keep it simple so the buttons work 100%.
-  const jobs = []; // <- replace later with real data
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        // 1. Get current user
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        // 2. Fetch jobs matching this user
+        const { data, error } = await supabase
+          .from("jobs")
+          .select("*")
+          .eq("user_id", user.id) // <--- THIS is what connects the job to you
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          console.error("Error fetching jobs:", error);
+        } else {
+          setJobs(data || []);
+        }
+      } catch (error) {
+        console.error("Unexpected error:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchData();
+  }, []);
+
+  // Calculate stats dynamically
   const activeJobs = jobs.length;
   const needsApproval = jobs.filter((j) => j.proof_status === "Needs Approval").length;
   const waitingForFiles = jobs.filter((j) => j.status === "Waiting for Files").length;
@@ -57,7 +87,6 @@ export default function DashboardPage() {
             Reorder a Past Job
           </button>
 
-          {/* ✅ THIS is the fix: Link (always works) */}
           <Link
             href="/jobs/new"
             style={{
@@ -110,13 +139,67 @@ export default function DashboardPage() {
             <span style={{ opacity: 0.8, cursor: "pointer" }}>View all →</span>
           </div>
 
-          <div style={{ opacity: 0.85 }}>
-            {jobs.length === 0 ? (
+          <div style={{ opacity: 0.9 }}>
+            {loading ? (
+              <div style={{ padding: "1rem 0", opacity: 0.6 }}>Loading jobs...</div>
+            ) : jobs.length === 0 ? (
               <div style={{ padding: "1rem 0" }}>
                 No jobs yet. Click <b>“New Job / Quote”</b> to get started.
               </div>
             ) : (
-              <div>(Render your jobs here)</div>
+              // ✅ ACTUAL DATA TABLE
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", textAlign: "left" }}>
+                    <th style={{ padding: "0.75rem 0", fontWeight: 600, opacity: 0.7 }}>Job</th>
+                    <th style={{ padding: "0.75rem 0", fontWeight: 600, opacity: 0.7 }}>Project</th>
+                    <th style={{ padding: "0.75rem 0", fontWeight: 600, opacity: 0.7 }}>Status</th>
+                    <th style={{ padding: "0.75rem 0", fontWeight: 600, opacity: 0.7 }}>Proof</th>
+                    <th style={{ padding: "0.75rem 0", fontWeight: 600, opacity: 0.7 }}>Due</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {jobs.map((job) => (
+                    <tr key={job.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                      <td style={{ padding: "1rem 0" }}>
+                        <div style={{ fontWeight: 700 }}>{job.job_code || "---"}</div>
+                      </td>
+                      <td style={{ padding: "1rem 0" }}>
+                        {job.project_name}
+                      </td>
+                      <td style={{ padding: "1rem 0" }}>
+                        <span
+                          style={{
+                            padding: "0.25rem 0.6rem",
+                            borderRadius: 99,
+                            background: "rgba(34, 197, 94, 0.15)",
+                            color: "#4ade80",
+                            fontSize: "0.75rem",
+                            fontWeight: 700,
+                          }}
+                        >
+                          {job.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: "1rem 0" }}>
+                        <span
+                          style={{
+                            padding: "0.25rem 0.6rem",
+                            borderRadius: 99,
+                            background: "rgba(255, 255, 255, 0.1)",
+                            fontSize: "0.75rem",
+                          }}
+                        >
+                          {job.proof_status || "Not Created"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "1rem 0", opacity: 0.7 }}>
+                        {job.due_date ? new Date(job.due_date).toLocaleDateString() : "TBD"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </div>
@@ -128,8 +211,8 @@ export default function DashboardPage() {
             <p style={{ opacity: 0.85, marginTop: "0.5rem" }}>
               Quickly approve or review proofs so we can move your jobs into production.
             </p>
-            <ul style={{ opacity: 0.85 }}>
-              <li>0 proof(s) waiting on your approval</li>
+            <ul style={{ opacity: 0.85, paddingLeft: "1.2rem", marginTop: "1rem" }}>
+              <li style={{ marginBottom: "0.5rem" }}>{needsApproval} proof(s) waiting on your approval</li>
               <li>You’ll receive an email each time a new proof is ready</li>
             </ul>
           </div>
@@ -141,7 +224,7 @@ export default function DashboardPage() {
             }}
           >
             <h2 style={{ margin: 0, fontSize: "1.1rem" }}>What would you like to do next?</h2>
-            <ul style={{ opacity: 0.85, marginTop: "0.75rem" }}>
+            <ul style={{ opacity: 0.85, marginTop: "0.75rem", paddingLeft: "1.2rem", lineHeight: "1.6" }}>
               <li>Start a new job or quote</li>
               <li>Upload updated art files for an existing job</li>
               <li>Review and approve pending proofs</li>
@@ -154,7 +237,7 @@ export default function DashboardPage() {
   );
 }
 
-function StatCard({ title, value, subtitle }) {
+function StatCard({ title, value, subtitle }: { title: string, value: number, subtitle: string }) {
   return (
     <div style={panelStyle}>
       <div style={{ opacity: 0.85, fontSize: "0.9rem" }}>{title}</div>
