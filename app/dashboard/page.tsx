@@ -165,7 +165,12 @@ export default function DashboardPage() {
                         <div style={{ fontWeight: 700 }}>{job.job_code || "---"}</div>
                       </td>
                       <td style={{ padding: "1rem 0" }}>
-                        {job.project_name}
+                        <Link 
+                          href={`/jobs/${job.id}`} 
+                          style={{ color: "#fff", fontWeight: 700, textDecoration: "none" }}
+                        >
+                          {job.project_name}
+                        </Link>
                       </td>
                       <td style={{ padding: "1rem 0" }}>
                         <span
