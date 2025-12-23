@@ -2,24 +2,14 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { 
-  UploadCloud, 
-  FileText, 
-  Clock, 
-  Settings, 
-  LogOut, 
-  LayoutDashboard, 
-  Loader2,
-  X,
-  Calendar,
-  Hash,
-  Search,
-  Filter
+  UploadCloud, FileText, Clock, Settings, LogOut, LayoutDashboard, 
+  Loader2, X, Calendar, Hash, Search, Filter, Layers, Scissors
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
 
-// Define what a "Job" looks like in your database
+// --- TYPES ---
 type Job = {
   id: string;
   title: string;
@@ -42,10 +32,19 @@ export default function Dashboard() {
   // Modal State
   const [showModal, setShowModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  
+  // Form Fields
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
   const [jobNotes, setJobNotes] = useState('');
+  
+  // New Specs State
+  const [paperStock, setPaperStock] = useState('100lb Gloss Text');
+  const [printSize, setPrintSize] = useState('8.5 x 11');
+  const [isDoubleSided, setIsDoubleSided] = useState(false);
+  const [needsFolding, setNeedsFolding] = useState(false);
+  const [foldType, setFoldType] = useState('Tri-Fold');
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -55,11 +54,10 @@ export default function Dashboard() {
   // --- INITIALIZATION ---
   useEffect(() => {
     const init = async () => {
-      // 1. Get Current User
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return router.push('/login');
 
-      // 2. CHECK ROLE: Look up the user in the 'profiles' table
+      // Check Role
       const { data: profile } = await supabase
         .from('profiles')
         .select('is_admin')
@@ -69,21 +67,12 @@ export default function Dashboard() {
       const _isAdmin = profile?.is_admin === true;
       setIsAdmin(_isAdmin);
 
-      // 3. FETCH JOBS: Logic depends on Role
-      let query = supabase
-        .from('jobs')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (!_isAdmin) {
-        // Customers: Only see YOUR own jobs
-        query = query.eq('user_id', user.id);
-      }
-      // Admins: Query is already set to fetch *everything* by default
+      // Fetch Jobs
+      let query = supabase.from('jobs').select('*').order('created_at', { ascending: false });
+      if (!_isAdmin) query = query.eq('user_id', user.id);
 
       const { data } = await query;
       if (data) setJobs(data);
-      
       setLoading(false);
     };
     init();
@@ -119,9 +108,7 @@ export default function Dashboard() {
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
       
       const { data: fileData, error: uploadError } = await supabase
-        .storage
-        .from('uploads')
-        .upload(fileName, selectedFile);
+        .storage.from('uploads').upload(fileName, selectedFile);
 
       if (uploadError) throw uploadError;
 
@@ -134,18 +121,22 @@ export default function Dashboard() {
           quantity: parseInt(jobQty) || 0,
           notes: jobNotes,
           file_url: fileData?.path,
-          status: 'Pending Review'
+          status: 'Pending Review',
+          // New Specs
+          paper_stock: paperStock,
+          print_size: printSize,
+          print_sides: isDoubleSided ? 'Double Sided' : 'Single Sided',
+          folding_type: needsFolding ? foldType : 'None' // Only save fold type if requested
         });
 
       if (dbError) throw dbError;
 
-      // 3. Cleanup
       setShowModal(false);
       window.location.reload(); 
 
     } catch (error) {
       console.error('Error:', error);
-      alert('Error uploading job. Check console details.');
+      alert('Error uploading job.');
     } finally {
       setIsUploading(false);
     }
@@ -156,42 +147,141 @@ export default function Dashboard() {
   return (
     <div className="flex h-screen bg-gray-50 relative">
       
-      {/* --- MODAL (Shared by both views) --- */}
+      {/* --- SMART UPLOAD MODAL --- */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 my-8">
              <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-              <h3 className="font-bold text-lg text-gray-900">New Job Ticket</h3>
+              <h3 className="font-bold text-lg text-gray-900">Production Ticket</h3>
               <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-black">
                 <X size={20} />
               </button>
             </div>
-            <form onSubmit={handleSubmitJob} className="p-6 space-y-5">
-              <div className="flex items-center p-4 bg-blue-50 rounded-xl text-blue-900 border border-blue-100">
+            
+            <form onSubmit={handleSubmitJob} className="p-6 space-y-6">
+              
+              {/* 1. File Preview */}
+              <div className="flex items-center p-3 bg-blue-50 rounded-xl text-blue-900 border border-blue-100">
                 <FileText size={20} className="mr-3 text-blue-600" />
-                <p className="font-medium truncate max-w-[250px]">{selectedFile?.name}</p>
+                <div>
+                  <p className="text-xs font-bold uppercase text-blue-400">Selected File</p>
+                  <p className="font-medium truncate max-w-[250px]">{selectedFile?.name}</p>
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Job Title</label>
-                <input type="text" required value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black" />
-              </div>
+
+              {/* 2. Basic Info */}
               <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Job Title</label>
+                  <input type="text" required value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-black focus:ring-1 focus:ring-black" />
+                </div>
                 <div>
                    <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Quantity</label>
-                   <input type="number" required value={jobQty} onChange={(e) => setJobQty(e.target.value)} className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black" />
+                   <input type="number" required value={jobQty} onChange={(e) => setJobQty(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-black focus:ring-1 focus:ring-black" />
                 </div>
                 <div>
                    <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Due Date</label>
-                   <input type="date" className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black" />
+                   <input type="date" className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-black focus:ring-1 focus:ring-black" />
                 </div>
               </div>
-              <div>
-                 <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Notes</label>
-                 <textarea rows={3} value={jobNotes} onChange={(e) => setJobNotes(e.target.value)} placeholder="Folding, shipping, stock..." className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black" />
+
+              <div className="border-t border-gray-100 pt-4">
+                <p className="text-sm font-bold text-gray-900 mb-4 flex items-center">
+                  <Settings size={16} className="mr-2" /> Print Specifications
+                </p>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Paper Stock */}
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Paper Stock</label>
+                    <select 
+                      value={paperStock} 
+                      onChange={(e) => setPaperStock(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2.5 bg-white outline-none focus:border-black"
+                    >
+                      <option>100lb Gloss Text</option>
+                      <option>100lb Matte Text</option>
+                      <option>80lb Gloss Cover</option>
+                      <option>14pt Cardstock</option>
+                      <option>16pt Cardstock</option>
+                      <option>20lb Bond (Copy)</option>
+                    </select>
+                  </div>
+
+                  {/* Size */}
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Print Size</label>
+                    <select 
+                      value={printSize} 
+                      onChange={(e) => setPrintSize(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2.5 bg-white outline-none focus:border-black"
+                    >
+                      <option>8.5 x 11 (Letter)</option>
+                      <option>11 x 17 (Tabloid)</option>
+                      <option>4 x 6 (Postcard)</option>
+                      <option>5 x 7</option>
+                      <option>Business Card</option>
+                      <option>Custom Size</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Toggles */}
+                <div className="flex items-center justify-between mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <span className="text-sm font-medium text-gray-700">Double Sided Printing?</span>
+                  <button 
+                    type="button"
+                    onClick={() => setIsDoubleSided(!isDoubleSided)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isDoubleSided ? 'bg-black' : 'bg-gray-300'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isDoubleSided ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                {/* Conditional Folding */}
+                <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700 flex items-center">
+                      <Scissors size={16} className="mr-2 text-gray-500" />
+                      Requires Folding?
+                    </span>
+                    <button 
+                      type="button"
+                      onClick={() => setNeedsFolding(!needsFolding)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${needsFolding ? 'bg-black' : 'bg-gray-300'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${needsFolding ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                  </div>
+                  
+                  {/* HIDDEN DROPDOWN - Only shows if Fold is checked */}
+                  {needsFolding && (
+                    <div className="mt-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                      <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Select Fold Type</label>
+                      <select 
+                        value={foldType} 
+                        onChange={(e) => setFoldType(e.target.value)}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2.5 bg-white outline-none focus:border-black"
+                      >
+                        <option>Tri-Fold</option>
+                        <option>Half-Fold</option>
+                        <option>Z-Fold</option>
+                        <option>Gate Fold</option>
+                        <option>Double Parallel</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
               </div>
-              <button type="submit" disabled={isUploading} className="w-full py-4 bg-black text-white rounded-xl font-bold hover:bg-gray-800 flex items-center justify-center">
+
+              <div>
+                 <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Additional Notes</label>
+                 <textarea rows={2} value={jobNotes} onChange={(e) => setJobNotes(e.target.value)} placeholder="Special shipping address, packaging instructions..." className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-black focus:ring-1 focus:ring-black" />
+              </div>
+              
+              <button type="submit" disabled={isUploading} className="w-full py-4 bg-black text-white rounded-xl font-bold hover:bg-gray-800 flex items-center justify-center shadow-lg transition-transform active:scale-95">
                 {isUploading ? <Loader2 className="animate-spin mr-2" /> : <UploadCloud className="mr-2" size={20} />}
-                {isUploading ? 'Uploading...' : 'Submit Order'}
+                {isUploading ? 'Uploading & Creating Ticket...' : 'Submit Print Job'}
               </button>
             </form>
           </div>
@@ -235,45 +325,40 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* === ADMIN VIEW (Table) === */}
           {isAdmin ? (
+            // ADMIN TABLE VIEW
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
                 <h3 className="font-semibold text-gray-900">Active Job Queue</h3>
-                <div className="flex space-x-2">
-                  <div className="relative">
+                <div className="relative">
                     <Search className="absolute left-2 top-2 text-gray-400" size={16} />
-                    <input type="text" placeholder="Search jobs..." className="pl-8 pr-4 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:border-black" />
-                  </div>
+                    <input type="text" placeholder="Search..." className="pl-8 pr-4 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:border-black" />
                 </div>
               </div>
-              {jobs.length === 0 ? (
-                <div className="p-12 text-center text-gray-500">No jobs found in the system.</div>
-              ) : (
+              {jobs.length === 0 ? <div className="p-8 text-center text-gray-400">No active jobs.</div> : (
                 <table className="w-full text-left text-sm">
                   <thead className="bg-gray-50 text-gray-500 uppercase font-medium">
                     <tr>
                       <th className="px-6 py-3">Job ID</th>
                       <th className="px-6 py-3">Title</th>
+                      <th className="px-6 py-3">Specs</th>
                       <th className="px-6 py-3">Qty</th>
                       <th className="px-6 py-3">Status</th>
-                      <th className="px-6 py-3">Date</th>
                       <th className="px-6 py-3">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {jobs.map((job) => (
+                    {jobs.map((job: any) => (
                       <tr key={job.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-6 py-4 font-mono text-gray-500">#{job.id.substring(0,6).toUpperCase()}</td>
                         <td className="px-6 py-4 font-medium text-gray-900">{job.title}</td>
+                        <td className="px-6 py-4 text-gray-500 text-xs">
+                           {job.paper_stock}<br/>
+                           {job.folding_type !== 'None' && <span className="text-blue-600 font-bold">{job.folding_type}</span>}
+                        </td>
                         <td className="px-6 py-4">{job.quantity}</td>
                         <td className="px-6 py-4"><StatusBadge status={job.status} /></td>
-                        <td className="px-6 py-4 text-gray-500">{new Date(job.created_at).toLocaleDateString()}</td>
-                        <td className="px-6 py-4">
-                          <Link href={`/dashboard/jobs/${job.id}`} className="text-blue-600 hover:text-blue-800 font-medium hover:underline">
-                            View Ticket
-                          </Link>
-                        </td>
+                        <td className="px-6 py-4"><Link href={`/dashboard/jobs/${job.id}`} className="text-blue-600 font-medium hover:underline">View</Link></td>
                       </tr>
                     ))}
                   </tbody>
@@ -281,9 +366,8 @@ export default function Dashboard() {
               )}
             </div>
           ) : (
-            // === CUSTOMER VIEW (Cards) ===
+            // CUSTOMER CARD VIEW
             <>
-              {/* Upload Hero */}
               <div className="relative group cursor-pointer mb-12" onClick={handleUploadClick}>
                 <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept=".pdf,.ai,.psd,.indd,.jpg,.png" />
                 <div className="absolute -inset-1 rounded-3xl bg-gradient-to-r from-blue-600 to-purple-600 opacity-20 blur group-hover:opacity-40 transition duration-500"></div>
@@ -292,20 +376,12 @@ export default function Dashboard() {
                     <UploadCloud className="h-8 w-8 text-blue-600" />
                   </div>
                   <h3 className="mt-4 text-xl font-bold text-gray-900">Upload a new job</h3>
-                  <p className="text-sm text-gray-500 mt-2">PDF, AI, PSD supported</p>
                   <button className="mt-6 rounded-full bg-blue-600 px-6 py-2 font-semibold text-white shadow-lg hover:bg-blue-700">Select Files</button>
                 </div>
               </div>
-
-              {/* Job Cards */}
               <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                {jobs.map((job) => (
-                   <StatusCard key={job.id} job={job} />
-                ))}
+                {jobs.map((job) => (<StatusCard key={job.id} job={job} />))}
               </div>
-              {jobs.length === 0 && (
-                <p className="text-center text-gray-400 mt-8">No jobs yet. Upload your first file above!</p>
-              )}
             </>
           )}
         </div>
@@ -326,27 +402,17 @@ function NavItem({ icon, label, active = false }: { icon: any, label: string, ac
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const styles: any = {
-    'Pending Review': 'bg-yellow-100 text-yellow-800',
-    'Proof Ready': 'bg-blue-100 text-blue-800',
-    'In Production': 'bg-purple-100 text-purple-800',
-    'Shipped': 'bg-green-100 text-green-800'
-  };
+  const styles: any = { 'Pending Review': 'bg-yellow-100 text-yellow-800', 'In Production': 'bg-purple-100 text-purple-800', 'Shipped': 'bg-green-100 text-green-800' };
   return <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${styles[status] || 'bg-gray-100 text-gray-800'}`}>{status}</span>;
 }
 
 function StatusCard({ job }: { job: Job }) {
-  const styles: any = {
-    'Pending Review': 'bg-amber-100 text-amber-700',
-    'In Production': 'bg-emerald-100 text-emerald-700',
-  };
+  const styles: any = { 'Pending Review': 'bg-amber-100 text-amber-700', 'In Production': 'bg-emerald-100 text-emerald-700' };
   return (
     <Link href={`/dashboard/jobs/${job.id}`}>
       <div className="group cursor-pointer rounded-xl border border-gray-200 bg-white p-6 shadow-sm transition-all hover:border-black hover:shadow-md">
         <div className="flex items-start justify-between">
-          <div className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide ${styles[job.status] || 'bg-blue-100 text-blue-700'}`}>
-            {job.status}
-          </div>
+          <div className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide ${styles[job.status] || 'bg-blue-100 text-blue-700'}`}>{job.status}</div>
           <span className="text-xs font-mono text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span>
         </div>
         <h4 className="mt-4 text-lg font-bold text-gray-900 truncate">{job.title}</h4>
