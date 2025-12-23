@@ -4,6 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { Loader2, AlertCircle, ArrowRight } from 'lucide-react';
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 // Supabase Helper
 function createClient() {
@@ -14,6 +15,7 @@ function createClient() {
 }
 
 export default function LoginPage() {
+  const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
@@ -37,32 +39,61 @@ export default function LoginPage() {
     setIsLoading(true);
     setMessage(null);
 
-    if (mode === 'signin') {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (error) {
-        setMessage({ text: error.message, type: 'error' });
-        setIsLoading(false);
+    try {
+      if (mode === 'signin') {
+        // --- LOG IN LOGIC ---
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (error) {
+          setMessage({ text: error.message, type: 'error' });
+          setIsLoading(false);
+        } else {
+          // Success! Redirect to dashboard
+          router.push('/dashboard');
+          router.refresh();
+        }
       } else {
-        window.location.href = '/dashboard';
+        // --- SIGN UP LOGIC ---
+        const { error, data } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: `${location.origin}/auth/callback`,
+          },
+        });
+
+        if (error) {
+          // 🧠 SMART SWITCH: If user exists, swap to login mode automatically
+          if (error.message.includes('already registered') || error.message.includes('User already registered')) {
+            setMode('signin');
+            setMessage({ 
+              text: 'Account exists! Please click Sign In to log in.', 
+              type: 'success' 
+            });
+            // We keep the password field filled so they can just click "Sign In" immediately
+          } else {
+            setMessage({ text: error.message, type: 'error' });
+          }
+          setIsLoading(false);
+        } else {
+          // If email verification is OFF (Dev Mode), they are logged in immediately
+          if (data.session) {
+             setMessage({ text: 'Account created! Logging you in...', type: 'success' });
+             router.push('/dashboard');
+             router.refresh();
+          } else {
+             // If email verification is ON
+             setMessage({ text: 'Check your email for the confirmation link!', type: 'success' });
+             setEmail('');
+             setPassword('');
+             setIsLoading(false);
+          }
+        }
       }
-    } else {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${location.origin}/auth/callback`,
-        },
-      });
-      if (error) {
-        setMessage({ text: error.message, type: 'error' });
-      } else {
-        setMessage({ text: 'Check your email for the confirmation link!', type: 'success' });
-        setEmail('');
-        setPassword('');
-      }
+    } catch (err) {
+      setMessage({ text: 'An unexpected error occurred.', type: 'error' });
       setIsLoading(false);
     }
   };
