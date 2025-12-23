@@ -1,3 +1,5 @@
+import './globals.css';
+
 // app/layout.js
 import './global.css';
 
