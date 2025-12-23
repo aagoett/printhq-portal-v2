@@ -1,6 +1,6 @@
 'use client';
 
-import { sendTestEmail } from '@/app/actions/send-test-email';
+import { sendTestEmail } from '../actions/send-test-email';
 import { useState } from 'react';
 
 export default function TestEmailPage() {
