@@ -1,3 +1,7 @@
+import './globals.css'
+// ... rest of your imports
+
+
 import './globals.css';
 
 // app/layout.js
