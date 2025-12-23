@@ -7,7 +7,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 // IMPORTANT: On the free plan, you must send FROM this email.
 // Also, you can ONLY send TO yourself (andrew@printedunion.com) until you verify your domain.
-const SENDER_EMAIL = 'onboarding@resend.dev'; 
+const SENDER_EMAIL = 'orders@gocmyk.com'; 
 
 // Replace this with your actual Vercel URL (e.g., https://printhq.vercel.app)
 const SITE_URL = 'https://printhq-portal-v2.vercel.app'; 
