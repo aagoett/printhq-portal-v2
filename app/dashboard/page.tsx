@@ -5,30 +5,74 @@ import {
   UploadCloud, 
   FileText, 
   Clock, 
-  CheckCircle2, 
   Settings, 
   LogOut, 
-  LayoutDashboard,
-  Plus
+  LayoutDashboard, 
+  Plus,
+  Loader2,
+  CheckCircle2
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { useRef, useState } from 'react';
 
 export default function Dashboard() {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
 
   const handleSignOut = async () => {
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
     await supabase.auth.signOut();
     router.push('/login');
+  };
+
+  // 1. Trigger the hidden file picker
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  // 2. Handle the file once selected
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+
+    const file = e.target.files[0];
+    setIsUploading(true);
+    setUploadStatus('idle');
+
+    try {
+      // Create a unique name: "timestamp-filename.pdf"
+      const fileName = `${Date.now()}-${file.name}`;
+
+      const { data, error } = await supabase
+        .storage
+        .from('uploads') // This must match your bucket name exactly
+        .upload(fileName, file);
+
+      if (error) throw error;
+
+      setUploadStatus('success');
+      // Reset success message after 3 seconds
+      setTimeout(() => setUploadStatus('idle'), 3000);
+
+    } catch (error) {
+      console.error('Error uploading:', error);
+      setUploadStatus('error');
+    } finally {
+      setIsUploading(false);
+      // Clear the input so they can upload the same file again if needed
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   return (
     <div className="flex h-screen bg-gray-50">
       
-      {/* 1. SIDEBAR NAVIGATION */}
+      {/* SIDEBAR NAVIGATION */}
       <div className="hidden w-64 flex-col bg-white border-r border-gray-200 md:flex">
         <div className="flex h-20 items-center px-8 border-b border-gray-100">
           <div className="h-8 w-8 rounded-full bg-black flex items-center justify-center mr-3">
@@ -55,7 +99,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* 2. MAIN CONTENT AREA */}
+      {/* MAIN CONTENT AREA */}
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl px-8 py-12">
           
@@ -70,28 +114,61 @@ export default function Dashboard() {
             </button>
           </div>
 
-          {/* 3. THE "HERO" UPLOAD TARGET */}
-          <div className="relative group cursor-pointer">
+          {/* THE "HERO" UPLOAD TARGET */}
+          <div className="relative group cursor-pointer" onClick={handleUploadClick}>
+            
+            {/* Hidden Input Field */}
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={handleFileChange} 
+              className="hidden" 
+              accept=".pdf,.ai,.psd,.indd,.jpg,.png"
+            />
+
             <div className="absolute -inset-1 rounded-3xl bg-gradient-to-r from-blue-600 to-purple-600 opacity-20 blur group-hover:opacity-40 transition duration-500"></div>
             <div className="relative flex h-80 w-full flex-col items-center justify-center rounded-2xl bg-white border-2 border-dashed border-gray-300 hover:border-blue-500 transition-all duration-300 shadow-sm">
               
-              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-blue-50 group-hover:scale-110 transition-transform duration-300">
-                <UploadCloud className="h-10 w-10 text-blue-600" />
-              </div>
-              
-              <h3 className="mt-6 text-2xl font-bold text-gray-900">Upload a new job</h3>
-              <p className="mt-2 text-gray-500 max-w-sm text-center">
-                Drag and drop your print files here, or click to browse. <br/>
-                <span className="text-xs text-gray-400 mt-2 block">Supports PDF, AI, PSD, INDD</span>
-              </p>
+              {isUploading ? (
+                // LOADING STATE
+                <div className="flex flex-col items-center animate-pulse">
+                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-blue-50 mb-4">
+                    <Loader2 className="h-10 w-10 text-blue-600 animate-spin" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-gray-900">Uploading...</h3>
+                  <p className="mt-2 text-gray-500">Please wait while we secure your file.</p>
+                </div>
+              ) : uploadStatus === 'success' ? (
+                // SUCCESS STATE
+                <div className="flex flex-col items-center">
+                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-green-50 mb-4">
+                    <CheckCircle2 className="h-10 w-10 text-green-600" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-gray-900">Upload Complete!</h3>
+                  <p className="mt-2 text-gray-500">We have received your file.</p>
+                </div>
+              ) : (
+                // DEFAULT STATE
+                <>
+                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-blue-50 group-hover:scale-110 transition-transform duration-300">
+                    <UploadCloud className="h-10 w-10 text-blue-600" />
+                  </div>
+                  
+                  <h3 className="mt-6 text-2xl font-bold text-gray-900">Upload a new job</h3>
+                  <p className="mt-2 text-gray-500 max-w-sm text-center">
+                    Drag and drop your print files here, or click to browse. <br/>
+                    <span className="text-xs text-gray-400 mt-2 block">Supports PDF, AI, PSD, INDD</span>
+                  </p>
 
-              <button className="mt-8 rounded-full bg-blue-600 px-8 py-3 font-semibold text-white shadow-lg shadow-blue-600/30 hover:bg-blue-700 hover:shadow-blue-600/40 transition-all">
-                Select Files
-              </button>
+                  <button className="mt-8 rounded-full bg-blue-600 px-8 py-3 font-semibold text-white shadow-lg shadow-blue-600/30 hover:bg-blue-700 hover:shadow-blue-600/40 transition-all">
+                    Select Files
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
-          {/* 4. RECENT ACTIVITY CARDS */}
+          {/* RECENT ACTIVITY CARDS */}
           <div className="mt-12">
             <h3 className="text-lg font-semibold text-gray-900 mb-6">Recent Activity</h3>
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
