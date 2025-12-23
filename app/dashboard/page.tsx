@@ -11,13 +11,17 @@ import {
   Loader2,
   X,
   Calendar,
-  Hash
+  Hash,
+  Search,
+  Filter
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
-import Link from 'next/link'; // <--- Added this for the links
+import Link from 'next/link';
 
-// Define what a "Job" looks like in your database
+// --- CONFIGURATION ---
+const ADMIN_EMAIL = 'andrew@printedunion.com';
+
 type Job = {
   id: string;
   title: string;
@@ -25,18 +29,21 @@ type Job = {
   created_at: string;
   quantity: number;
   notes: string;
+  user_id: string;
 };
 
 export default function Dashboard() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // State for the UI
-  const [isUploading, setIsUploading] = useState(false);
+  // State
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [showModal, setShowModal] = useState(false);
   
-  // State for the new Job Form
+  // Modal State
+  const [showModal, setShowModal] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
@@ -47,56 +54,57 @@ export default function Dashboard() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  // 1. FETCH REAL JOBS ON LOAD
   useEffect(() => {
-    const fetchJobs = async () => {
+    const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) return router.push('/login');
 
-      // Get jobs from the "jobs" table we created
-      const { data } = await supabase
+      // 1. Check if Admin
+      const _isAdmin = user.email === ADMIN_EMAIL;
+      setIsAdmin(_isAdmin);
+
+      // 2. Fetch Jobs based on Role
+      let query = supabase
         .from('jobs')
         .select('*')
-        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
-      
+
+      if (!_isAdmin) {
+        // If NOT admin, only show my own jobs
+        query = query.eq('user_id', user.id);
+      }
+
+      const { data } = await query;
       if (data) setJobs(data);
+      setLoading(false);
     };
-    fetchJobs();
-  }, []);
+    init();
+  }, [router]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     router.push('/login');
   };
 
-  // 2. TRIGGER FILE PICKER
-  const handleUploadClick = () => {
-    fileInputRef.current?.click();
-  };
+  const handleUploadClick = () => fileInputRef.current?.click();
 
-  // 3. FILE SELECTED -> OPEN POPUP (Don't upload yet!)
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setSelectedFile(e.target.files[0]);
-      // Auto-fill title with filename
       setJobTitle(e.target.files[0].name.split('.').slice(0, -1).join('.'));
       setShowModal(true);
     }
   };
 
-  // 4. SUBMIT FORM -> UPLOAD FILE + CREATE JOB TICKET
   const handleSubmitJob = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFile) return;
 
     setIsUploading(true);
-    
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
-      // A. Upload File to Storage
       const fileExt = selectedFile.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
       
@@ -107,7 +115,6 @@ export default function Dashboard() {
 
       if (uploadError) throw uploadError;
 
-      // B. Create Database Record
       const { error: dbError } = await supabase
         .from('jobs')
         .insert({
@@ -121,102 +128,46 @@ export default function Dashboard() {
 
       if (dbError) throw dbError;
 
-      // C. Reset & Refresh
       setShowModal(false);
-      setSelectedFile(null);
-      setJobTitle('');
-      setJobQty('');
-      setJobNotes('');
-      window.location.reload(); // Refresh to show new job
+      window.location.reload(); 
 
     } catch (error) {
-      console.error('Error creating job:', error);
-      alert('Something went wrong. Check console.');
+      console.error('Error:', error);
+      alert('Error uploading job.');
     } finally {
       setIsUploading(false);
     }
   };
 
+  if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
+
   return (
     <div className="flex h-screen bg-gray-50 relative">
       
-      {/* --- MODAL POPUP --- */}
+      {/* --- MODAL (Same for everyone) --- */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-              <h3 className="font-bold text-lg text-gray-900">Job Details</h3>
-              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-black transition-colors">
+             <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <h3 className="font-bold text-lg text-gray-900">New Job Ticket</h3>
+              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-black">
                 <X size={20} />
               </button>
             </div>
-            
             <form onSubmit={handleSubmitJob} className="p-6 space-y-5">
-              {/* File Preview Card */}
               <div className="flex items-center p-4 bg-blue-50 rounded-xl text-blue-900 border border-blue-100">
                 <FileText size={20} className="mr-3 text-blue-600" />
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-blue-500">Selected File</p>
-                  <p className="font-medium truncate max-w-[250px]">{selectedFile?.name}</p>
-                </div>
+                <p className="font-medium truncate max-w-[250px]">{selectedFile?.name}</p>
               </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Job Title</label>
-                <input 
-                  type="text" 
-                  required
-                  value={jobTitle}
-                  onChange={(e) => setJobTitle(e.target.value)}
-                  className="w-full rounded-xl border border-gray-300 px-4 py-3 focus:ring-2 focus:ring-black focus:border-transparent outline-none transition-all"
-                />
-              </div>
-
+              <input type="text" required value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder="Job Title" className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black" />
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">Quantity</label>
-                  <div className="relative">
-                    <Hash size={16} className="absolute left-3 top-3.5 text-gray-400" />
-                    <input 
-                      type="number" 
-                      required
-                      value={jobQty}
-                      onChange={(e) => setJobQty(e.target.value)}
-                      placeholder="1000"
-                      className="w-full rounded-xl border border-gray-300 pl-10 pr-4 py-3 focus:ring-2 focus:ring-black focus:border-transparent outline-none transition-all"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">Due Date (Optional)</label>
-                  <div className="relative">
-                    <Calendar size={16} className="absolute left-3 top-3.5 text-gray-400" />
-                    <input 
-                      type="date" 
-                      className="w-full rounded-xl border border-gray-300 pl-10 pr-4 py-3 focus:ring-2 focus:ring-black focus:border-transparent outline-none transition-all"
-                    />
-                  </div>
-                </div>
+                <input type="number" required value={jobQty} onChange={(e) => setJobQty(e.target.value)} placeholder="Qty" className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black" />
+                <input type="date" className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black" />
               </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1.5">Notes / Finishing</label>
-                <textarea 
-                  rows={3}
-                  value={jobNotes}
-                  onChange={(e) => setJobNotes(e.target.value)}
-                  placeholder="Paper stock, folding, shipping address..."
-                  className="w-full rounded-xl border border-gray-300 px-4 py-3 focus:ring-2 focus:ring-black focus:border-transparent outline-none transition-all"
-                />
-              </div>
-
-              <button 
-                type="submit" 
-                disabled={isUploading}
-                className="w-full py-4 bg-black text-white rounded-xl font-bold hover:bg-gray-800 transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed shadow-lg"
-              >
+              <textarea rows={3} value={jobNotes} onChange={(e) => setJobNotes(e.target.value)} placeholder="Notes..." className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black" />
+              <button type="submit" disabled={isUploading} className="w-full py-4 bg-black text-white rounded-xl font-bold hover:bg-gray-800 flex items-center justify-center">
                 {isUploading ? <Loader2 className="animate-spin mr-2" /> : <UploadCloud className="mr-2" size={20} />}
-                {isUploading ? 'Uploading Job...' : 'Submit Order'}
+                {isUploading ? 'Uploading...' : 'Submit Order'}
               </button>
             </form>
           </div>
@@ -230,102 +181,107 @@ export default function Dashboard() {
             <span className="text-white font-bold text-xs">PHQ</span>
           </div>
           <span className="font-bold text-lg tracking-tight">PrintHQ</span>
+          {isAdmin && <span className="ml-2 px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold uppercase rounded">Admin</span>}
         </div>
-
         <nav className="flex-1 space-y-1 px-4 py-6">
-          <NavItem icon={<LayoutDashboard size={20} />} label="Overview" active />
-          <NavItem icon={<FileText size={20} />} label="My Jobs" />
-          <NavItem icon={<Clock size={20} />} label="Quote History" />
+          <NavItem icon={<LayoutDashboard size={20} />} label={isAdmin ? "All Jobs" : "My Jobs"} active />
+          {!isAdmin && <NavItem icon={<FileText size={20} />} label="Quote History" />}
           <NavItem icon={<Settings size={20} />} label="Settings" />
         </nav>
-
         <div className="p-4 border-t border-gray-100">
-          <button 
-            onClick={handleSignOut}
-            className="flex w-full items-center px-4 py-3 text-sm font-medium text-gray-500 hover:text-red-600 transition-colors"
-          >
-            <LogOut size={20} className="mr-3" />
-            Sign out
+          <button onClick={handleSignOut} className="flex w-full items-center px-4 py-3 text-sm font-medium text-gray-500 hover:text-red-600 transition-colors">
+            <LogOut size={20} className="mr-3" /> Sign out
           </button>
         </div>
       </div>
 
-      {/* MAIN CONTENT AREA */}
+      {/* MAIN CONTENT */}
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl px-8 py-12">
+        <div className="mx-auto max-w-6xl px-8 py-12">
           
           <div className="mb-10 flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-              <p className="mt-1 text-gray-500">Welcome back. Ready to print?</p>
+              <h1 className="text-3xl font-bold text-gray-900">{isAdmin ? 'Admin Overview' : 'Dashboard'}</h1>
+              <p className="mt-1 text-gray-500">{isAdmin ? 'Manage all incoming production.' : 'Welcome back. Ready to print?'}</p>
             </div>
-            <button 
-              onClick={handleUploadClick} 
-              className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg hover:shadow-xl transition-all"
-            >
-              + New Request
-            </button>
-          </div>
-
-          {/* UPLOAD HERO */}
-          <div className="relative group cursor-pointer" onClick={handleUploadClick}>
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              onChange={handleFileSelect} 
-              className="hidden" 
-              accept=".pdf,.ai,.psd,.indd,.jpg,.png"
-            />
-            <div className="absolute -inset-1 rounded-3xl bg-gradient-to-r from-blue-600 to-purple-600 opacity-20 blur group-hover:opacity-40 transition duration-500"></div>
-            <div className="relative flex h-80 w-full flex-col items-center justify-center rounded-2xl bg-white border-2 border-dashed border-gray-300 hover:border-blue-500 transition-all duration-300 shadow-sm">
-              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-blue-50 group-hover:scale-110 transition-transform duration-300">
-                <UploadCloud className="h-10 w-10 text-blue-600" />
-              </div>
-              <h3 className="mt-6 text-2xl font-bold text-gray-900">Upload a new job</h3>
-              <p className="mt-2 text-gray-500 max-w-sm text-center">
-                Drag and drop your print files here, or click to browse.
-              </p>
-              <button className="mt-8 rounded-full bg-blue-600 px-8 py-3 font-semibold text-white shadow-lg shadow-blue-600/30 hover:bg-blue-700 transition-all">
-                Select Files
+            {!isAdmin && (
+              <button onClick={handleUploadClick} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg">
+                + New Request
               </button>
-            </div>
-          </div>
-
-          {/* REAL JOB LIST */}
-          <div className="mt-12">
-            <h3 className="text-lg font-semibold text-gray-900 mb-6">Current Jobs</h3>
-            
-            {jobs.length === 0 ? (
-              // EMPTY STATE (If no jobs exist yet)
-              <div className="text-center py-12 bg-white rounded-xl border border-gray-100">
-                <p className="text-gray-400 mb-2">No active jobs found.</p>
-                <p className="text-sm text-gray-500">Upload your first file to get started!</p>
-              </div>
-            ) : (
-              // LIST OF CARDS
-              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                {jobs.map((job) => (
-                   <StatusCard 
-                     key={job.id}
-                     jobId={job.id} // <--- PASSING THE ID HERE
-                     status={job.status}
-                     title={job.title} 
-                     id={`#${job.id.substring(0,6).toUpperCase()}`} 
-                     date={new Date(job.created_at).toLocaleDateString()}
-                     quantity={job.quantity}
-                     color={job.status === 'Pending Review' ? 'yellow' : 'green'}
-                   />
-                ))}
-              </div>
             )}
           </div>
+
+          {/* ADMIN VIEW: TABLE LIST */}
+          {isAdmin ? (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                <h3 className="font-semibold text-gray-900">Active Job Queue</h3>
+                <div className="flex space-x-2">
+                  <div className="relative">
+                    <Search className="absolute left-2 top-2 text-gray-400" size={16} />
+                    <input type="text" placeholder="Search..." className="pl-8 pr-4 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:border-black" />
+                  </div>
+                </div>
+              </div>
+              <table className="w-full text-left text-sm">
+                <thead className="bg-gray-50 text-gray-500 uppercase font-medium">
+                  <tr>
+                    <th className="px-6 py-3">Job ID</th>
+                    <th className="px-6 py-3">Title</th>
+                    <th className="px-6 py-3">Qty</th>
+                    <th className="px-6 py-3">Status</th>
+                    <th className="px-6 py-3">Date</th>
+                    <th className="px-6 py-3">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {jobs.map((job) => (
+                    <tr key={job.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-6 py-4 font-mono text-gray-500">#{job.id.substring(0,6).toUpperCase()}</td>
+                      <td className="px-6 py-4 font-medium text-gray-900">{job.title}</td>
+                      <td className="px-6 py-4">{job.quantity}</td>
+                      <td className="px-6 py-4"><StatusBadge status={job.status} /></td>
+                      <td className="px-6 py-4 text-gray-500">{new Date(job.created_at).toLocaleDateString()}</td>
+                      <td className="px-6 py-4">
+                        <Link href={`/dashboard/jobs/${job.id}`} className="text-blue-600 hover:text-blue-800 font-medium">View Ticket</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            // CUSTOMER VIEW: CARDS
+            <>
+              {/* UPLOAD HERO (Only for customers) */}
+              <div className="relative group cursor-pointer mb-12" onClick={handleUploadClick}>
+                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept=".pdf,.ai,.psd,.indd,.jpg,.png" />
+                <div className="absolute -inset-1 rounded-3xl bg-gradient-to-r from-blue-600 to-purple-600 opacity-20 blur group-hover:opacity-40 transition duration-500"></div>
+                <div className="relative flex h-64 w-full flex-col items-center justify-center rounded-2xl bg-white border-2 border-dashed border-gray-300 hover:border-blue-500 transition-all duration-300 shadow-sm">
+                   <div className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-50 group-hover:scale-110 transition-transform duration-300">
+                    <UploadCloud className="h-8 w-8 text-blue-600" />
+                  </div>
+                  <h3 className="mt-4 text-xl font-bold text-gray-900">Upload a new job</h3>
+                  <button className="mt-6 rounded-full bg-blue-600 px-6 py-2 font-semibold text-white shadow-lg hover:bg-blue-700">Select Files</button>
+                </div>
+              </div>
+
+              {/* JOB CARDS */}
+              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                {jobs.map((job) => (
+                   <StatusCard key={job.id} job={job} />
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </main>
     </div>
   );
 }
 
-// Helper Components
+// --- SUB COMPONENTS ---
+
 function NavItem({ icon, label, active = false }: { icon: any, label: string, active?: boolean }) {
   return (
     <a href="#" className={`flex items-center rounded-lg px-4 py-3 text-sm font-medium transition-colors ${active ? 'bg-gray-100 text-black' : 'text-gray-600 hover:bg-gray-50 hover:text-black'}`}>
@@ -335,28 +291,35 @@ function NavItem({ icon, label, active = false }: { icon: any, label: string, ac
   );
 }
 
-function StatusCard({ status, title, id, date, quantity, color, jobId }: any) {
-  const colors: any = {
-    green: "bg-emerald-100 text-emerald-700",
-    yellow: "bg-amber-100 text-amber-700",
-    blue: "bg-blue-100 text-blue-700",
+function StatusBadge({ status }: { status: string }) {
+  const styles: any = {
+    'Pending Review': 'bg-yellow-100 text-yellow-800',
+    'Proof Ready': 'bg-blue-100 text-blue-800',
+    'In Production': 'bg-purple-100 text-purple-800',
+    'Shipped': 'bg-green-100 text-green-800'
+  };
+  return <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${styles[status] || 'bg-gray-100 text-gray-800'}`}>{status}</span>;
+}
+
+function StatusCard({ job }: { job: Job }) {
+  const styles: any = {
+    'Pending Review': 'bg-amber-100 text-amber-700',
+    'In Production': 'bg-emerald-100 text-emerald-700',
   };
   return (
-    <Link href={`/dashboard/jobs/${jobId}`}>
+    <Link href={`/dashboard/jobs/${job.id}`}>
       <div className="group cursor-pointer rounded-xl border border-gray-200 bg-white p-6 shadow-sm transition-all hover:border-black hover:shadow-md">
         <div className="flex items-start justify-between">
-          <div className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide ${colors[color] || colors.blue}`}>
-            {status}
+          <div className={`rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide ${styles[job.status] || 'bg-blue-100 text-blue-700'}`}>
+            {job.status}
           </div>
-          <span className="text-xs font-mono text-gray-400 group-hover:text-black transition-colors">{id}</span>
+          <span className="text-xs font-mono text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span>
         </div>
-        <h4 className="mt-4 text-lg font-bold text-gray-900 truncate">{title}</h4>
-        <div className="mt-1 flex items-center text-sm text-gray-500">
-          <span className="font-medium text-gray-900 mr-1">{quantity}</span> units
-        </div>
+        <h4 className="mt-4 text-lg font-bold text-gray-900 truncate">{job.title}</h4>
+        <div className="mt-1 flex items-center text-sm text-gray-500">{job.quantity} units</div>
         <div className="mt-4 flex items-center text-xs text-gray-400 border-t border-gray-50 pt-3">
           <Clock size={12} className="mr-1.5" />
-          Submitted {date}
+          {new Date(job.created_at).toLocaleDateString()}
         </div>
       </div>
     </Link>
