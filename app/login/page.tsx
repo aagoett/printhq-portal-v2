@@ -1,15 +1,23 @@
 'use client';
 
-import { createClient } from '@/utils/supabase/client'; // We will create this next
+import { createBrowserClient } from '@supabase/ssr';
 import { Check, Loader2 } from 'lucide-react';
 import { useState } from 'react';
+
+// --- WE DEFINED THE HELPER RIGHT HERE TO FIX THE BUILD ERROR ---
+function createClient() {
+  return createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+}
+// -------------------------------------------------------------
 
 export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
 
   const handleGoogleLogin = async () => {
     setIsLoading(true);
-    // This is where the magic happens
     const supabase = createClient();
     await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -22,7 +30,6 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
       <div className="w-full max-w-md space-y-8">
-        {/* Logo / Brand Header */}
         <div className="text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-black">
             <Check className="h-6 w-6 text-white" />
@@ -35,11 +42,8 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* Login Card */}
         <div className="mt-8 rounded-xl bg-white px-10 py-10 shadow-xl border border-gray-100">
           <div className="space-y-6">
-            
-            {/* Google Button */}
             <button
               onClick={handleGoogleLogin}
               disabled={isLoading}
@@ -48,7 +52,6 @@ export default function LoginPage() {
               {isLoading ? (
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
               ) : (
-                // Google "G" Logo SVG
                 <svg className="mr-3 h-5 w-5" viewBox="0 0 24 24">
                   <path
                     d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -70,40 +73,6 @@ export default function LoginPage() {
               )}
               {isLoading ? 'Connecting...' : 'Sign in with Google'}
             </button>
-
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-200" />
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="bg-white px-2 text-gray-500">
-                  Or continue with email
-                </span>
-              </div>
-            </div>
-
-            {/* Email Form (We can wire this up later if needed) */}
-            <form className="space-y-4">
-              <div>
-                <label htmlFor="email" className="sr-only">Email address</label>
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  required
-                  placeholder="name@work-email.com"
-                  className="block w-full rounded-lg border border-gray-300 px-4 py-3 text-gray-900 placeholder-gray-500 focus:border-black focus:outline-none focus:ring-black sm:text-sm"
-                />
-              </div>
-              <button
-                type="button"
-                className="flex w-full justify-center rounded-lg bg-black px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2 transition-all"
-              >
-                Sign In with Email
-              </button>
-            </form>
-
           </div>
         </div>
       </div>
