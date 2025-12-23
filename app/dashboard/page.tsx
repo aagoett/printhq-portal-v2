@@ -2,12 +2,27 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { 
-  UploadCloud, FileText, Clock, Settings, LogOut, LayoutDashboard, 
-  Loader2, X, Calendar, Hash, Search, Filter, Layers, Scissors
+  UploadCloud, 
+  FileText, 
+  Clock, 
+  Settings, 
+  LogOut, 
+  LayoutDashboard, 
+  Loader2,
+  X,
+  Calendar,
+  Hash,
+  Search,
+  Filter,
+  Layers,
+  Scissors
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
+
+// Import the server action to send emails
+import { sendOrderConfirmation } from '../actions';
 
 // --- TYPES ---
 type Job = {
@@ -18,6 +33,8 @@ type Job = {
   quantity: number;
   notes: string;
   user_id: string;
+  paper_stock?: string;
+  folding_type?: string;
 };
 
 export default function Dashboard() {
@@ -94,6 +111,7 @@ export default function Dashboard() {
     }
   };
 
+  // --- SUBMIT JOB (WITH EMAIL TRIGGER) ---
   const handleSubmitJob = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFile) return;
@@ -112,8 +130,8 @@ export default function Dashboard() {
 
       if (uploadError) throw uploadError;
 
-      // 2. Create DB Record
-      const { error: dbError } = await supabase
+      // 2. Create DB Record (AND RETURN DATA)
+      const { data: newJob, error: dbError } = await supabase
         .from('jobs')
         .insert({
           user_id: user.id,
@@ -122,14 +140,21 @@ export default function Dashboard() {
           notes: jobNotes,
           file_url: fileData?.path,
           status: 'Pending Review',
-          // New Specs
           paper_stock: paperStock,
           print_size: printSize,
           print_sides: isDoubleSided ? 'Double Sided' : 'Single Sided',
-          folding_type: needsFolding ? foldType : 'None' // Only save fold type if requested
-        });
+          folding_type: needsFolding ? foldType : 'None'
+        })
+        .select() // <--- CRITICAL: Get the new row back so we have the ID
+        .single();
 
       if (dbError) throw dbError;
+
+      // 3. SEND EMAIL 📧 (This triggers the email to the customer)
+      if (user.email && newJob) {
+        console.log("Attempting to send email to:", user.email);
+        await sendOrderConfirmation(user.email, newJob.id, jobTitle);
+      }
 
       setShowModal(false);
       window.location.reload(); 
