@@ -91,13 +91,6 @@ export default function JobDetailsPage() {
     const channel = supabase.channel('realtime_job')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, 
         (payload) => setMessages((current) => [...current, payload.new]))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'job_steps', filter: `job_id=eq.${params.id}` }, 
-        (payload) => {
-           // Simple refresh logic for steps
-           if(payload.eventType === 'INSERT') setSteps(curr => [...curr, payload.new]);
-           if(payload.eventType === 'UPDATE') setSteps(curr => curr.map(s => s.id === payload.new.id ? payload.new : s));
-           if(payload.eventType === 'DELETE') setSteps(curr => curr.filter(s => s.id !== payload.old.id));
-        })
       .subscribe();
       
     return () => { supabase.removeChannel(channel); };
@@ -146,7 +139,6 @@ export default function JobDetailsPage() {
       
       // Notify
       const { data: jobOwner } = await supabase.from('profiles').select('email').eq('id', job.user_id).single();
-      // Use guest email if available, otherwise profile email
       const targetEmail = job.guest_email || jobOwner?.email;
       if (targetEmail) {
          await sendProofNotification(targetEmail, params.id as string, job.title);
@@ -179,22 +171,53 @@ export default function JobDetailsPage() {
     await supabase.from('jobs').update({ fold_orientation: newOrientation }).eq('id', params.id);
   };
 
-  // --- WORKFLOW HANDLERS ---
+  // --- WORKFLOW HANDLERS (FIXED) ---
   const handleAddStep = async () => {
-    const newOrder = steps.length + 1;
-    await supabase.from('job_steps').insert({
-      job_id: params.id, department: newStepDept, step_order: newOrder, notes: newStepNotes, status: 'Pending'
-    });
-    setNewStepNotes('');
+    if (!newStepDept) return;
+
+    try {
+      const newOrder = steps.length + 1;
+      
+      // 1. Insert into DB and return the DATA (.select())
+      const { data, error } = await supabase.from('job_steps').insert({
+        job_id: params.id, 
+        department: newStepDept, 
+        step_order: newOrder, 
+        notes: newStepNotes, 
+        status: 'Pending'
+      })
+      .select()
+      .single();
+
+      if (error) throw error;
+
+      // 2. Manually update the screen INSTANTLY
+      if (data) {
+        setSteps([...steps, data]);
+        setNewStepNotes(''); // Clear the input
+      }
+
+    } catch (err: any) {
+      console.error('Error adding step:', err);
+      // alert(`Error adding step: ${err.message}`); // Optional: alert on error
+    }
   };
 
   const handleDeleteStep = async (stepId: string) => {
     if(!confirm("Remove this step?")) return;
+    
+    // Optimistic Delete
+    setSteps(steps.filter(s => s.id !== stepId));
+    
     await supabase.from('job_steps').delete().eq('id', stepId);
   };
 
   const toggleStepStatus = async (step: any) => {
     const newStatus = step.status === 'Completed' ? 'Pending' : 'Completed';
+    
+    // Optimistic Update
+    setSteps(steps.map(s => s.id === step.id ? {...s, status: newStatus} : s));
+
     await supabase.from('job_steps').update({ status: newStatus }).eq('id', step.id);
   };
 
@@ -206,7 +229,7 @@ export default function JobDetailsPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       
-      {/* PRINT TICKET HEADER (Hidden until print) */}
+      {/* PRINT TICKET HEADER */}
       <div className="print-only-header hidden">
         <div className="flex justify-between items-start">
           <div>
@@ -289,8 +312,7 @@ export default function JobDetailsPage() {
             <Timeline status={job.status} />
           </div>
 
-          {/* WORKFLOW MANAGER (The "Path" Builder) */}
-          {/* Visible if steps exist OR if user is Admin/Staff */}
+          {/* WORKFLOW MANAGER */}
           {(steps.length > 0 || isAdmin) && (
              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="font-semibold text-gray-900 mb-4 flex items-center">
