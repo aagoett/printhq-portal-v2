@@ -110,13 +110,18 @@ export default function Dashboard() {
     router.push('/login');
   };
 
-  const handleUploadClick = () => fileInputRef.current?.click();
+  const handleUploadClick = () => {
+    // This triggers the hidden file input
+    fileInputRef.current?.click();
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setSelectedFile(e.target.files[0]);
       setJobTitle(e.target.files[0].name.split('.').slice(0, -1).join('.'));
       setShowModal(true);
+      // Reset input so you can select the same file again if needed
+      e.target.value = '';
     }
   };
 
@@ -136,7 +141,7 @@ export default function Dashboard() {
       const { data: newJob, error: dbError } = await supabase
         .from('jobs')
         .insert({
-          user_id: selectedCustomerId, // <--- THIS IS THE MAGIC. Staff can set this to anyone.
+          user_id: selectedCustomerId, // <--- Staff can set this to anyone.
           title: jobTitle,
           quantity: parseInt(jobQty) || 0,
           notes: jobNotes,
@@ -153,11 +158,10 @@ export default function Dashboard() {
       if (dbError) throw dbError;
 
       // 3. SEND EMAIL (To the CUSTOMER, not necessarily the logged in staff)
-      // We need to find the email of the selectedCustomerId
       const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
-      
-      // If Staff entered it, selectedCustomer exists. If Customer entered it, look at session.
       let targetEmail = selectedCustomer?.email; 
+      
+      // Fallback if we can't find it in the list (e.g. self)
       if (!targetEmail) {
          const { data: { user } } = await supabase.auth.getUser();
          targetEmail = user?.email;
@@ -186,6 +190,9 @@ export default function Dashboard() {
   return (
     <div className="flex h-screen bg-gray-50 relative">
       
+      {/* --- HIDDEN INPUT (MOVED HERE SO IT EXISTS FOR EVERYONE) --- */}
+      <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept=".pdf,.ai,.psd,.indd,.jpg,.png" />
+
       {/* --- SMART UPLOAD MODAL --- */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
@@ -245,7 +252,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Specs Section (Same as before) */}
+              {/* Specs Section */}
               <div className="border-t border-gray-100 pt-4">
                 <p className="text-sm font-bold text-gray-900 mb-4 flex items-center">
                   <Settings size={16} className="mr-2" /> Print Specifications
@@ -352,7 +359,7 @@ export default function Dashboard() {
               <h1 className="text-3xl font-bold text-gray-900">{isInternal ? 'Production Overview' : 'Dashboard'}</h1>
               <p className="mt-1 text-gray-500">{isInternal ? 'Manage incoming production queue.' : 'Welcome back. Ready to print?'}</p>
             </div>
-            {/* BUTTON IS ALWAYS VISIBLE NOW - LOGIC IS IN HANDLER */}
+            {/* BUTTON IS ALWAYS VISIBLE NOW */}
             <button onClick={handleUploadClick} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">
               + New Order
             </button>
@@ -402,7 +409,6 @@ export default function Dashboard() {
             // CUSTOMER CARD VIEW
             <>
               <div className="relative group cursor-pointer mb-12" onClick={handleUploadClick}>
-                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept=".pdf,.ai,.psd,.indd,.jpg,.png" />
                 <div className="absolute -inset-1 rounded-3xl bg-gradient-to-r from-blue-600 to-purple-600 opacity-20 blur group-hover:opacity-40 transition duration-500"></div>
                 <div className="relative flex h-64 w-full flex-col items-center justify-center rounded-2xl bg-white border-2 border-dashed border-gray-300 hover:border-blue-500 transition-all duration-300 shadow-sm">
                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-50 group-hover:scale-110 transition-transform duration-300">
@@ -423,7 +429,8 @@ export default function Dashboard() {
   );
 }
 
-// --- SUB COMPONENTS --- (Same as before)
+// --- SUB COMPONENTS ---
+
 function NavItem({ icon, label, active = false }: { icon: any, label: string, active?: boolean }) {
   return (
     <a href="#" className={`flex items-center rounded-lg px-4 py-3 text-sm font-medium transition-colors ${active ? 'bg-gray-100 text-black' : 'text-gray-600 hover:bg-gray-50 hover:text-black'}`}>
