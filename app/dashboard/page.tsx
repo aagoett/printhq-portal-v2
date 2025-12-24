@@ -2,26 +2,12 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { 
-  UploadCloud, 
-  FileText, 
-  Clock, 
-  Settings, 
-  LogOut, 
-  LayoutDashboard, 
-  Loader2,
-  X,
-  Calendar,
-  Hash,
-  Search,
-  Filter,
-  Layers,
-  Scissors
+  UploadCloud, FileText, Clock, Settings, LogOut, LayoutDashboard, 
+  Loader2, X, Search, Scissors, User
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
-
-// Import the server action to send emails
 import { sendOrderConfirmation } from '../actions';
 
 // --- TYPES ---
@@ -37,14 +23,21 @@ type Job = {
   folding_type?: string;
 };
 
+type Profile = {
+  id: string;
+  email: string;
+  role: string;
+};
+
 export default function Dashboard() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // --- STATE ---
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [role, setRole] = useState('customer'); // 'admin', 'staff', 'customer'
   const [loading, setLoading] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [customers, setCustomers] = useState<Profile[]>([]); // List of customers for Staff
   
   // Modal State
   const [showModal, setShowModal] = useState(false);
@@ -55,8 +48,9 @@ export default function Dashboard() {
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
   const [jobNotes, setJobNotes] = useState('');
+  const [selectedCustomerId, setSelectedCustomerId] = useState(''); // For Staff Entry
   
-  // New Specs State
+  // Specs State
   const [paperStock, setPaperStock] = useState('100lb Gloss Text');
   const [printSize, setPrintSize] = useState('8.5 x 11');
   const [isDoubleSided, setIsDoubleSided] = useState(false);
@@ -77,19 +71,35 @@ export default function Dashboard() {
       // Check Role
       const { data: profile } = await supabase
         .from('profiles')
-        .select('is_admin')
+        .select('role, email, id')
         .eq('id', user.id)
         .single();
       
-      const _isAdmin = profile?.is_admin === true;
-      setIsAdmin(_isAdmin);
+      const userRole = profile?.role || 'customer';
+      setRole(userRole);
+      
+      const isInternal = userRole === 'admin' || userRole === 'staff';
 
       // Fetch Jobs
       let query = supabase.from('jobs').select('*').order('created_at', { ascending: false });
-      if (!_isAdmin) query = query.eq('user_id', user.id);
+      if (!isInternal) query = query.eq('user_id', user.id); // Customers only see theirs
 
-      const { data } = await query;
-      if (data) setJobs(data);
+      const { data: jobsData } = await query;
+      if (jobsData) setJobs(jobsData);
+
+      // If Staff, fetch Customer List for the dropdown
+      if (isInternal) {
+        const { data: customerData } = await supabase
+          .from('profiles')
+          .select('id, email, role')
+          .order('email'); // Ideally filter where role != admin
+        if (customerData) setCustomers(customerData);
+        // Default to self just in case
+        setSelectedCustomerId(user.id);
+      } else {
+        setSelectedCustomerId(user.id);
+      }
+
       setLoading(false);
     };
     init();
@@ -100,7 +110,6 @@ export default function Dashboard() {
     router.push('/login');
   };
 
-  // --- UPLOAD HANDLERS ---
   const handleUploadClick = () => fileInputRef.current?.click();
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -111,30 +120,23 @@ export default function Dashboard() {
     }
   };
 
-  // --- SUBMIT JOB (WITH EMAIL TRIGGER) ---
   const handleSubmitJob = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFile) return;
 
     setIsUploading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
-
       // 1. Upload File
       const fileExt = selectedFile.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-      
-      const { data: fileData, error: uploadError } = await supabase
-        .storage.from('uploads').upload(fileName, selectedFile);
-
+      const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, selectedFile);
       if (uploadError) throw uploadError;
 
-      // 2. Create DB Record (AND RETURN DATA)
+      // 2. Create DB Record (Use selectedCustomerId!)
       const { data: newJob, error: dbError } = await supabase
         .from('jobs')
         .insert({
-          user_id: user.id,
+          user_id: selectedCustomerId, // <--- THIS IS THE MAGIC. Staff can set this to anyone.
           title: jobTitle,
           quantity: parseInt(jobQty) || 0,
           notes: jobNotes,
@@ -145,15 +147,25 @@ export default function Dashboard() {
           print_sides: isDoubleSided ? 'Double Sided' : 'Single Sided',
           folding_type: needsFolding ? foldType : 'None'
         })
-        .select() // <--- CRITICAL: Get the new row back so we have the ID
+        .select()
         .single();
 
       if (dbError) throw dbError;
 
-      // 3. SEND EMAIL 📧 (This triggers the email to the customer)
-      if (user.email && newJob) {
-        console.log("Attempting to send email to:", user.email);
-        await sendOrderConfirmation(user.email, newJob.id, jobTitle);
+      // 3. SEND EMAIL (To the CUSTOMER, not necessarily the logged in staff)
+      // We need to find the email of the selectedCustomerId
+      const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
+      
+      // If Staff entered it, selectedCustomer exists. If Customer entered it, look at session.
+      let targetEmail = selectedCustomer?.email; 
+      if (!targetEmail) {
+         const { data: { user } } = await supabase.auth.getUser();
+         targetEmail = user?.email;
+      }
+
+      if (targetEmail && newJob) {
+        console.log("Sending email to:", targetEmail);
+        await sendOrderConfirmation(targetEmail, newJob.id, jobTitle);
       }
 
       setShowModal(false);
@@ -169,6 +181,8 @@ export default function Dashboard() {
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
 
+  const isInternal = role === 'admin' || role === 'staff';
+
   return (
     <div className="flex h-screen bg-gray-50 relative">
       
@@ -177,7 +191,7 @@ export default function Dashboard() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
           <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 my-8">
              <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-              <h3 className="font-bold text-lg text-gray-900">Production Ticket</h3>
+              <h3 className="font-bold text-lg text-gray-900">New Production Ticket</h3>
               <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-black">
                 <X size={20} />
               </button>
@@ -185,6 +199,27 @@ export default function Dashboard() {
             
             <form onSubmit={handleSubmitJob} className="p-6 space-y-6">
               
+              {/* STAFF ONLY: CUSTOMER SELECTOR */}
+              {isInternal && (
+                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
+                  <label className="block text-xs font-bold uppercase text-yellow-800 mb-2 flex items-center">
+                    <User size={14} className="mr-1"/> Entering Order On Behalf Of:
+                  </label>
+                  <select 
+                    value={selectedCustomerId} 
+                    onChange={(e) => setSelectedCustomerId(e.target.value)}
+                    className="w-full rounded-lg border border-yellow-300 px-3 py-2 bg-white text-gray-900 font-medium focus:ring-2 focus:ring-yellow-400 outline-none"
+                  >
+                    {customers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.email} {c.role !== 'customer' ? `(${c.role.toUpperCase()})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-yellow-700 mt-2">The selected user will receive the "Order Received" email.</p>
+                </div>
+              )}
+
               {/* 1. File Preview */}
               <div className="flex items-center p-3 bg-blue-50 rounded-xl text-blue-900 border border-blue-100">
                 <FileText size={20} className="mr-3 text-blue-600" />
@@ -210,20 +245,16 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {/* Specs Section (Same as before) */}
               <div className="border-t border-gray-100 pt-4">
                 <p className="text-sm font-bold text-gray-900 mb-4 flex items-center">
                   <Settings size={16} className="mr-2" /> Print Specifications
                 </p>
                 
                 <div className="grid grid-cols-2 gap-4">
-                  {/* Paper Stock */}
                   <div>
                     <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Paper Stock</label>
-                    <select 
-                      value={paperStock} 
-                      onChange={(e) => setPaperStock(e.target.value)}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2.5 bg-white outline-none focus:border-black"
-                    >
+                    <select value={paperStock} onChange={(e) => setPaperStock(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2.5 bg-white outline-none focus:border-black">
                       <option>100lb Gloss Text</option>
                       <option>100lb Matte Text</option>
                       <option>80lb Gloss Cover</option>
@@ -233,14 +264,9 @@ export default function Dashboard() {
                     </select>
                   </div>
 
-                  {/* Size */}
                   <div>
                     <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Print Size</label>
-                    <select 
-                      value={printSize} 
-                      onChange={(e) => setPrintSize(e.target.value)}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2.5 bg-white outline-none focus:border-black"
-                    >
+                    <select value={printSize} onChange={(e) => setPrintSize(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2.5 bg-white outline-none focus:border-black">
                       <option>8.5 x 11 (Letter)</option>
                       <option>11 x 17 (Tabloid)</option>
                       <option>4 x 6 (Postcard)</option>
@@ -251,43 +277,26 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Toggles */}
                 <div className="flex items-center justify-between mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
                   <span className="text-sm font-medium text-gray-700">Double Sided Printing?</span>
-                  <button 
-                    type="button"
-                    onClick={() => setIsDoubleSided(!isDoubleSided)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isDoubleSided ? 'bg-black' : 'bg-gray-300'}`}
-                  >
+                  <button type="button" onClick={() => setIsDoubleSided(!isDoubleSided)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isDoubleSided ? 'bg-black' : 'bg-gray-300'}`}>
                     <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isDoubleSided ? 'translate-x-6' : 'translate-x-1'}`} />
                   </button>
                 </div>
 
-                {/* Conditional Folding */}
                 <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-gray-700 flex items-center">
-                      <Scissors size={16} className="mr-2 text-gray-500" />
-                      Requires Folding?
+                      <Scissors size={16} className="mr-2 text-gray-500" /> Requires Folding?
                     </span>
-                    <button 
-                      type="button"
-                      onClick={() => setNeedsFolding(!needsFolding)}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${needsFolding ? 'bg-black' : 'bg-gray-300'}`}
-                    >
+                    <button type="button" onClick={() => setNeedsFolding(!needsFolding)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${needsFolding ? 'bg-black' : 'bg-gray-300'}`}>
                       <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${needsFolding ? 'translate-x-6' : 'translate-x-1'}`} />
                     </button>
                   </div>
-                  
-                  {/* HIDDEN DROPDOWN - Only shows if Fold is checked */}
                   {needsFolding && (
                     <div className="mt-3 animate-in fade-in slide-in-from-top-2 duration-200">
                       <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Select Fold Type</label>
-                      <select 
-                        value={foldType} 
-                        onChange={(e) => setFoldType(e.target.value)}
-                        className="w-full rounded-lg border border-gray-300 px-3 py-2.5 bg-white outline-none focus:border-black"
-                      >
+                      <select value={foldType} onChange={(e) => setFoldType(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2.5 bg-white outline-none focus:border-black">
                         <option>Tri-Fold</option>
                         <option>Half-Fold</option>
                         <option>Z-Fold</option>
@@ -320,11 +329,11 @@ export default function Dashboard() {
             <span className="text-white font-bold text-xs">PHQ</span>
           </div>
           <span className="font-bold text-lg tracking-tight">PrintHQ</span>
-          {isAdmin && <span className="ml-2 px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold uppercase rounded">Admin</span>}
+          {isInternal && <span className="ml-2 px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold uppercase rounded">{role}</span>}
         </div>
         <nav className="flex-1 space-y-1 px-4 py-6">
-          <NavItem icon={<LayoutDashboard size={20} />} label={isAdmin ? "All Jobs" : "My Jobs"} active />
-          {!isAdmin && <NavItem icon={<FileText size={20} />} label="Quote History" />}
+          <NavItem icon={<LayoutDashboard size={20} />} label={isInternal ? "All Jobs" : "My Jobs"} active />
+          {!isInternal && <NavItem icon={<FileText size={20} />} label="Quote History" />}
           <NavItem icon={<Settings size={20} />} label="Settings" />
         </nav>
         <div className="p-4 border-t border-gray-100">
@@ -340,18 +349,17 @@ export default function Dashboard() {
           
           <div className="mb-10 flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">{isAdmin ? 'Admin Overview' : 'Dashboard'}</h1>
-              <p className="mt-1 text-gray-500">{isAdmin ? 'Manage all incoming production.' : 'Welcome back. Ready to print?'}</p>
+              <h1 className="text-3xl font-bold text-gray-900">{isInternal ? 'Production Overview' : 'Dashboard'}</h1>
+              <p className="mt-1 text-gray-500">{isInternal ? 'Manage incoming production queue.' : 'Welcome back. Ready to print?'}</p>
             </div>
-            {!isAdmin && (
-              <button onClick={handleUploadClick} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">
-                + New Request
-              </button>
-            )}
+            {/* BUTTON IS ALWAYS VISIBLE NOW - LOGIC IS IN HANDLER */}
+            <button onClick={handleUploadClick} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">
+              + New Order
+            </button>
           </div>
 
-          {isAdmin ? (
-            // ADMIN TABLE VIEW
+          {isInternal ? (
+            // STAFF/ADMIN TABLE VIEW
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
                 <h3 className="font-semibold text-gray-900">Active Job Queue</h3>
@@ -415,8 +423,7 @@ export default function Dashboard() {
   );
 }
 
-// --- SUB COMPONENTS ---
-
+// --- SUB COMPONENTS --- (Same as before)
 function NavItem({ icon, label, active = false }: { icon: any, label: string, active?: boolean }) {
   return (
     <a href="#" className={`flex items-center rounded-lg px-4 py-3 text-sm font-medium transition-colors ${active ? 'bg-gray-100 text-black' : 'text-gray-600 hover:bg-gray-50 hover:text-black'}`}>
