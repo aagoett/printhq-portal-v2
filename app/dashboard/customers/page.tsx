@@ -1,15 +1,16 @@
 'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
-import { Search, User, Mail, Calendar, ArrowRight } from 'lucide-react';
+import { Search, User, Mail, Calendar, ArrowRight, Building2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
 type Customer = {
-  id: string; // email or user_id
+  id: string; 
   email: string;
   name?: string;
+  company?: string; // New Field!
   type: 'Registered' | 'Guest';
   total_jobs: number;
   last_order_date: string;
@@ -34,11 +35,11 @@ export default function CustomersPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return router.push('/login');
 
-    // 1. Fetch all Jobs
+    // 1. Fetch Jobs
     const { data: jobs } = await supabase.from('jobs').select('id, created_at, user_id, guest_email');
     
-    // 2. Fetch all Profiles (Registered Users)
-    const { data: profiles } = await supabase.from('profiles').select('id, email, first_name, last_name, role');
+    // 2. Fetch Profiles (Now including 'company')
+    const { data: profiles } = await supabase.from('profiles').select('id, email, first_name, last_name, company, role');
 
     if (!jobs || !profiles) {
       setLoading(false);
@@ -48,22 +49,22 @@ export default function CustomersPage() {
     // --- AGGREGATION LOGIC ---
     const customerMap = new Map<string, Customer>();
 
-    // Process Registered Users first
+    // Process Registered Users
     profiles.forEach(p => {
-      if (p.role !== 'customer') return; // Skip staff for now if you want
+      if (p.role !== 'customer') return; 
       customerMap.set(p.email, {
         id: p.id,
         email: p.email,
         name: p.first_name ? `${p.first_name} ${p.last_name || ''}` : 'Registered User',
+        company: p.company || '', // Store Company
         type: 'Registered',
         total_jobs: 0,
         last_order_date: 'N/A'
       });
     });
 
-    // Process Jobs to find Guests AND count stats
+    // Process Jobs
     jobs.forEach(j => {
-      // Determine email for this job
       let email = j.guest_email;
       if (!email && j.user_id) {
         const profile = profiles.find(p => p.id === j.user_id);
@@ -71,12 +72,13 @@ export default function CustomersPage() {
       }
 
       if (email) {
-        // If this email isn't in our map yet, it's a pure Guest
+        // If guest
         if (!customerMap.has(email)) {
           customerMap.set(email, {
-            id: email, // Use email as ID for guests
+            id: email, 
             email: email,
             name: 'Guest User',
+            company: 'Guest Account',
             type: 'Guest',
             total_jobs: 0,
             last_order_date: 'N/A'
@@ -92,7 +94,7 @@ export default function CustomersPage() {
       }
     });
 
-    // Convert Map to Array and Sort by Last Order
+    // Sort
     const sortedCustomers = Array.from(customerMap.values()).sort((a, b) => {
        if (a.last_order_date === 'N/A') return 1;
        if (b.last_order_date === 'N/A') return -1;
@@ -103,9 +105,11 @@ export default function CustomersPage() {
     setLoading(false);
   };
 
+  // --- SEARCH LOGIC (Includes Company now!) ---
   const filteredCustomers = customers.filter(c => 
     c.email.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    (c.name && c.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    (c.name && c.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+    (c.company && c.company.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   if (loading) return <div className="p-12 text-center">Loading Rolodex...</div>;
@@ -122,10 +126,10 @@ export default function CustomersPage() {
           <div className="relative">
              <input 
                type="text" 
-               placeholder="Search emails..." 
+               placeholder="Search company, name, email..." 
                value={searchTerm}
                onChange={(e) => setSearchTerm(e.target.value)}
-               className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg w-64 focus:border-black outline-none"
+               className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg w-72 focus:border-black outline-none shadow-sm"
              />
              <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
           </div>
@@ -136,6 +140,7 @@ export default function CustomersPage() {
             <thead className="bg-gray-50 text-gray-500 uppercase font-bold border-b border-gray-100">
               <tr>
                 <th className="px-6 py-4">Customer</th>
+                <th className="px-6 py-4">Company</th>
                 <th className="px-6 py-4">Status</th>
                 <th className="px-6 py-4">Total Orders</th>
                 <th className="px-6 py-4">Last Active</th>
@@ -151,17 +156,26 @@ export default function CustomersPage() {
                         <User size={20} />
                       </div>
                       <div>
-                        <p className="font-bold text-gray-900">{c.email}</p>
-                        <p className="text-xs text-gray-500">{c.name}</p>
+                        <p className="font-bold text-gray-900">{c.name}</p>
+                        <p className="text-xs text-gray-500">{c.email}</p>
                       </div>
                     </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    {c.company ? (
+                      <div className="flex items-center text-gray-900 font-medium">
+                        <Building2 size={14} className="mr-2 text-gray-400" /> {c.company}
+                      </div>
+                    ) : (
+                      <span className="text-gray-300 italic">-</span>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${c.type === 'Registered' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'}`}>
                       {c.type}
                     </span>
                   </td>
-                  <td className="px-6 py-4 font-mono font-medium">{c.total_jobs}</td>
+                  <td className="px-6 py-4 font-mono font-medium pl-10">{c.total_jobs}</td>
                   <td className="px-6 py-4 text-gray-500 flex items-center">
                      <Calendar size={14} className="mr-2" /> {c.last_order_date}
                   </td>
@@ -174,7 +188,7 @@ export default function CustomersPage() {
               ))}
               {filteredCustomers.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="p-12 text-center text-gray-400">No customers found.</td>
+                  <td colSpan={6} className="p-12 text-center text-gray-400">No customers found matching "{searchTerm}".</td>
                 </tr>
               )}
             </tbody>
