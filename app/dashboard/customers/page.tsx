@@ -11,7 +11,7 @@ type Customer = {
   email: string;
   name?: string;
   company?: string;
-  type: 'Registered' | 'Guest' | 'Admin' | 'Staff'; // Added more types
+  type: 'Registered' | 'Guest' | 'Admin' | 'Staff'; 
   total_jobs: number;
   last_order_date: string;
 };
@@ -35,24 +35,23 @@ export default function CustomersPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return router.push('/login');
 
-    // 1. Fetch Jobs (To find guests and counts)
+    // 1. Fetch Jobs (Log errors if any)
     const { data: jobs, error: jobsError } = await supabase.from('jobs').select('id, created_at, user_id, guest_email');
-    if (jobsError) console.error("Error fetching jobs:", jobsError);
+    if (jobsError) console.error("Jobs fetch error:", jobsError);
 
-    // 2. Fetch Profiles (To find registered users)
+    // 2. Fetch Profiles
     const { data: profiles, error: profilesError } = await supabase.from('profiles').select('*');
-    if (profilesError) console.error("Error fetching profiles:", profilesError);
+    if (profilesError) console.error("Profiles fetch error:", profilesError);
 
-    if (!jobs || !profiles) {
-      setLoading(false);
-      return;
-    }
+    // Ensure we have arrays even if fetch failed
+    const safeJobs = jobs || [];
+    const safeProfiles = profiles || [];
 
     // --- AGGREGATION LOGIC ---
     const customerMap = new Map<string, Customer>();
 
-    // A. Add ALL Registered Profiles (Admins, Staff, Customers)
-    profiles.forEach(p => {
+    // A. Add ALL Registered Profiles
+    safeProfiles.forEach(p => {
       let userType: any = 'Registered';
       if (p.role === 'admin') userType = 'Admin';
       if (p.role === 'staff') userType = 'Staff';
@@ -69,20 +68,19 @@ export default function CustomersPage() {
     });
 
     // B. Add Guests from Jobs & Calc Stats
-    jobs.forEach(j => {
+    safeJobs.forEach(j => {
       let email = j.guest_email;
       
       // If not a guest email, check if it belongs to a registered user
       if (!email && j.user_id) {
-        const profile = profiles.find(p => p.id === j.user_id);
+        const profile = safeProfiles.find(p => p.id === j.user_id);
         if (profile) email = profile.email;
       }
 
       if (email) {
-        // If we haven't seen this email yet, it's a Guest
         if (!customerMap.has(email)) {
           customerMap.set(email, {
-            id: email, 
+            id: email, // Use email as ID for guests
             email: email,
             name: 'Guest User',
             company: 'Guest Account',
@@ -92,18 +90,17 @@ export default function CustomersPage() {
           });
         }
 
-        // Update Stats
         const cust = customerMap.get(email)!;
         cust.total_jobs += 1;
         
-        // Update Last Order Date
+        // Update Last Active Date
         if (cust.last_order_date === 'N/A' || new Date(j.created_at) > new Date(cust.last_order_date)) {
           cust.last_order_date = new Date(j.created_at).toLocaleDateString();
         }
       }
     });
 
-    // C. Sort by most recent order
+    // C. Sort by most recent activity
     const sortedCustomers = Array.from(customerMap.values()).sort((a, b) => {
        if (a.last_order_date === 'N/A') return 1;
        if (b.last_order_date === 'N/A') return -1;
@@ -114,7 +111,6 @@ export default function CustomersPage() {
     setLoading(false);
   };
 
-  // --- SEARCH ---
   const filteredCustomers = customers.filter(c => 
     c.email.toLowerCase().includes(searchTerm.toLowerCase()) || 
     (c.name && c.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -132,6 +128,7 @@ export default function CustomersPage() {
           <ArrowLeft size={16} className="mr-2" /> Back to Dashboard
         </Link>
 
+        {/* HEADER */}
         <div className="flex justify-between items-end mb-8">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Customer Database</h1>
@@ -149,6 +146,7 @@ export default function CustomersPage() {
           </div>
         </div>
 
+        {/* TABLE */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <table className="w-full text-left text-sm">
             <thead className="bg-gray-50 text-gray-500 uppercase font-bold border-b border-gray-100">
@@ -200,9 +198,9 @@ export default function CustomersPage() {
                      <Calendar size={14} className="mr-2" /> {c.last_order_date}
                   </td>
                   <td className="px-6 py-4">
-                    <button className="text-gray-400 hover:text-black flex items-center text-xs font-bold uppercase group-hover:underline">
+                    <Link href={`/dashboard/customers/${c.id}`} className="text-gray-400 hover:text-black flex items-center text-xs font-bold uppercase group-hover:underline">
                       View History <ArrowRight size={14} className="ml-1" />
-                    </button>
+                    </Link>
                   </td>
                 </tr>
               ))}
