@@ -171,14 +171,15 @@ export default function JobDetailsPage() {
     await supabase.from('jobs').update({ fold_orientation: newOrientation }).eq('id', params.id);
   };
 
-  // --- WORKFLOW HANDLERS (FIXED) ---
+  // --- WORKFLOW HANDLERS (UPDATED FOR INSTANT FEEDBACK) ---
+  
   const handleAddStep = async () => {
     if (!newStepDept) return;
 
     try {
       const newOrder = steps.length + 1;
       
-      // 1. Insert into DB and return the DATA (.select())
+      // 1. Send to Database
       const { data, error } = await supabase.from('job_steps').insert({
         job_id: params.id, 
         department: newStepDept, 
@@ -191,33 +192,35 @@ export default function JobDetailsPage() {
 
       if (error) throw error;
 
-      // 2. Manually update the screen INSTANTLY
+      // 2. FORCE SCREEN UPDATE (Show it instantly)
       if (data) {
         setSteps([...steps, data]);
-        setNewStepNotes(''); // Clear the input
+        setNewStepNotes(''); // Clear input
       }
 
     } catch (err: any) {
       console.error('Error adding step:', err);
-      // alert(`Error adding step: ${err.message}`); // Optional: alert on error
+      alert('Error adding step. Check console.');
     }
   };
 
   const handleDeleteStep = async (stepId: string) => {
     if(!confirm("Remove this step?")) return;
     
-    // Optimistic Delete
+    // 1. FORCE SCREEN UPDATE (Remove from list instantly)
     setSteps(steps.filter(s => s.id !== stepId));
     
+    // 2. Send delete command to Database quietly
     await supabase.from('job_steps').delete().eq('id', stepId);
   };
 
   const toggleStepStatus = async (step: any) => {
     const newStatus = step.status === 'Completed' ? 'Pending' : 'Completed';
     
-    // Optimistic Update
+    // 1. FORCE SCREEN UPDATE (Toggle checkmark instantly)
     setSteps(steps.map(s => s.id === step.id ? {...s, status: newStatus} : s));
 
+    // 2. Send update to Database quietly
     await supabase.from('job_steps').update({ status: newStatus }).eq('id', step.id);
   };
 
@@ -564,7 +567,7 @@ export default function JobDetailsPage() {
   );
 }
 
-// --- SUB COMPONENTS --- (Kept small to save space)
+// --- SUB COMPONENTS ---
 function SpecRow({ label, value }: { label: string, value: string | number }) {
   return (
     <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0">
