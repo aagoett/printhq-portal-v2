@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, CheckCircle2, Clock, FileText, MessageSquare, Send, Download, 
   Printer, Truck, Layers, Upload, DollarSign, Save, RotateCw, MoveVertical, MoveHorizontal,
-  Paperclip, FileCheck
+  Paperclip
 } from 'lucide-react';
 import { useRouter, useParams } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -22,7 +22,10 @@ export default function JobDetailsPage() {
   const [messages, setMessages] = useState<any[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
+  
+  // ROLES STATE
+  const [isAdmin, setIsAdmin] = useState(false); // Can view/edit workflow (Admin + Staff)
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false); // Can view money/delete (Admin only)
   
   // Admin Action State
   const [isUploadingProof, setIsUploadingProof] = useState(false);
@@ -45,10 +48,25 @@ export default function JobDetailsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return router.push('/login');
 
-      const { data: profile } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single();
-      const _isAdmin = profile?.is_admin === true;
-      setIsAdmin(_isAdmin);
+      // --- CHECK ROLES (UPDATED) ---
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role') // Selecting 'role' instead of is_admin
+        .eq('id', user.id)
+        .single();
+      
+      const userRole = profile?.role || 'customer';
+      
+      // "isInternal" (isAdmin) = Staff OR Admin. They can manage the job.
+      const isInternal = userRole === 'admin' || userRole === 'staff';
+      
+      // "isSuperAdmin" = Admin Only. They can see money.
+      const _isSuperAdmin = userRole === 'admin';
 
+      setIsAdmin(isInternal); 
+      setIsSuperAdmin(_isSuperAdmin);
+
+      // --- FETCH JOB ---
       const { data: jobData, error } = await supabase.from('jobs').select('*').eq('id', params.id).single();
       if (error || !jobData) { router.push('/dashboard'); return; }
       
@@ -56,11 +74,11 @@ export default function JobDetailsPage() {
       if(jobData.price) setQuotePrice(jobData.price.toString());
       if(jobData.fold_orientation) setFoldOrientation(jobData.fold_orientation);
 
+      // --- FETCH MESSAGES ---
       const { data: msgData } = await supabase.from('messages').select('*').eq('job_id', params.id).order('created_at', { ascending: true });
       if (msgData) setMessages(msgData);
 
-      // Fetch from new File Vault Table (if it exists)
-      // Note: If you haven't run the SQL yet, this might return null, which is fine.
+      // --- FETCH FILE VAULT ---
       const { data: fileData } = await supabase.from('job_files').select('*').eq('job_id', params.id).order('created_at', { ascending: false });
       if (fileData) setAllFiles(fileData);
       
@@ -90,7 +108,7 @@ export default function JobDetailsPage() {
       job_id: params.id,
       user_id: user.id,
       content: newMessage,
-      is_admin: isAdmin 
+      is_admin: isAdmin // Staff counts as admin for chat purposes
     });
     if (!error) setNewMessage('');
   };
@@ -98,8 +116,6 @@ export default function JobDetailsPage() {
   const handleApproveProof = async () => {
     if(!confirm("Approve this proof for printing?")) return;
     await supabase.from('jobs').update({ proof_status: 'Approved', status: 'In Production' }).eq('id', params.id);
-    
-    // Optional: Also mark in job_files table if you are using it
     window.location.reload();
   };
 
@@ -168,7 +184,34 @@ export default function JobDetailsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
-      {/* HEADER */}
+      
+      {/* --- PRINT-ONLY TICKET HEADER --- */}
+      {/* This only shows up when you hit Ctrl+P */}
+      <div className="print-only-header hidden">
+        <div className="flex justify-between items-start">
+          <div>
+            <h1 className="text-4xl font-black uppercase tracking-tighter">Production Ticket</h1>
+            <p className="text-xl mt-2">Job #{job?.id.substring(0,8).toUpperCase()}</p>
+          </div>
+          <div className="text-right">
+            <h2 className="text-2xl font-bold">{new Date().toLocaleDateString()}</h2>
+            <p className="text-sm uppercase text-gray-500">Printed Date</p>
+          </div>
+        </div>
+        
+        <div className="mt-6 border-2 border-black p-4 grid grid-cols-2 gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase text-gray-500">Customer</p>
+            <p className="text-lg font-bold">{job?.title}</p> 
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase text-gray-500">Due Date</p>
+            <p className="text-lg font-bold">ASAP</p>
+          </div>
+        </div>
+      </div>
+
+      {/* --- MAIN HEADER --- */}
       <div className="bg-white border-b border-gray-200 px-8 py-6">
         <div className="max-w-7xl mx-auto">
           <Link href="/dashboard" className="inline-flex items-center text-sm text-gray-500 hover:text-black mb-4 transition-colors">
@@ -183,7 +226,12 @@ export default function JobDetailsPage() {
             </div>
             {isAdmin ? (
                <div className="flex items-center gap-2">
-                 <span className="text-xs font-bold uppercase text-gray-400 mr-2">Set Status:</span>
+                 {/* PRINT BUTTON */}
+                 <button onClick={() => window.print()} className="flex items-center gap-2 px-3 py-1 bg-white border border-gray-300 text-gray-700 rounded-full text-xs font-bold uppercase hover:bg-gray-50 hover:border-black transition-all">
+                   <Printer size={14} /> Ticket
+                 </button>
+
+                 <span className="text-xs font-bold uppercase text-gray-400 mr-2 ml-2">Set Status:</span>
                  {['Pending Review', 'Proof Ready', 'In Production', 'Shipped'].map((s) => (
                    <button key={s} onClick={() => handleStatusChange(s)} className={`px-3 py-1 rounded-full text-xs font-bold uppercase border transition-all ${job.status === s ? 'bg-black text-white border-black' : 'bg-white text-gray-400 border-gray-200 hover:border-gray-400'}`}>
                      {s}
@@ -206,18 +254,23 @@ export default function JobDetailsPage() {
             <Timeline status={job.status} />
           </div>
 
-          {/* ADMIN TOOLKIT */}
+          {/* ADMIN TOOLKIT (Visible to Admin & Staff) */}
           {isAdmin && (
             <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="flex flex-col">
-                <h3 className="font-bold text-yellow-900 flex items-center mb-2"><DollarSign size={16} className="mr-2" /> Admin Quote</h3>
-                <div className="flex items-center gap-2">
-                  <div className="relative w-full">
-                    <input type="number" value={quotePrice} onChange={(e) => setQuotePrice(e.target.value)} className="pl-4 pr-4 py-2 w-full rounded-lg border-yellow-300 focus:ring-yellow-500 focus:border-yellow-500 text-sm" placeholder="0.00" />
+              
+              {/* PRICING (Visible ONLY to SuperAdmin/Owner) */}
+              {isSuperAdmin && (
+                <div className="flex flex-col">
+                  <h3 className="font-bold text-yellow-900 flex items-center mb-2"><DollarSign size={16} className="mr-2" /> Admin Quote</h3>
+                  <div className="flex items-center gap-2">
+                    <div className="relative w-full">
+                      <input type="number" value={quotePrice} onChange={(e) => setQuotePrice(e.target.value)} className="pl-4 pr-4 py-2 w-full rounded-lg border-yellow-300 focus:ring-yellow-500 focus:border-yellow-500 text-sm" placeholder="0.00" />
+                    </div>
+                    <button onClick={handleSaveQuote} disabled={isSavingQuote} className="p-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"><Save size={18} /></button>
                   </div>
-                  <button onClick={handleSaveQuote} disabled={isSavingQuote} className="p-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"><Save size={18} /></button>
                 </div>
-              </div>
+              )}
+
               {job.folding_type !== 'None' && (
                 <div className="flex flex-col">
                    <h3 className="font-bold text-yellow-900 flex items-center mb-2"><RotateCw size={16} className="mr-2" /> Fold Direction</h3>
@@ -359,6 +412,44 @@ export default function JobDetailsPage() {
           </div>
         </div>
       </div>
+      
+      {/* PRINT STYLES */}
+      <style>{`
+        /* PRINT MODE (Hide unnecessary items, format for paper) */
+        @media print {
+          nav, .bg-white.border-b, button, input, textarea, .lg\\:col-span-1, a[href^="/dashboard"], .aspect-video { display: none !important; }
+          body, .min-h-screen, .bg-gray-50 { background-color: white !important; height: auto !important; }
+          .lg\\:col-span-2 { width: 100% !important; grid-column: span 3 !important; }
+          .print-only-header { display: block !important; margin-bottom: 20px; border-bottom: 2px solid black; padding-bottom: 10px; }
+          * { color: black !important; }
+        }
+        .print-only-header { display: none; }
+
+        /* FOLDING ANIMATIONS */
+        .perspective-800 { perspective: 800px; }
+        .preserve-3d { transform-style: preserve-3d; }
+        .backface-hidden { backface-visibility: hidden; }
+        @keyframes vTri1 { 0%,100% { transform: rotateY(0deg); } 50% { transform: rotateY(170deg); } }
+        @keyframes vTri3 { 0%,100% { transform: rotateY(0deg); } 50% { transform: rotateY(-170deg); } }
+        @keyframes vZ1 { 0%,100% { transform: rotateY(0deg); } 50% { transform: rotateY(170deg); } }
+        @keyframes vZ3 { 0%,100% { transform: rotateY(0deg); } 50% { transform: rotateY(170deg); } }
+        @keyframes vHalf1 { 0%,100% { transform: rotateY(0deg); } 50% { transform: rotateY(-175deg); } }
+        @keyframes hTri1 { 0%,100% { transform: rotateX(0deg); } 50% { transform: rotateX(-170deg); } }
+        @keyframes hTri3 { 0%,100% { transform: rotateX(0deg); } 50% { transform: rotateX(170deg); } }
+        @keyframes hZ1 { 0%,100% { transform: rotateX(0deg); } 50% { transform: rotateX(-170deg); } }
+        @keyframes hZ3 { 0%,100% { transform: rotateX(0deg); } 50% { transform: rotateX(-170deg); } }
+        @keyframes hHalf1 { 0%,100% { transform: rotateX(0deg); } 50% { transform: rotateX(175deg); } }
+        .animate-v-tri-1 { animation: vTri1 5s infinite ease-in-out; }
+        .animate-v-tri-3 { animation: vTri3 5s infinite ease-in-out; }
+        .animate-v-z-1 { animation: vZ1 5s infinite ease-in-out; }
+        .animate-v-z-3 { animation: vZ3 5s infinite ease-in-out; }
+        .animate-v-half-1 { animation: vHalf1 5s infinite ease-in-out; }
+        .animate-h-tri-1 { animation: hTri1 5s infinite ease-in-out; }
+        .animate-h-tri-3 { animation: hTri3 5s infinite ease-in-out; }
+        .animate-h-z-1 { animation: hZ1 5s infinite ease-in-out; }
+        .animate-h-z-3 { animation: hZ3 5s infinite ease-in-out; }
+        .animate-h-half-1 { animation: hHalf1 5s infinite ease-in-out; }
+      `}</style>
     </div>
   );
 }
@@ -455,32 +546,6 @@ function FoldingAnimation({ type, orientation }: { type: string, orientation: st
           <MockPaperContent part={3} vertical={isVertical} />
         </div>
       </div>
-      
-      <style>{`
-        .perspective-800 { perspective: 800px; }
-        .preserve-3d { transform-style: preserve-3d; }
-        .backface-hidden { backface-visibility: hidden; }
-        @keyframes vTri1 { 0%,100% { transform: rotateY(0deg); } 50% { transform: rotateY(170deg); } }
-        @keyframes vTri3 { 0%,100% { transform: rotateY(0deg); } 50% { transform: rotateY(-170deg); } }
-        @keyframes vZ1 { 0%,100% { transform: rotateY(0deg); } 50% { transform: rotateY(170deg); } }
-        @keyframes vZ3 { 0%,100% { transform: rotateY(0deg); } 50% { transform: rotateY(170deg); } }
-        @keyframes vHalf1 { 0%,100% { transform: rotateY(0deg); } 50% { transform: rotateY(-175deg); } }
-        @keyframes hTri1 { 0%,100% { transform: rotateX(0deg); } 50% { transform: rotateX(-170deg); } }
-        @keyframes hTri3 { 0%,100% { transform: rotateX(0deg); } 50% { transform: rotateX(170deg); } }
-        @keyframes hZ1 { 0%,100% { transform: rotateX(0deg); } 50% { transform: rotateX(-170deg); } }
-        @keyframes hZ3 { 0%,100% { transform: rotateX(0deg); } 50% { transform: rotateX(-170deg); } }
-        @keyframes hHalf1 { 0%,100% { transform: rotateX(0deg); } 50% { transform: rotateX(175deg); } }
-        .animate-v-tri-1 { animation: vTri1 5s infinite ease-in-out; }
-        .animate-v-tri-3 { animation: vTri3 5s infinite ease-in-out; }
-        .animate-v-z-1 { animation: vZ1 5s infinite ease-in-out; }
-        .animate-v-z-3 { animation: vZ3 5s infinite ease-in-out; }
-        .animate-v-half-1 { animation: vHalf1 5s infinite ease-in-out; }
-        .animate-h-tri-1 { animation: hTri1 5s infinite ease-in-out; }
-        .animate-h-tri-3 { animation: hTri3 5s infinite ease-in-out; }
-        .animate-h-z-1 { animation: hZ1 5s infinite ease-in-out; }
-        .animate-h-z-3 { animation: hZ3 5s infinite ease-in-out; }
-        .animate-h-half-1 { animation: hHalf1 5s infinite ease-in-out; }
-      `}</style>
     </div>
   );
 }
