@@ -329,9 +329,13 @@ export default function Dashboard() {
           {isInternal && <span className="ml-2 px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold uppercase rounded">{role}</span>}
         </div>
         <nav className="flex-1 space-y-1 px-4 py-6">
-          <NavItem icon={<LayoutDashboard size={20} />} label={isInternal ? "Shop Floor" : "My Jobs"} active />
-          {!isInternal && <NavItem icon={<FileText size={20} />} label="Quote History" />}
-          <NavItem icon={<Settings size={20} />} label="Settings" />
+          <NavItem icon={<LayoutDashboard size={20} />} label={isInternal ? "Shop Floor" : "My Jobs"} href="/dashboard" active />
+          
+          {/* NEW CUSTOMER LINK */}
+          {isInternal && <NavItem icon={<User size={20} />} label="Customers" href="/dashboard/customers" />}
+          
+          {!isInternal && <NavItem icon={<FileText size={20} />} label="Quote History" href="/dashboard/history" />}
+          <NavItem icon={<Settings size={20} />} label="Settings" href="/dashboard/settings" />
         </nav>
         <div className="p-4 border-t border-gray-100">
           <button onClick={handleSignOut} className="flex w-full items-center px-4 py-3 text-sm font-medium text-gray-500 hover:text-red-600 transition-colors"><LogOut size={20} className="mr-3" /> Sign out</button>
@@ -433,13 +437,14 @@ export default function Dashboard() {
   );
 }
 
-// --- SUB COMPONENTS --- (Same as before)
-function NavItem({ icon, label, active = false }: { icon: any, label: string, active?: boolean }) {
+// --- SUB COMPONENTS ---
+// Updated NavItem to accept 'href'
+function NavItem({ icon, label, active = false, href = '#' }: { icon: any, label: string, active?: boolean, href?: string }) {
   return (
-    <a href="#" className={`flex items-center rounded-lg px-4 py-3 text-sm font-medium transition-colors ${active ? 'bg-gray-100 text-black' : 'text-gray-600 hover:bg-gray-50 hover:text-black'}`}>
+    <Link href={href} className={`flex items-center rounded-lg px-4 py-3 text-sm font-medium transition-colors ${active ? 'bg-gray-100 text-black' : 'text-gray-600 hover:bg-gray-50 hover:text-black'}`}>
       <span className={`${active ? 'text-black' : 'text-gray-400'} mr-3`}>{icon}</span>
       {label}
-    </a>
+    </Link>
   );
 }
 
