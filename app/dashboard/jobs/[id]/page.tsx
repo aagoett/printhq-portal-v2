@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, CheckCircle2, Clock, FileText, MessageSquare, Send, Download, 
   Printer, Truck, Layers, Upload, DollarSign, Save, RotateCw, MoveVertical, MoveHorizontal,
-  Paperclip
+  Paperclip, list, CheckSquare, Plus, Trash2, ArrowDownCircle
 } from 'lucide-react';
 import { useRouter, useParams } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -24,8 +24,8 @@ export default function JobDetailsPage() {
   const [loading, setLoading] = useState(true);
   
   // ROLES STATE
-  const [isAdmin, setIsAdmin] = useState(false); // Can view/edit workflow (Admin + Staff)
-  const [isSuperAdmin, setIsSuperAdmin] = useState(false); // Can view money/delete (Admin only)
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   
   // Admin Action State
   const [isUploadingProof, setIsUploadingProof] = useState(false);
@@ -33,8 +33,13 @@ export default function JobDetailsPage() {
   const [isSavingQuote, setIsSavingQuote] = useState(false);
   const [foldOrientation, setFoldOrientation] = useState('Vertical');
 
-  // File Vault State
+  // File Vault & Workflow State
   const [allFiles, setAllFiles] = useState<any[]>([]);
+  const [steps, setSteps] = useState<any[]>([]);
+  
+  // New Step Form
+  const [newStepDept, setNewStepDept] = useState('Prepress');
+  const [newStepNotes, setNewStepNotes] = useState('');
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -48,19 +53,10 @@ export default function JobDetailsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return router.push('/login');
 
-      // --- CHECK ROLES (UPDATED) ---
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role') // Selecting 'role' instead of is_admin
-        .eq('id', user.id)
-        .single();
-      
+      // --- CHECK ROLES ---
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
       const userRole = profile?.role || 'customer';
-      
-      // "isInternal" (isAdmin) = Staff OR Admin. They can manage the job.
       const isInternal = userRole === 'admin' || userRole === 'staff';
-      
-      // "isSuperAdmin" = Admin Only. They can see money.
       const _isSuperAdmin = userRole === 'admin';
 
       setIsAdmin(isInternal); 
@@ -81,15 +77,24 @@ export default function JobDetailsPage() {
       // --- FETCH FILE VAULT ---
       const { data: fileData } = await supabase.from('job_files').select('*').eq('job_id', params.id).order('created_at', { ascending: false });
       if (fileData) setAllFiles(fileData);
+
+      // --- FETCH WORKFLOW STEPS ---
+      // (This requires the SQL table 'job_steps' we created)
+      const { data: stepData } = await supabase.from('job_steps').select('*').eq('job_id', params.id).order('step_order', { ascending: true });
+      if (stepData) setSteps(stepData);
       
       setLoading(false);
     };
     fetchData();
 
-    const channel = supabase.channel('realtime messages')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, 
-      (payload) => setMessages((current) => [...current, payload.new]))
+    // Subscribe to changes
+    const channel = supabase.channel('realtime job details')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, 
+        (payload) => setMessages((current) => [...current, payload.new]))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'job_steps', filter: `job_id=eq.${params.id}` }, 
+        () => { /* Refresh steps on change would be better, but for now simple reload or manual update */ })
       .subscribe();
+      
     return () => { supabase.removeChannel(channel); };
   }, [params.id, router]);
 
@@ -108,7 +113,7 @@ export default function JobDetailsPage() {
       job_id: params.id,
       user_id: user.id,
       content: newMessage,
-      is_admin: isAdmin // Staff counts as admin for chat purposes
+      is_admin: isAdmin 
     });
     if (!error) setNewMessage('');
   };
@@ -129,22 +134,16 @@ export default function JobDetailsPage() {
       const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, file);
       if (uploadError) throw uploadError;
 
-      // Update Main Job
       await supabase.from('jobs').update({ proof_url: fileData?.path, status: 'Proof Ready', proof_status: 'Pending Approval' }).eq('id', params.id);
-
-      // Add to File Vault (History)
+      
+      // Auto-add to vault
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         await supabase.from('job_files').insert({
-          job_id: params.id,
-          file_name: `Proof: ${file.name}`,
-          file_path: fileData?.path,
-          file_type: 'proof',
-          uploaded_by: user.id
+          job_id: params.id, file_name: `Proof: ${file.name}`, file_path: fileData?.path, file_type: 'proof', uploaded_by: user.id
         });
       }
 
-      // Email
       const { data: jobOwner } = await supabase.from('profiles').select('email').eq('id', job.user_id).single();
       if (jobOwner?.email) {
          await sendProofNotification(jobOwner.email, params.id as string, job.title);
@@ -177,6 +176,40 @@ export default function JobDetailsPage() {
     await supabase.from('jobs').update({ fold_orientation: newOrientation }).eq('id', params.id);
   };
 
+  // --- WORKFLOW ACTIONS ---
+  const handleAddStep = async () => {
+    const newOrder = steps.length + 1;
+    const { data, error } = await supabase.from('job_steps').insert({
+      job_id: params.id,
+      department: newStepDept,
+      step_order: newOrder,
+      notes: newStepNotes,
+      status: 'Pending'
+    }).select();
+
+    if (error) {
+      alert('Error adding step');
+      console.error(error);
+    } else {
+      setSteps([...steps, data[0]]);
+      setNewStepNotes('');
+    }
+  };
+
+  const handleDeleteStep = async (stepId: string) => {
+    if(!confirm("Remove this step?")) return;
+    await supabase.from('job_steps').delete().eq('id', stepId);
+    setSteps(steps.filter(s => s.id !== stepId));
+  };
+
+  const toggleStepStatus = async (step: any) => {
+    const newStatus = step.status === 'Completed' ? 'Pending' : 'Completed';
+    await supabase.from('job_steps').update({ status: newStatus }).eq('id', step.id);
+    
+    // Optimistic Update
+    setSteps(steps.map(s => s.id === step.id ? {...s, status: newStatus} : s));
+  };
+
   if (loading) return <div className="h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-black border-t-transparent rounded-full"></div></div>;
 
   const isApproved = job.proof_status === 'Approved';
@@ -185,8 +218,7 @@ export default function JobDetailsPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       
-      {/* --- PRINT-ONLY TICKET HEADER --- */}
-      {/* This only shows up when you hit Ctrl+P */}
+      {/* --- PRINT HEADER --- */}
       <div className="print-only-header hidden">
         <div className="flex justify-between items-start">
           <div>
@@ -198,17 +230,22 @@ export default function JobDetailsPage() {
             <p className="text-sm uppercase text-gray-500">Printed Date</p>
           </div>
         </div>
-        
-        <div className="mt-6 border-2 border-black p-4 grid grid-cols-2 gap-4">
-          <div>
-            <p className="text-xs font-bold uppercase text-gray-500">Customer</p>
-            <p className="text-lg font-bold">{job?.title}</p> 
+        {/* Print Steps Section */}
+        {steps.length > 0 && (
+          <div className="mt-8 border-t-2 border-black pt-4">
+             <h3 className="font-bold uppercase mb-2">Routing Steps:</h3>
+             <ul className="space-y-2">
+               {steps.map((s, i) => (
+                 <li key={s.id} className="flex items-center text-sm border-b border-gray-300 pb-2">
+                   <span className="font-bold mr-4 w-6">{i+1}.</span>
+                   <span className="font-bold uppercase w-32">{s.department}</span>
+                   <span className="italic">{s.notes}</span>
+                   <span className="ml-auto border border-black px-2 py-1 text-xs">INITIAL: ______</span>
+                 </li>
+               ))}
+             </ul>
           </div>
-          <div>
-            <p className="text-xs font-bold uppercase text-gray-500">Due Date</p>
-            <p className="text-lg font-bold">ASAP</p>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* --- MAIN HEADER --- */}
@@ -226,11 +263,9 @@ export default function JobDetailsPage() {
             </div>
             {isAdmin ? (
                <div className="flex items-center gap-2">
-                 {/* PRINT BUTTON */}
                  <button onClick={() => window.print()} className="flex items-center gap-2 px-3 py-1 bg-white border border-gray-300 text-gray-700 rounded-full text-xs font-bold uppercase hover:bg-gray-50 hover:border-black transition-all">
                    <Printer size={14} /> Ticket
                  </button>
-
                  <span className="text-xs font-bold uppercase text-gray-400 mr-2 ml-2">Set Status:</span>
                  {['Pending Review', 'Proof Ready', 'In Production', 'Shipped'].map((s) => (
                    <button key={s} onClick={() => handleStatusChange(s)} className={`px-3 py-1 rounded-full text-xs font-bold uppercase border transition-all ${job.status === s ? 'bg-black text-white border-black' : 'bg-white text-gray-400 border-gray-200 hover:border-gray-400'}`}>
@@ -254,11 +289,72 @@ export default function JobDetailsPage() {
             <Timeline status={job.status} />
           </div>
 
+          {/* WORKFLOW MANAGER (New!) */}
+          {/* Visible to Customer (Read Only) & Staff (Edit) */}
+          {steps.length > 0 || isAdmin ? (
+             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                <h3 className="font-semibold text-gray-900 mb-4 flex items-center">
+                  <CheckSquare size={18} className="mr-2" /> Production Workflow
+                </h3>
+                
+                {/* Step List */}
+                <div className="space-y-3 mb-6">
+                  {steps.map((step, idx) => (
+                    <div key={step.id} className={`flex items-start p-3 rounded-lg border ${step.status === 'Completed' ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+                      <div className="mt-0.5 mr-3">
+                        {isAdmin ? (
+                          <button onClick={() => toggleStepStatus(step)} className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${step.status === 'Completed' ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-gray-300'}`}>
+                            {step.status === 'Completed' && <CheckCircle2 size={14} />}
+                          </button>
+                        ) : (
+                          <div className={`w-5 h-5 rounded border flex items-center justify-center ${step.status === 'Completed' ? 'bg-green-500 border-green-500 text-white' : 'bg-gray-200 border-gray-300'}`}>
+                             {step.status === 'Completed' && <CheckCircle2 size={14} />}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex justify-between">
+                           <span className={`font-bold text-sm ${step.status === 'Completed' ? 'text-green-900 line-through' : 'text-gray-900'}`}>{step.department}</span>
+                           {isAdmin && <button onClick={() => handleDeleteStep(step.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={14}/></button>}
+                        </div>
+                        {step.notes && <p className="text-xs text-gray-500 mt-1">{step.notes}</p>}
+                      </div>
+                    </div>
+                  ))}
+                  {steps.length === 0 && !isAdmin && <p className="text-sm text-gray-400 italic">No workflow steps defined.</p>}
+                </div>
+
+                {/* Add Step Form (Admin Only) */}
+                {isAdmin && (
+                  <div className="flex gap-2 items-start pt-4 border-t border-gray-100">
+                     <select value={newStepDept} onChange={(e) => setNewStepDept(e.target.value)} className="px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-medium focus:border-black outline-none">
+                       <option>Prepress</option>
+                       <option>Plates</option>
+                       <option>Press</option>
+                       <option>Cutting</option>
+                       <option>Bindery</option>
+                       <option>Mailing</option>
+                       <option>Shipping</option>
+                     </select>
+                     <input 
+                       type="text" 
+                       placeholder="Instructions (e.g. Cut to 5x7)" 
+                       value={newStepNotes}
+                       onChange={(e) => setNewStepNotes(e.target.value)}
+                       className="flex-1 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm focus:border-black outline-none"
+                     />
+                     <button onClick={handleAddStep} className="p-2 bg-black text-white rounded-lg hover:bg-gray-800"><Plus size={18}/></button>
+                  </div>
+                )}
+             </div>
+          ) : null}
+
+
           {/* ADMIN TOOLKIT (Visible to Admin & Staff) */}
           {isAdmin && (
             <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
               
-              {/* PRICING (Visible ONLY to SuperAdmin/Owner) */}
+              {/* PRICING (Visible ONLY to SuperAdmin) */}
               {isSuperAdmin && (
                 <div className="flex flex-col">
                   <h3 className="font-bold text-yellow-900 flex items-center mb-2"><DollarSign size={16} className="mr-2" /> Admin Quote</h3>
