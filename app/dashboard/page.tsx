@@ -342,12 +342,24 @@ export default function Dashboard() {
       {/* --- MAIN CONTENT --- */}
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-8 py-12">
-          
+          {/* --- GREETING HEADER --- */}
           <div className="mb-8 flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">{isInternal ? 'Production Floor' : 'Dashboard'}</h1>
-              <p className="mt-1 text-gray-500">{isInternal ? 'Track jobs moving through the shop.' : 'Welcome back.'}</p>
+              <h1 className="text-3xl font-bold text-gray-900">
+                {(() => {
+                  const hour = new Date().getHours();
+                  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+                  // Try to find the user's first name, fallback to email
+                  const name = staff.find(s => s.id === user?.id)?.first_name || user?.email?.split('@')[0] || 'Team';
+                  return `${greeting}, ${name}`;
+                })()}
+              </h1>
+              <p className="mt-1 text-gray-500">
+                {isInternal ? 'Here is what is happening on the production floor.' : 'Track your active print jobs.'}
+              </p>
             </div>
+            <button onClick={handleOpenNewOrder} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">+ New Order</button>
+          </div>
             <button onClick={handleOpenNewOrder} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">+ New Order</button>
           </div>
 
