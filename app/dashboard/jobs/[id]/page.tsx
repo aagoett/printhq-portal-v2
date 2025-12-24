@@ -4,12 +4,15 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, CheckCircle2, Clock, FileText, MessageSquare, Send, Download, 
   Printer, Truck, Layers, Upload, DollarSign, Save, RotateCw, MoveVertical, MoveHorizontal,
-  Paperclip, List, CheckSquare, Plus, Trash2, ArrowDownCircle
+  Paperclip, CheckSquare, Plus, Trash2, User
 } from 'lucide-react';
 import { useRouter, useParams } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { sendProofNotification } from '../../../actions';
+
+// Standard Departments to match your Dashboard
+const DEPARTMENTS = ['Prepress', 'Plates', 'Press', 'Bindery', 'Shipping', 'Outsource'];
 
 export default function JobDetailsPage() {
   const router = useRouter();
@@ -23,22 +26,22 @@ export default function JobDetailsPage() {
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
   
-  // ROLES STATE
+  // ROLES
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   
-  // Admin Action State
+  // ACTIONS
   const [isUploadingProof, setIsUploadingProof] = useState(false);
   const [quotePrice, setQuotePrice] = useState('');
   const [isSavingQuote, setIsSavingQuote] = useState(false);
   const [foldOrientation, setFoldOrientation] = useState('Vertical');
 
-  // File Vault & Workflow State
+  // DATA
   const [allFiles, setAllFiles] = useState<any[]>([]);
   const [steps, setSteps] = useState<any[]>([]);
   
-  // New Step Form
-  const [newStepDept, setNewStepDept] = useState('Prepress');
+  // NEW STEP FORM
+  const [newStepDept, setNewStepDept] = useState('Press');
   const [newStepNotes, setNewStepNotes] = useState('');
 
   const supabase = createBrowserClient(
@@ -53,16 +56,14 @@ export default function JobDetailsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return router.push('/login');
 
-      // --- CHECK ROLES ---
+      // Check Roles
       const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
       const userRole = profile?.role || 'customer';
       const isInternal = userRole === 'admin' || userRole === 'staff';
-      const _isSuperAdmin = userRole === 'admin';
-
       setIsAdmin(isInternal); 
-      setIsSuperAdmin(_isSuperAdmin);
+      setIsSuperAdmin(userRole === 'admin');
 
-      // --- FETCH JOB ---
+      // Fetch Job
       const { data: jobData, error } = await supabase.from('jobs').select('*').eq('id', params.id).single();
       if (error || !jobData) { router.push('/dashboard'); return; }
       
@@ -70,16 +71,15 @@ export default function JobDetailsPage() {
       if(jobData.price) setQuotePrice(jobData.price.toString());
       if(jobData.fold_orientation) setFoldOrientation(jobData.fold_orientation);
 
-      // --- FETCH MESSAGES ---
+      // Fetch Messages
       const { data: msgData } = await supabase.from('messages').select('*').eq('job_id', params.id).order('created_at', { ascending: true });
       if (msgData) setMessages(msgData);
 
-      // --- FETCH FILE VAULT ---
+      // Fetch Files
       const { data: fileData } = await supabase.from('job_files').select('*').eq('job_id', params.id).order('created_at', { ascending: false });
       if (fileData) setAllFiles(fileData);
 
-      // --- FETCH WORKFLOW STEPS ---
-      // (This requires the SQL table 'job_steps' we created)
+      // Fetch Workflow Steps
       const { data: stepData } = await supabase.from('job_steps').select('*').eq('job_id', params.id).order('step_order', { ascending: true });
       if (stepData) setSteps(stepData);
       
@@ -87,12 +87,17 @@ export default function JobDetailsPage() {
     };
     fetchData();
 
-    // Subscribe to changes
-    const channel = supabase.channel('realtime job details')
+    // Realtime Subscriptions
+    const channel = supabase.channel('realtime_job')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, 
         (payload) => setMessages((current) => [...current, payload.new]))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'job_steps', filter: `job_id=eq.${params.id}` }, 
-        () => { /* Refresh steps on change would be better, but for now simple reload or manual update */ })
+        (payload) => {
+           // Simple refresh logic for steps
+           if(payload.eventType === 'INSERT') setSteps(curr => [...curr, payload.new]);
+           if(payload.eventType === 'UPDATE') setSteps(curr => curr.map(s => s.id === payload.new.id ? payload.new : s));
+           if(payload.eventType === 'DELETE') setSteps(curr => curr.filter(s => s.id !== payload.old.id));
+        })
       .subscribe();
       
     return () => { supabase.removeChannel(channel); };
@@ -102,7 +107,7 @@ export default function JobDetailsPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // --- ACTIONS ---
+  // --- HANDLERS ---
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,10 +115,7 @@ export default function JobDetailsPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     const { error } = await supabase.from('messages').insert({
-      job_id: params.id,
-      user_id: user.id,
-      content: newMessage,
-      is_admin: isAdmin 
+      job_id: params.id, user_id: user.id, content: newMessage, is_admin: isAdmin 
     });
     if (!error) setNewMessage('');
   };
@@ -129,25 +131,26 @@ export default function JobDetailsPage() {
     setIsUploadingProof(true);
     try {
       const file = e.target.files[0];
-      const fileExt = file.name.split('.').pop();
-      const fileName = `proof-${Date.now()}.${fileExt}`;
+      const fileName = `proof-${Date.now()}.${file.name.split('.').pop()}`;
       const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, file);
       if (uploadError) throw uploadError;
 
       await supabase.from('jobs').update({ proof_url: fileData?.path, status: 'Proof Ready', proof_status: 'Pending Approval' }).eq('id', params.id);
       
-      // Auto-add to vault
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         await supabase.from('job_files').insert({
           job_id: params.id, file_name: `Proof: ${file.name}`, file_path: fileData?.path, file_type: 'proof', uploaded_by: user.id
         });
       }
-
+      
+      // Notify
       const { data: jobOwner } = await supabase.from('profiles').select('email').eq('id', job.user_id).single();
-      if (jobOwner?.email) {
-         await sendProofNotification(jobOwner.email, params.id as string, job.title);
-         alert("Proof uploaded! Customer has been emailed.");
+      // Use guest email if available, otherwise profile email
+      const targetEmail = job.guest_email || jobOwner?.email;
+      if (targetEmail) {
+         await sendProofNotification(targetEmail, params.id as string, job.title);
+         alert("Proof uploaded! Notification sent.");
       }
       window.location.reload();
     } catch (err) {
@@ -176,38 +179,23 @@ export default function JobDetailsPage() {
     await supabase.from('jobs').update({ fold_orientation: newOrientation }).eq('id', params.id);
   };
 
-  // --- WORKFLOW ACTIONS ---
+  // --- WORKFLOW HANDLERS ---
   const handleAddStep = async () => {
     const newOrder = steps.length + 1;
-    const { data, error } = await supabase.from('job_steps').insert({
-      job_id: params.id,
-      department: newStepDept,
-      step_order: newOrder,
-      notes: newStepNotes,
-      status: 'Pending'
-    }).select();
-
-    if (error) {
-      alert('Error adding step');
-      console.error(error);
-    } else {
-      setSteps([...steps, data[0]]);
-      setNewStepNotes('');
-    }
+    await supabase.from('job_steps').insert({
+      job_id: params.id, department: newStepDept, step_order: newOrder, notes: newStepNotes, status: 'Pending'
+    });
+    setNewStepNotes('');
   };
 
   const handleDeleteStep = async (stepId: string) => {
     if(!confirm("Remove this step?")) return;
     await supabase.from('job_steps').delete().eq('id', stepId);
-    setSteps(steps.filter(s => s.id !== stepId));
   };
 
   const toggleStepStatus = async (step: any) => {
     const newStatus = step.status === 'Completed' ? 'Pending' : 'Completed';
     await supabase.from('job_steps').update({ status: newStatus }).eq('id', step.id);
-    
-    // Optimistic Update
-    setSteps(steps.map(s => s.id === step.id ? {...s, status: newStatus} : s));
   };
 
   if (loading) return <div className="h-screen flex items-center justify-center"><div className="animate-spin h-8 w-8 border-4 border-black border-t-transparent rounded-full"></div></div>;
@@ -218,7 +206,7 @@ export default function JobDetailsPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       
-      {/* --- PRINT HEADER --- */}
+      {/* PRINT TICKET HEADER (Hidden until print) */}
       <div className="print-only-header hidden">
         <div className="flex justify-between items-start">
           <div>
@@ -227,10 +215,15 @@ export default function JobDetailsPage() {
           </div>
           <div className="text-right">
             <h2 className="text-2xl font-bold">{new Date().toLocaleDateString()}</h2>
-            <p className="text-sm uppercase text-gray-500">Printed Date</p>
           </div>
         </div>
-        {/* Print Steps Section */}
+        {/* Guest Info on Ticket */}
+        {job.guest_email && (
+            <div className="mt-4 border p-2 text-sm font-bold bg-gray-100">
+                GUEST CUSTOMER: {job.guest_email}
+            </div>
+        )}
+        {/* Steps on Ticket */}
         {steps.length > 0 && (
           <div className="mt-8 border-t-2 border-black pt-4">
              <h3 className="font-bold uppercase mb-2">Routing Steps:</h3>
@@ -248,7 +241,7 @@ export default function JobDetailsPage() {
         )}
       </div>
 
-      {/* --- MAIN HEADER --- */}
+      {/* --- SCREEN HEADER --- */}
       <div className="bg-white border-b border-gray-200 px-8 py-6">
         <div className="max-w-7xl mx-auto">
           <Link href="/dashboard" className="inline-flex items-center text-sm text-gray-500 hover:text-black mb-4 transition-colors">
@@ -257,9 +250,16 @@ export default function JobDetailsPage() {
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">{job.title}</h1>
-              <p className="text-gray-500 mt-1 flex items-center">
-                Job ID: <span className="font-mono ml-2 bg-gray-100 px-2 py-0.5 rounded text-sm">#{job.id.substring(0,8).toUpperCase()}</span>
-              </p>
+              <div className="flex items-center gap-4 mt-1">
+                 <p className="text-gray-500 flex items-center">
+                    Job ID: <span className="font-mono ml-2 bg-gray-100 px-2 py-0.5 rounded text-sm">#{job.id.substring(0,8).toUpperCase()}</span>
+                 </p>
+                 {job.guest_email && (
+                     <span className="bg-yellow-100 text-yellow-800 text-xs px-2 py-0.5 rounded-full font-bold flex items-center">
+                        <User size={12} className="mr-1"/> Guest: {job.guest_email}
+                     </span>
+                 )}
+              </div>
             </div>
             {isAdmin ? (
                <div className="flex items-center gap-2">
@@ -289,15 +289,15 @@ export default function JobDetailsPage() {
             <Timeline status={job.status} />
           </div>
 
-          {/* WORKFLOW MANAGER (New!) */}
-          {/* Visible to Customer (Read Only) & Staff (Edit) */}
-          {steps.length > 0 || isAdmin ? (
+          {/* WORKFLOW MANAGER (The "Path" Builder) */}
+          {/* Visible if steps exist OR if user is Admin/Staff */}
+          {(steps.length > 0 || isAdmin) && (
              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="font-semibold text-gray-900 mb-4 flex items-center">
                   <CheckSquare size={18} className="mr-2" /> Production Workflow
                 </h3>
                 
-                {/* Step List */}
+                {/* List of Steps */}
                 <div className="space-y-3 mb-6">
                   {steps.map((step, idx) => (
                     <div key={step.id} className={`flex items-start p-3 rounded-lg border ${step.status === 'Completed' ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
@@ -313,8 +313,10 @@ export default function JobDetailsPage() {
                         )}
                       </div>
                       <div className="flex-1">
-                        <div className="flex justify-between">
-                           <span className={`font-bold text-sm ${step.status === 'Completed' ? 'text-green-900 line-through' : 'text-gray-900'}`}>{step.department}</span>
+                        <div className="flex justify-between items-center">
+                           <span className={`font-bold text-sm ${step.status === 'Completed' ? 'text-green-900 line-through' : 'text-gray-900'}`}>
+                                {idx + 1}. {step.department}
+                           </span>
                            {isAdmin && <button onClick={() => handleDeleteStep(step.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={14}/></button>}
                         </div>
                         {step.notes && <p className="text-xs text-gray-500 mt-1">{step.notes}</p>}
@@ -328,13 +330,7 @@ export default function JobDetailsPage() {
                 {isAdmin && (
                   <div className="flex gap-2 items-start pt-4 border-t border-gray-100">
                      <select value={newStepDept} onChange={(e) => setNewStepDept(e.target.value)} className="px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-medium focus:border-black outline-none">
-                       <option>Prepress</option>
-                       <option>Plates</option>
-                       <option>Press</option>
-                       <option>Cutting</option>
-                       <option>Bindery</option>
-                       <option>Mailing</option>
-                       <option>Shipping</option>
+                       {DEPARTMENTS.map(d => <option key={d}>{d}</option>)}
                      </select>
                      <input 
                        type="text" 
@@ -347,14 +343,12 @@ export default function JobDetailsPage() {
                   </div>
                 )}
              </div>
-          ) : null}
+          )}
 
-
-          {/* ADMIN TOOLKIT (Visible to Admin & Staff) */}
+          {/* ADMIN TOOLKIT */}
           {isAdmin && (
             <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              {/* PRICING (Visible ONLY to SuperAdmin) */}
+              {/* PRICING */}
               {isSuperAdmin && (
                 <div className="flex flex-col">
                   <h3 className="font-bold text-yellow-900 flex items-center mb-2"><DollarSign size={16} className="mr-2" /> Admin Quote</h3>
@@ -366,7 +360,6 @@ export default function JobDetailsPage() {
                   </div>
                 </div>
               )}
-
               {job.folding_type !== 'None' && (
                 <div className="flex flex-col">
                    <h3 className="font-bold text-yellow-900 flex items-center mb-2"><RotateCw size={16} className="mr-2" /> Fold Direction</h3>
@@ -457,7 +450,7 @@ export default function JobDetailsPage() {
             </div>
           </div>
 
-          {/* FILE VAULT (History) */}
+          {/* FILE VAULT */}
           {isAdmin && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                <h3 className="font-semibold text-gray-900 mb-4 flex items-center"><Paperclip size={18} className="mr-2" /> File Vault</h3>
@@ -477,7 +470,7 @@ export default function JobDetailsPage() {
                    ))}
                  </div>
                ) : (
-                 <p className="text-sm text-gray-400">Run the SQL command to enable the File Vault.</p>
+                 <p className="text-sm text-gray-400">Files appear here after uploading.</p>
                )}
             </div>
           )}
@@ -511,7 +504,6 @@ export default function JobDetailsPage() {
       
       {/* PRINT STYLES */}
       <style>{`
-        /* PRINT MODE (Hide unnecessary items, format for paper) */
         @media print {
           nav, .bg-white.border-b, button, input, textarea, .lg\\:col-span-1, a[href^="/dashboard"], .aspect-video { display: none !important; }
           body, .min-h-screen, .bg-gray-50 { background-color: white !important; height: auto !important; }
@@ -520,8 +512,8 @@ export default function JobDetailsPage() {
           * { color: black !important; }
         }
         .print-only-header { display: none; }
-
-        /* FOLDING ANIMATIONS */
+        
+        /* FOLD ANIMATIONS */
         .perspective-800 { perspective: 800px; }
         .preserve-3d { transform-style: preserve-3d; }
         .backface-hidden { backface-visibility: hidden; }
@@ -550,8 +542,7 @@ export default function JobDetailsPage() {
   );
 }
 
-// --- SUB COMPONENTS ---
-
+// --- SUB COMPONENTS --- (Kept small to save space)
 function SpecRow({ label, value }: { label: string, value: string | number }) {
   return (
     <div className="flex justify-between items-center py-2 border-b border-gray-50 last:border-0">
@@ -560,12 +551,10 @@ function SpecRow({ label, value }: { label: string, value: string | number }) {
     </div>
   );
 }
-
 function StatusBadge({ status }: { status: string }) {
   const styles: any = { 'Pending Review': 'bg-yellow-100 text-yellow-800', 'In Production': 'bg-purple-100 text-purple-800', 'Shipped': 'bg-green-100 text-green-800' };
   return <span className={`px-4 py-1.5 rounded-full text-sm font-bold uppercase ${styles[status] || 'bg-gray-100 text-gray-800'}`}>{status}</span>;
 }
-
 function Timeline({ status }: { status: string }) {
   const steps = ['Pending Review', 'Proof Ready', 'In Production', 'Shipped'];
   const currentIdx = steps.indexOf(status);
@@ -589,75 +578,16 @@ function Timeline({ status }: { status: string }) {
     </div>
   );
 }
-
-// 🪄 THE UPGRADED "REALISTIC" FOLDING ANIMATION
 function FoldingAnimation({ type, orientation }: { type: string, orientation: string }) {
-  const isTriFold = type === 'Tri-Fold';
-  const isHalfFold = type === 'Half-Fold';
-  const isZFold = type === 'Z-Fold';
-  const isVertical = orientation === 'Vertical';
-
+  const isTriFold = type === 'Tri-Fold'; const isHalfFold = type === 'Half-Fold'; const isZFold = type === 'Z-Fold'; const isVertical = orientation === 'Vertical';
   if (!isTriFold && !isHalfFold && !isZFold) {
-    return (
-      <div className="w-32 h-48 bg-white border border-gray-200 shadow-sm relative flex flex-col p-2">
-        <MockPaperContent />
-        <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-400 font-medium bg-white/50">FLAT</div>
-      </div>
-    );
+    return (<div className="w-32 h-48 bg-white border border-gray-200 shadow-sm relative flex flex-col p-2"><MockPaperContent /><div className="absolute inset-0 flex items-center justify-center text-xs text-gray-400 font-medium bg-white/50">FLAT</div></div>);
   }
-
-  const widthClass = isVertical ? 'w-48 h-48' : 'w-48 h-48'; 
-  const containerClass = isVertical ? 'w-32 h-40 flex-row' : 'w-40 h-32 flex-col';
-
+  const widthClass = 'w-48 h-48'; const containerClass = isVertical ? 'w-32 h-40 flex-row' : 'w-40 h-32 flex-col';
   return (
-    <div className={`perspective-800 ${widthClass} flex items-center justify-center`}>
-      <div className={`relative ${containerClass} flex preserve-3d animate-fold-hover`}>
-        {/* Panel 1 */}
-        <div className={`
-          absolute border border-gray-300 bg-white overflow-hidden flex flex-col p-1
-          ${isVertical ? 'left-0 top-0 bottom-0 w-1/3 origin-right' : 'top-0 left-0 right-0 h-1/3 origin-bottom'}
-          ${isTriFold ? (isVertical ? 'animate-v-tri-1' : 'animate-h-tri-1') : ''}
-          ${isZFold ? (isVertical ? 'animate-v-z-1' : 'animate-h-z-1') : ''}
-          ${isHalfFold ? (isVertical ? 'w-1/2 animate-v-half-1' : 'h-1/2 animate-h-half-1') : ''}
-        `}>
-           <MockPaperContent part={1} vertical={isVertical} />
-           <div className="absolute inset-0 bg-gray-50 opacity-0 backface-hidden"></div>
-        </div>
-
-        {/* Panel 2 */}
-        {(isTriFold || isZFold) && (
-          <div className={`absolute border border-gray-300 bg-white overflow-hidden flex flex-col p-1 ${isVertical ? 'left-1/3 top-0 bottom-0 w-1/3' : 'top-1/3 left-0 right-0 h-1/3'}`}>
-             <MockPaperContent part={2} vertical={isVertical} />
-          </div>
-        )}
-
-        {/* Panel 3 */}
-        <div className={`
-          absolute border border-gray-300 bg-white overflow-hidden flex flex-col p-1
-          ${isVertical ? 'right-0 top-0 bottom-0 origin-left' : 'bottom-0 left-0 right-0 origin-top'}
-          ${isTriFold ? (isVertical ? 'w-1/3 animate-v-tri-3' : 'h-1/3 animate-h-tri-3') : ''}
-          ${isZFold ? (isVertical ? 'w-1/3 animate-v-z-3' : 'h-1/3 animate-h-z-3') : ''}
-          ${isHalfFold ? (isVertical ? 'w-1/2 hidden' : 'h-1/2 hidden') : ''}
-        `}>
-          <MockPaperContent part={3} vertical={isVertical} />
-        </div>
-      </div>
-    </div>
+    <div className={`perspective-800 ${widthClass} flex items-center justify-center`}><div className={`relative ${containerClass} flex preserve-3d animate-fold-hover`}><div className={`absolute border border-gray-300 bg-white overflow-hidden flex flex-col p-1 ${isVertical ? 'left-0 top-0 bottom-0 w-1/3 origin-right' : 'top-0 left-0 right-0 h-1/3 origin-bottom'} ${isTriFold ? (isVertical ? 'animate-v-tri-1' : 'animate-h-tri-1') : ''} ${isZFold ? (isVertical ? 'animate-v-z-1' : 'animate-h-z-1') : ''} ${isHalfFold ? (isVertical ? 'w-1/2 animate-v-half-1' : 'h-1/2 animate-h-half-1') : ''}`}><MockPaperContent part={1} vertical={isVertical} /><div className="absolute inset-0 bg-gray-50 opacity-0 backface-hidden"></div></div>{(isTriFold || isZFold) && (<div className={`absolute border border-gray-300 bg-white overflow-hidden flex flex-col p-1 ${isVertical ? 'left-1/3 top-0 bottom-0 w-1/3' : 'top-1/3 left-0 right-0 h-1/3'}`}><MockPaperContent part={2} vertical={isVertical} /></div>)}<div className={`absolute border border-gray-300 bg-white overflow-hidden flex flex-col p-1 ${isVertical ? 'right-0 top-0 bottom-0 origin-left' : 'bottom-0 left-0 right-0 origin-top'} ${isTriFold ? (isVertical ? 'w-1/3 animate-v-tri-3' : 'h-1/3 animate-h-tri-3') : ''} ${isZFold ? (isVertical ? 'w-1/3 animate-v-z-3' : 'h-1/3 animate-h-z-3') : ''} ${isHalfFold ? (isVertical ? 'w-1/2 hidden' : 'h-1/2 hidden') : ''}`}><MockPaperContent part={3} vertical={isVertical} /></div></div></div>
   );
 }
-
 function MockPaperContent({ part = 1, vertical = true }: { part?: number, vertical?: boolean }) {
-  return (
-    <div className={`w-full h-full flex ${vertical ? 'flex-col space-y-1' : 'flex-row space-x-1'} opacity-60`}>
-      {part === 1 && <div className={`${vertical ? 'h-8 w-full' : 'w-8 h-full'} bg-gray-200 rounded-sm`}></div>}
-      <div className="flex-1 space-y-1">
-        <div className={`bg-gray-100 rounded-sm ${vertical ? 'h-1 w-full' : 'w-1 h-full'}`}></div>
-        <div className={`bg-gray-100 rounded-sm ${vertical ? 'h-1 w-5/6' : 'w-1 h-5/6'}`}></div>
-        <div className={`bg-gray-100 rounded-sm ${vertical ? 'h-1 w-full' : 'w-1 h-full'}`}></div>
-        <div className={`bg-gray-100 rounded-sm ${vertical ? 'h-1 w-4/5' : 'w-1 h-4/5'}`}></div>
-        {part === 2 && <><div className={`bg-gray-100 rounded-sm ${vertical ? 'h-1 w-full' : 'w-1 h-full'}`}></div><div className={`bg-gray-100 rounded-sm ${vertical ? 'h-1 w-4/6' : 'w-1 h-4/6'}`}></div></>}
-      </div>
-      {part === 3 && <div className={`${vertical ? 'h-6 w-full mt-auto' : 'w-6 h-full ml-auto'} bg-gray-200 rounded-sm`}></div>}
-    </div>
-  );
+  return (<div className={`w-full h-full flex ${vertical ? 'flex-col space-y-1' : 'flex-row space-x-1'} opacity-60`}>{part === 1 && <div className={`${vertical ? 'h-8 w-full' : 'w-8 h-full'} bg-gray-200 rounded-sm`}></div>}<div className="flex-1 space-y-1"><div className={`bg-gray-100 rounded-sm ${vertical ? 'h-1 w-full' : 'w-1 h-full'}`}></div><div className={`bg-gray-100 rounded-sm ${vertical ? 'h-1 w-5/6' : 'w-1 h-5/6'}`}></div><div className={`bg-gray-100 rounded-sm ${vertical ? 'h-1 w-full' : 'w-1 h-full'}`}></div><div className={`bg-gray-100 rounded-sm ${vertical ? 'h-1 w-4/5' : 'w-1 h-4/5'}`}></div>{part === 2 && <><div className={`bg-gray-100 rounded-sm ${vertical ? 'h-1 w-full' : 'w-1 h-full'}`}></div><div className={`bg-gray-100 rounded-sm ${vertical ? 'h-1 w-4/6' : 'w-1 h-4/6'}`}></div></>}</div>{part === 3 && <div className={`${vertical ? 'h-6 w-full mt-auto' : 'w-6 h-full ml-auto'} bg-gray-200 rounded-sm`}></div>}</div>);
 }
