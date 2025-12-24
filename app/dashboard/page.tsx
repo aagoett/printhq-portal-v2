@@ -3,7 +3,7 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { 
   UploadCloud, FileText, Clock, Settings, LogOut, LayoutDashboard, 
-  Loader2, X, Search, Scissors, User
+  Loader2, X, Search, Scissors, User, Trash2, UserPlus
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
@@ -21,6 +21,7 @@ type Job = {
   user_id: string;
   paper_stock?: string;
   folding_type?: string;
+  guest_email?: string; // New field
 };
 
 type Profile = {
@@ -34,10 +35,10 @@ export default function Dashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // --- STATE ---
-  const [role, setRole] = useState('customer'); // 'admin', 'staff', 'customer'
+  const [role, setRole] = useState('customer');
   const [loading, setLoading] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [customers, setCustomers] = useState<Profile[]>([]); // List of customers for Staff
+  const [customers, setCustomers] = useState<Profile[]>([]);
   
   // Modal State
   const [showModal, setShowModal] = useState(false);
@@ -48,7 +49,11 @@ export default function Dashboard() {
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
   const [jobNotes, setJobNotes] = useState('');
-  const [selectedCustomerId, setSelectedCustomerId] = useState(''); // For Staff Entry
+  
+  // Customer Selection Logic
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [isNewCustomer, setIsNewCustomer] = useState(false); // Toggle for "New Customer"
+  const [newCustomerEmail, setNewCustomerEmail] = useState(''); // Freeform Input
   
   // Specs State
   const [paperStock, setPaperStock] = useState('100lb Gloss Text');
@@ -82,19 +87,15 @@ export default function Dashboard() {
 
       // Fetch Jobs
       let query = supabase.from('jobs').select('*').order('created_at', { ascending: false });
-      if (!isInternal) query = query.eq('user_id', user.id); // Customers only see theirs
+      if (!isInternal) query = query.eq('user_id', user.id); 
 
       const { data: jobsData } = await query;
       if (jobsData) setJobs(jobsData);
 
-      // If Staff, fetch Customer List for the dropdown
+      // If Staff, fetch Customer List
       if (isInternal) {
-        const { data: customerData } = await supabase
-          .from('profiles')
-          .select('id, email, role')
-          .order('email'); // Ideally filter where role != admin
+        const { data: customerData } = await supabase.from('profiles').select('id, email, role').order('email');
         if (customerData) setCustomers(customerData);
-        // Default to self just in case
         setSelectedCustomerId(user.id);
       } else {
         setSelectedCustomerId(user.id);
@@ -110,38 +111,82 @@ export default function Dashboard() {
     router.push('/login');
   };
 
-  const handleUploadClick = () => {
-    // This triggers the hidden file input
+  // --- HANDLERS ---
+
+  const handleOpenNewOrder = () => {
+    // Reset form
+    setSelectedFile(null);
+    setJobTitle('');
+    setJobQty('');
+    setJobNotes('');
+    setIsNewCustomer(false);
+    setNewCustomerEmail('');
+    setShowModal(true);
+  };
+
+  const triggerFilePicker = () => {
     fileInputRef.current?.click();
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setSelectedFile(e.target.files[0]);
-      setJobTitle(e.target.files[0].name.split('.').slice(0, -1).join('.'));
-      setShowModal(true);
-      // Reset input so you can select the same file again if needed
+      const file = e.target.files[0];
+      setSelectedFile(file);
+      if (!jobTitle) {
+        setJobTitle(file.name.split('.').slice(0, -1).join('.'));
+      }
       e.target.value = '';
     }
   };
 
+  const handleRemoveFile = () => {
+    setSelectedFile(null);
+  };
+
   const handleSubmitJob = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedFile) return;
+    if (!selectedFile) {
+      alert("Please upload a file before submitting.");
+      return;
+    }
+
+    // Validation for New Customer
+    if (isNewCustomer && !newCustomerEmail.includes('@')) {
+      alert("Please enter a valid email for the new customer.");
+      return;
+    }
 
     setIsUploading(true);
     try {
+      const { data: { user } } = await supabase.auth.getUser(); // Get current logged in staff
+
       // 1. Upload File
       const fileExt = selectedFile.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
       const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, selectedFile);
       if (uploadError) throw uploadError;
 
-      // 2. Create DB Record (Use selectedCustomerId!)
+      // 2. Determine Owner & Email
+      let finalUserId = user?.id; // Default to Staff ID (placeholder owner)
+      let finalEmail = '';
+
+      if (isNewCustomer) {
+        // GUEST MODE: Owner is Staff, but we save the email
+        finalEmail = newCustomerEmail;
+        // Ideally: finalUserId = user.id (Staff keeps it in their view until transfer)
+      } else {
+        // EXISTING MODE: Owner is the selected customer
+        finalUserId = selectedCustomerId;
+        const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
+        finalEmail = selectedCustomer?.email || '';
+      }
+
+      // 3. Create DB Record
       const { data: newJob, error: dbError } = await supabase
         .from('jobs')
         .insert({
-          user_id: selectedCustomerId, // <--- Staff can set this to anyone.
+          user_id: finalUserId, 
+          guest_email: isNewCustomer ? finalEmail : null, // Save guest email if applicable
           title: jobTitle,
           quantity: parseInt(jobQty) || 0,
           notes: jobNotes,
@@ -157,19 +202,10 @@ export default function Dashboard() {
 
       if (dbError) throw dbError;
 
-      // 3. SEND EMAIL (To the CUSTOMER, not necessarily the logged in staff)
-      const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
-      let targetEmail = selectedCustomer?.email; 
-      
-      // Fallback if we can't find it in the list (e.g. self)
-      if (!targetEmail) {
-         const { data: { user } } = await supabase.auth.getUser();
-         targetEmail = user?.email;
-      }
-
-      if (targetEmail && newJob) {
-        console.log("Sending email to:", targetEmail);
-        await sendOrderConfirmation(targetEmail, newJob.id, jobTitle);
+      // 4. SEND EMAIL
+      if (finalEmail && newJob) {
+        console.log("Sending email to:", finalEmail);
+        await sendOrderConfirmation(finalEmail, newJob.id, jobTitle);
       }
 
       setShowModal(false);
@@ -190,7 +226,6 @@ export default function Dashboard() {
   return (
     <div className="flex h-screen bg-gray-50 relative">
       
-      {/* --- HIDDEN INPUT (MOVED HERE SO IT EXISTS FOR EVERYONE) --- */}
       <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept=".pdf,.ai,.psd,.indd,.jpg,.png" />
 
       {/* --- SMART UPLOAD MODAL --- */}
@@ -208,33 +243,79 @@ export default function Dashboard() {
               
               {/* STAFF ONLY: CUSTOMER SELECTOR */}
               {isInternal && (
-                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
-                  <label className="block text-xs font-bold uppercase text-yellow-800 mb-2 flex items-center">
-                    <User size={14} className="mr-1"/> Entering Order On Behalf Of:
-                  </label>
-                  <select 
-                    value={selectedCustomerId} 
-                    onChange={(e) => setSelectedCustomerId(e.target.value)}
-                    className="w-full rounded-lg border border-yellow-300 px-3 py-2 bg-white text-gray-900 font-medium focus:ring-2 focus:ring-yellow-400 outline-none"
-                  >
-                    {customers.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.email} {c.role !== 'customer' ? `(${c.role.toUpperCase()})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-yellow-700 mt-2">The selected user will receive the "Order Received" email.</p>
+                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl transition-all">
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="text-xs font-bold uppercase text-yellow-800 flex items-center">
+                      <User size={14} className="mr-1"/> 
+                      {isNewCustomer ? 'Enter New Customer Email:' : 'Select Existing Customer:'}
+                    </label>
+                    
+                    <button 
+                      type="button" 
+                      onClick={() => setIsNewCustomer(!isNewCustomer)}
+                      className="text-xs font-bold text-blue-600 hover:underline flex items-center"
+                    >
+                      {isNewCustomer ? 'Select Existing Account' : '+ Create New Guest'}
+                    </button>
+                  </div>
+
+                  {isNewCustomer ? (
+                    // FREEFORM INPUT
+                    <div className="animate-in fade-in zoom-in duration-200">
+                      <input 
+                        type="email" 
+                        placeholder="client@newcompany.com" 
+                        value={newCustomerEmail}
+                        onChange={(e) => setNewCustomerEmail(e.target.value)}
+                        className="w-full rounded-lg border border-yellow-300 px-3 py-2 bg-white text-gray-900 font-medium focus:ring-2 focus:ring-yellow-400 outline-none"
+                      />
+                      <p className="text-xs text-yellow-600 mt-2 flex items-center">
+                        <UserPlus size={12} className="mr-1"/> We will email them an invite to track this order.
+                      </p>
+                    </div>
+                  ) : (
+                    // DROPDOWN SELECT
+                    <select 
+                      value={selectedCustomerId} 
+                      onChange={(e) => setSelectedCustomerId(e.target.value)}
+                      className="w-full rounded-lg border border-yellow-300 px-3 py-2 bg-white text-gray-900 font-medium focus:ring-2 focus:ring-yellow-400 outline-none"
+                    >
+                      {customers.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.email} {c.role !== 'customer' ? `(${c.role.toUpperCase()})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               )}
 
-              {/* 1. File Preview */}
-              <div className="flex items-center p-3 bg-blue-50 rounded-xl text-blue-900 border border-blue-100">
-                <FileText size={20} className="mr-3 text-blue-600" />
-                <div>
-                  <p className="text-xs font-bold uppercase text-blue-400">Selected File</p>
-                  <p className="font-medium truncate max-w-[250px]">{selectedFile?.name}</p>
+              {/* 1. FILE UPLOAD AREA */}
+              {!selectedFile ? (
+                <div 
+                  onClick={triggerFilePicker}
+                  className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-black hover:bg-gray-50 transition-all group"
+                >
+                  <div className="mx-auto h-12 w-12 bg-gray-100 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+                    <UploadCloud className="h-6 w-6 text-gray-600 group-hover:text-black" />
+                  </div>
+                  <p className="font-bold text-gray-900">Click to upload artwork</p>
+                  <p className="text-sm text-gray-500">PDF, AI, PSD, JPG, PNG</p>
                 </div>
-              </div>
+              ) : (
+                <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl text-blue-900 border border-blue-100">
+                  <div className="flex items-center overflow-hidden">
+                    <FileText size={24} className="mr-3 text-blue-600 flex-shrink-0" />
+                    <div className="overflow-hidden">
+                      <p className="text-xs font-bold uppercase text-blue-400">Selected File</p>
+                      <p className="font-medium truncate">{selectedFile.name}</p>
+                    </div>
+                  </div>
+                  <button type="button" onClick={handleRemoveFile} className="ml-2 p-2 text-blue-400 hover:text-red-500 hover:bg-blue-100 rounded-full transition-colors">
+                    <Trash2 size={18} />
+                  </button>
+                </div>
+              )}
 
               {/* 2. Basic Info */}
               <div className="grid grid-cols-2 gap-4">
@@ -320,7 +401,7 @@ export default function Dashboard() {
                  <textarea rows={2} value={jobNotes} onChange={(e) => setJobNotes(e.target.value)} placeholder="Special shipping address, packaging instructions..." className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-black focus:ring-1 focus:ring-black" />
               </div>
               
-              <button type="submit" disabled={isUploading} className="w-full py-4 bg-black text-white rounded-xl font-bold hover:bg-gray-800 flex items-center justify-center shadow-lg transition-transform active:scale-95">
+              <button type="submit" disabled={isUploading || !selectedFile} className="w-full py-4 bg-black text-white rounded-xl font-bold hover:bg-gray-800 flex items-center justify-center shadow-lg transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
                 {isUploading ? <Loader2 className="animate-spin mr-2" /> : <UploadCloud className="mr-2" size={20} />}
                 {isUploading ? 'Uploading & Creating Ticket...' : 'Submit Print Job'}
               </button>
@@ -359,8 +440,9 @@ export default function Dashboard() {
               <h1 className="text-3xl font-bold text-gray-900">{isInternal ? 'Production Overview' : 'Dashboard'}</h1>
               <p className="mt-1 text-gray-500">{isInternal ? 'Manage incoming production queue.' : 'Welcome back. Ready to print?'}</p>
             </div>
-            {/* BUTTON IS ALWAYS VISIBLE NOW */}
-            <button onClick={handleUploadClick} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">
+            
+            {/* BUTTON TRIGGERS MODAL DIRECTLY */}
+            <button onClick={handleOpenNewOrder} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">
               + New Order
             </button>
           </div>
@@ -395,6 +477,8 @@ export default function Dashboard() {
                         <td className="px-6 py-4 text-gray-500 text-xs">
                            {job.paper_stock}<br/>
                            {job.folding_type !== 'None' && <span className="text-blue-600 font-bold">{job.folding_type}</span>}
+                           {/* SHOW GUEST EMAIL IF EXISTS */}
+                           {job.guest_email && <div className="text-yellow-600 font-bold mt-1 text-[10px]">Guest: {job.guest_email}</div>}
                         </td>
                         <td className="px-6 py-4">{job.quantity}</td>
                         <td className="px-6 py-4"><StatusBadge status={job.status} /></td>
@@ -408,7 +492,7 @@ export default function Dashboard() {
           ) : (
             // CUSTOMER CARD VIEW
             <>
-              <div className="relative group cursor-pointer mb-12" onClick={handleUploadClick}>
+              <div className="relative group cursor-pointer mb-12" onClick={handleOpenNewOrder}>
                 <div className="absolute -inset-1 rounded-3xl bg-gradient-to-r from-blue-600 to-purple-600 opacity-20 blur group-hover:opacity-40 transition duration-500"></div>
                 <div className="relative flex h-64 w-full flex-col items-center justify-center rounded-2xl bg-white border-2 border-dashed border-gray-300 hover:border-blue-500 transition-all duration-300 shadow-sm">
                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-50 group-hover:scale-110 transition-transform duration-300">
@@ -429,8 +513,7 @@ export default function Dashboard() {
   );
 }
 
-// --- SUB COMPONENTS ---
-
+// --- SUB COMPONENTS --- (Same as before)
 function NavItem({ icon, label, active = false }: { icon: any, label: string, active?: boolean }) {
   return (
     <a href="#" className={`flex items-center rounded-lg px-4 py-3 text-sm font-medium transition-colors ${active ? 'bg-gray-100 text-black' : 'text-gray-600 hover:bg-gray-50 hover:text-black'}`}>
