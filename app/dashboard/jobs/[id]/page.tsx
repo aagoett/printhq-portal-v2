@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, CheckCircle2, Clock, FileText, MessageSquare, Send, Download, 
   Printer, Truck, Layers, Upload, DollarSign, Save, RotateCw, MoveVertical, MoveHorizontal,
-  Paperclip, list, CheckSquare, Plus, Trash2, ArrowDownCircle
+  Paperclip, List, CheckSquare, Plus, Trash2, ArrowDownCircle
 } from 'lucide-react';
 import { useRouter, useParams } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
