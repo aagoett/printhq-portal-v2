@@ -2,8 +2,8 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { 
-  UploadCloud, FileText, Clock, Settings, LogOut, LayoutDashboard, 
-  Loader2, X, Search, Scissors, User, Trash2, UserPlus, Filter, ArrowRightCircle
+  UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
+  Loader2, X, Scissors, User, Trash2, UserPlus, Filter, ArrowRightCircle, Briefcase
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
@@ -20,34 +20,37 @@ type Job = {
   notes: string;
   user_id: string;
   paper_stock?: string;
-  folding_type?: string;
   guest_email?: string;
-  // New fields for logic
-  current_step?: string; // "Press", "Bindery", etc.
-  next_step_id?: string; // The ID of the step to complete
+  current_step?: string;
+  next_step_id?: string;
+  assigned_to?: string; // New: Who owns this job?
+  csr_name?: string;    // New: Helper for display
 };
 
 type Profile = {
   id: string;
   email: string;
   role: string;
+  first_name?: string; 
 };
 
-// The Departments in your shop
-const DEPARTMENTS = ['All', 'Prepress', 'Plates', 'Press', 'Bindery', 'Shipping'];
+// Added "My Queue" to the list
+const DEPARTMENTS = ['My Queue', 'All', 'Prepress', 'Plates', 'Press', 'Bindery', 'Shipping'];
 
 export default function Dashboard() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // --- STATE ---
+  const [user, setUser] = useState<any>(null);
   const [role, setRole] = useState('customer');
   const [loading, setLoading] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [customers, setCustomers] = useState<Profile[]>([]);
+  const [staff, setStaff] = useState<Profile[]>([]); // List of staff for dropdown
   
   // View State
-  const [activeTab, setActiveTab] = useState('All'); // Current Department Filter
+  const [activeTab, setActiveTab] = useState('All'); 
   
   // Modal State
   const [showModal, setShowModal] = useState(false);
@@ -66,24 +69,20 @@ export default function Dashboard() {
   
   // Specs State
   const [paperStock, setPaperStock] = useState('100lb Gloss Text');
-  const [printSize, setPrintSize] = useState('8.5 x 11');
-  const [isDoubleSided, setIsDoubleSided] = useState(false);
-  const [needsFolding, setNeedsFolding] = useState(false);
-  const [foldType, setFoldType] = useState('Tri-Fold');
-
+  
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  // --- INITIALIZATION ---
   useEffect(() => {
     fetchDashboardData();
-  }, []); // Run once on mount
+  }, []);
 
   const fetchDashboardData = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return router.push('/login');
+    setUser(user);
 
     // 1. Get Profile
     const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
@@ -96,31 +95,34 @@ export default function Dashboard() {
     if (!isInternal) jobQuery = jobQuery.eq('user_id', user.id);
     const { data: jobsData } = await jobQuery;
 
-    // 3. Fetch Active Steps (The "Brain" of the operation)
-    // We get ALL steps that are 'Pending'
-    const { data: stepsData } = await supabase.from('job_steps').select('*').eq('status', 'Pending').order('step_order', { ascending: true });
+    // 3. Fetch Steps
+    const { data: stepsData } = await supabase.from('job_steps').select('*').eq('status', 'Pending');
 
-    // 4. Merge Data (Calculate "Current Station")
+    // 4. Merge Data
     if (jobsData) {
       const processedJobs = jobsData.map(j => {
-        // Find the FIRST pending step for this job
         const activeStep = stepsData?.find(s => s.job_id === j.id);
         return {
           ...j,
-          current_step: activeStep ? activeStep.department : 'Complete', // If no pending steps, it's done
+          current_step: activeStep ? activeStep.department : 'Complete',
           next_step_id: activeStep ? activeStep.id : null
         };
       });
       setJobs(processedJobs);
     }
 
-    // 5. Fetch Customers (If Staff)
+    // 5. Fetch People (Customers & Staff)
     if (isInternal) {
-      const { data: customerData } = await supabase.from('profiles').select('id, email, role').order('email');
-      if (customerData) setCustomers(customerData);
+      const { data: allProfiles } = await supabase.from('profiles').select('*');
+      if (allProfiles) {
+        setCustomers(allProfiles);
+        // Filter for Staff list
+        setStaff(allProfiles.filter(p => p.role === 'admin' || p.role === 'staff'));
+      }
       setSelectedCustomerId(user.id);
-    } else {
-      setSelectedCustomerId(user.id);
+      
+      // Default to "My Queue" for staff efficiency
+      setActiveTab('My Queue'); 
     }
 
     setLoading(false);
@@ -131,19 +133,26 @@ export default function Dashboard() {
     router.push('/login');
   };
 
-  // --- ACTIONS ---
+  // --- NEW: ASSIGN JOB ---
+  const handleAssignJob = async (jobId: string, staffId: string) => {
+    if (!staffId) return;
+    const staffMember = staff.find(s => s.id === staffId);
+    const staffName = staffMember ? (staffMember.first_name || staffMember.email) : 'Staff';
 
-  // Quick Advance Button (Shop Floor Speed!)
+    // Optimistic Update (Instant UI change)
+    setJobs(jobs.map(j => j.id === jobId ? { ...j, assigned_to: staffId, csr_name: staffName } : j));
+
+    // DB Update
+    await supabase.from('jobs').update({ assigned_to: staffId, csr_name: staffName }).eq('id', jobId);
+  };
+
   const handleQuickAdvance = async (job: Job) => {
     if (!job.next_step_id) return;
-    
-    // Mark step as Completed
     await supabase.from('job_steps').update({ status: 'Completed' }).eq('id', job.next_step_id);
-    
-    // Refresh Data to find the NEXT step
     fetchDashboardData();
   };
 
+  // --- FORM HANDLERS ---
   const handleOpenNewOrder = () => {
     setSelectedFile(null);
     setJobTitle('');
@@ -153,18 +162,14 @@ export default function Dashboard() {
     setNewCustomerEmail('');
     setShowModal(true);
   };
-
   const triggerFilePicker = () => fileInputRef.current?.click();
-
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       setSelectedFile(file);
       if (!jobTitle) setJobTitle(file.name.split('.').slice(0, -1).join('.'));
-      e.target.value = '';
     }
   };
-
   const handleRemoveFile = () => setSelectedFile(null);
 
   const handleSubmitJob = async (e: React.FormEvent) => {
@@ -174,8 +179,6 @@ export default function Dashboard() {
 
     setIsUploading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-
       const fileExt = selectedFile.name.split('.').pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
       const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, selectedFile);
@@ -203,17 +206,15 @@ export default function Dashboard() {
           file_url: fileData?.path,
           status: 'Pending Review',
           paper_stock: paperStock,
-          print_size: printSize,
-          print_sides: isDoubleSided ? 'Double Sided' : 'Single Sided',
-          folding_type: needsFolding ? foldType : 'None'
+          assigned_to: user?.id, // Auto-assign to creator
+          csr_name: 'Me'
         })
         .select()
         .single();
 
       if (dbError) throw dbError;
 
-      // --- AUTO-CREATE DEFAULT WORKFLOW ---
-      // When a job is created, let's give it a basic "Prepress" step automatically
+      // Auto-create workflow
       await supabase.from('job_steps').insert({
         job_id: newJob.id,
         department: 'Prepress',
@@ -227,7 +228,7 @@ export default function Dashboard() {
       }
 
       setShowModal(false);
-      fetchDashboardData(); // Refresh without reload
+      fetchDashboardData();
 
     } catch (error) {
       console.error('Error:', error);
@@ -244,13 +245,13 @@ export default function Dashboard() {
   // --- FILTER LOGIC ---
   const filteredJobs = jobs.filter(job => {
     if (activeTab === 'All') return true;
+    if (activeTab === 'My Queue') return job.assigned_to === user?.id; // Only show MY jobs
     return job.current_step === activeTab;
   });
 
   return (
     <div className="flex h-screen bg-gray-50 relative">
-      
-      <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" accept=".pdf,.ai,.psd,.indd,.jpg,.png" />
+      <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
 
       {/* --- MODAL --- */}
       {showModal && (
@@ -306,7 +307,6 @@ export default function Dashboard() {
                 <div><label className="block text-xs font-bold uppercase text-gray-500 mb-1">Due Date</label><input type="date" className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-black" /></div>
               </div>
               
-              {/* Specs (Simplified for brevity in this view) */}
               <div className="border-t border-gray-100 pt-4">
                  <p className="text-sm font-bold text-gray-900 mb-4 flex items-center"><Settings size={16} className="mr-2" /> Print Specifications</p>
                  <select value={paperStock} onChange={(e) => setPaperStock(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2.5 mb-4"><option>100lb Gloss Text</option><option>14pt Cardstock</option></select>
@@ -330,10 +330,7 @@ export default function Dashboard() {
         </div>
         <nav className="flex-1 space-y-1 px-4 py-6">
           <NavItem icon={<LayoutDashboard size={20} />} label={isInternal ? "Shop Floor" : "My Jobs"} href="/dashboard" active />
-          
-          {/* NEW CUSTOMER LINK */}
           {isInternal && <NavItem icon={<User size={20} />} label="Customers" href="/dashboard/customers" />}
-          
           {!isInternal && <NavItem icon={<FileText size={20} />} label="Quote History" href="/dashboard/history" />}
           <NavItem icon={<Settings size={20} />} label="Settings" href="/dashboard/settings" />
         </nav>
@@ -344,7 +341,7 @@ export default function Dashboard() {
 
       {/* --- MAIN CONTENT --- */}
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl px-8 py-12">
+        <div className="mx-auto max-w-7xl px-8 py-12">
           
           <div className="mb-8 flex items-center justify-between">
             <div>
@@ -354,15 +351,19 @@ export default function Dashboard() {
             <button onClick={handleOpenNewOrder} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">+ New Order</button>
           </div>
 
-          {/* --- DEPARTMENT TABS (STAFF ONLY) --- */}
+          {/* --- DEPARTMENT TABS --- */}
           {isInternal && (
             <div className="mb-6 flex gap-2 overflow-x-auto pb-2">
               {DEPARTMENTS.map((dept) => (
                 <button 
                   key={dept}
                   onClick={() => setActiveTab(dept)}
-                  className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors ${activeTab === dept ? 'bg-black text-white' : 'bg-white text-gray-500 border border-gray-200 hover:border-black hover:text-black'}`}
+                  className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors flex items-center
+                    ${activeTab === dept 
+                       ? 'bg-black text-white' 
+                       : 'bg-white text-gray-500 border border-gray-200 hover:border-black hover:text-black'}`}
                 >
+                  {dept === 'My Queue' && <Briefcase size={14} className="mr-2" />}
                   {dept}
                 </button>
               ))}
@@ -370,12 +371,11 @@ export default function Dashboard() {
           )}
 
           {isInternal ? (
-            // STAFF TABLE VIEW
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-[400px]">
               <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
                 <h3 className="font-semibold text-gray-900 flex items-center">
                   <Filter size={16} className="mr-2 text-gray-400" /> 
-                  {activeTab === 'All' ? 'All Active Jobs' : `${activeTab} Queue`}
+                  {activeTab}
                 </h3>
                 <div className="text-xs font-bold bg-gray-200 px-2 py-1 rounded text-gray-600">{filteredJobs.length} Jobs</div>
               </div>
@@ -383,7 +383,7 @@ export default function Dashboard() {
               {filteredJobs.length === 0 ? (
                 <div className="p-12 text-center text-gray-400 flex flex-col items-center">
                    <Scissors size={48} className="mb-4 opacity-20" />
-                   <p>No jobs currently in {activeTab}.</p>
+                   <p>No jobs found in {activeTab}.</p>
                 </div>
               ) : (
                 <table className="w-full text-left text-sm">
@@ -392,7 +392,7 @@ export default function Dashboard() {
                       <th className="px-6 py-3">Job ID</th>
                       <th className="px-6 py-3">Title</th>
                       <th className="px-6 py-3">Current Station</th>
-                      <th className="px-6 py-3">Qty</th>
+                      <th className="px-6 py-3">Assign CSR</th>
                       <th className="px-6 py-3">Quick Action</th>
                       <th className="px-6 py-3"></th>
                     </tr>
@@ -410,7 +410,21 @@ export default function Dashboard() {
                              {job.current_step || 'Processing...'}
                            </span>
                         </td>
-                        <td className="px-6 py-4">{job.quantity}</td>
+                        
+                        {/* CSR ASSIGNMENT DROPDOWN */}
+                        <td className="px-6 py-4">
+                           <select 
+                             value={job.assigned_to || ''} 
+                             onChange={(e) => handleAssignJob(job.id, e.target.value)}
+                             className="bg-transparent border-none text-xs font-bold text-gray-600 focus:ring-0 cursor-pointer hover:text-black"
+                           >
+                             <option value="">-- Unassigned --</option>
+                             {staff.map(s => (
+                               <option key={s.id} value={s.id}>{s.first_name || s.email}</option>
+                             ))}
+                           </select>
+                        </td>
+
                         <td className="px-6 py-4">
                           {job.next_step_id && (
                              <button onClick={() => handleQuickAdvance(job)} className="flex items-center text-xs font-bold text-gray-400 hover:text-green-600 transition-colors border border-transparent hover:border-green-200 px-2 py-1 rounded">
@@ -426,7 +440,6 @@ export default function Dashboard() {
               )}
             </div>
           ) : (
-            // CUSTOMER CARD VIEW (Unchanged)
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
                {jobs.map((job) => (<StatusCard key={job.id} job={job} />))}
             </div>
@@ -438,7 +451,6 @@ export default function Dashboard() {
 }
 
 // --- SUB COMPONENTS ---
-// Updated NavItem to accept 'href'
 function NavItem({ icon, label, active = false, href = '#' }: { icon: any, label: string, active?: boolean, href?: string }) {
   return (
     <Link href={href} className={`flex items-center rounded-lg px-4 py-3 text-sm font-medium transition-colors ${active ? 'bg-gray-100 text-black' : 'text-gray-600 hover:bg-gray-50 hover:text-black'}`}>
@@ -447,7 +459,6 @@ function NavItem({ icon, label, active = false, href = '#' }: { icon: any, label
     </Link>
   );
 }
-
 function StatusCard({ job }: { job: Job }) {
   const styles: any = { 'Pending Review': 'bg-amber-100 text-amber-700', 'In Production': 'bg-emerald-100 text-emerald-700' };
   return (
