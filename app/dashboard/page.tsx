@@ -23,8 +23,8 @@ type Job = {
   guest_email?: string;
   current_step?: string;
   next_step_id?: string;
-  assigned_to?: string; // New: Who owns this job?
-  csr_name?: string;    // New: Helper for display
+  assigned_to?: string; 
+  csr_name?: string;    
 };
 
 type Profile = {
@@ -34,7 +34,6 @@ type Profile = {
   first_name?: string; 
 };
 
-// Added "My Queue" to the list
 const DEPARTMENTS = ['My Queue', 'All', 'Prepress', 'Plates', 'Press', 'Bindery', 'Shipping'];
 
 export default function Dashboard() {
@@ -47,27 +46,20 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [customers, setCustomers] = useState<Profile[]>([]);
-  const [staff, setStaff] = useState<Profile[]>([]); // List of staff for dropdown
+  const [staff, setStaff] = useState<Profile[]>([]); 
   
-  // View State
   const [activeTab, setActiveTab] = useState('All'); 
-  
-  // Modal State
   const [showModal, setShowModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   
-  // Form Fields
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
   const [jobNotes, setJobNotes] = useState('');
   
-  // Customer Selection Logic
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [isNewCustomer, setIsNewCustomer] = useState(false);
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
-  
-  // Specs State
   const [paperStock, setPaperStock] = useState('100lb Gloss Text');
   
   const supabase = createBrowserClient(
@@ -84,21 +76,17 @@ export default function Dashboard() {
     if (!user) return router.push('/login');
     setUser(user);
 
-    // 1. Get Profile
-    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+    const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
     const userRole = profile?.role || 'customer';
     setRole(userRole);
     const isInternal = userRole === 'admin' || userRole === 'staff';
 
-    // 2. Fetch Jobs
     let jobQuery = supabase.from('jobs').select('*').order('created_at', { ascending: false });
     if (!isInternal) jobQuery = jobQuery.eq('user_id', user.id);
     const { data: jobsData } = await jobQuery;
 
-    // 3. Fetch Steps
     const { data: stepsData } = await supabase.from('job_steps').select('*').eq('status', 'Pending');
 
-    // 4. Merge Data
     if (jobsData) {
       const processedJobs = jobsData.map(j => {
         const activeStep = stepsData?.find(s => s.job_id === j.id);
@@ -111,17 +99,13 @@ export default function Dashboard() {
       setJobs(processedJobs);
     }
 
-    // 5. Fetch People (Customers & Staff)
     if (isInternal) {
       const { data: allProfiles } = await supabase.from('profiles').select('*');
       if (allProfiles) {
         setCustomers(allProfiles);
-        // Filter for Staff list
         setStaff(allProfiles.filter(p => p.role === 'admin' || p.role === 'staff'));
       }
       setSelectedCustomerId(user.id);
-      
-      // Default to "My Queue" for staff efficiency
       setActiveTab('My Queue'); 
     }
 
@@ -133,16 +117,11 @@ export default function Dashboard() {
     router.push('/login');
   };
 
-  // --- NEW: ASSIGN JOB ---
   const handleAssignJob = async (jobId: string, staffId: string) => {
     if (!staffId) return;
     const staffMember = staff.find(s => s.id === staffId);
     const staffName = staffMember ? (staffMember.first_name || staffMember.email) : 'Staff';
-
-    // Optimistic Update (Instant UI change)
     setJobs(jobs.map(j => j.id === jobId ? { ...j, assigned_to: staffId, csr_name: staffName } : j));
-
-    // DB Update
     await supabase.from('jobs').update({ assigned_to: staffId, csr_name: staffName }).eq('id', jobId);
   };
 
@@ -152,7 +131,6 @@ export default function Dashboard() {
     fetchDashboardData();
   };
 
-  // --- FORM HANDLERS ---
   const handleOpenNewOrder = () => {
     setSelectedFile(null);
     setJobTitle('');
@@ -206,7 +184,7 @@ export default function Dashboard() {
           file_url: fileData?.path,
           status: 'Pending Review',
           paper_stock: paperStock,
-          assigned_to: user?.id, // Auto-assign to creator
+          assigned_to: user?.id,
           csr_name: 'Me'
         })
         .select()
@@ -214,7 +192,6 @@ export default function Dashboard() {
 
       if (dbError) throw dbError;
 
-      // Auto-create workflow
       await supabase.from('job_steps').insert({
         job_id: newJob.id,
         department: 'Prepress',
@@ -242,10 +219,9 @@ export default function Dashboard() {
 
   const isInternal = role === 'admin' || role === 'staff';
 
-  // --- FILTER LOGIC ---
   const filteredJobs = jobs.filter(job => {
     if (activeTab === 'All') return true;
-    if (activeTab === 'My Queue') return job.assigned_to === user?.id; // Only show MY jobs
+    if (activeTab === 'My Queue') return job.assigned_to === user?.id; 
     return job.current_step === activeTab;
   });
 
@@ -253,7 +229,7 @@ export default function Dashboard() {
     <div className="flex h-screen bg-gray-50 relative">
       <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
 
-      {/* --- MODAL --- */}
+      {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
           <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 my-8">
@@ -321,7 +297,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* --- SIDEBAR --- */}
+      {/* SIDEBAR */}
       <div className="hidden w-64 flex-col bg-white border-r border-gray-200 md:flex">
         <div className="flex h-20 items-center px-8 border-b border-gray-100">
           <div className="h-8 w-8 rounded-full bg-black flex items-center justify-center mr-3"><span className="text-white font-bold text-xs">PHQ</span></div>
@@ -339,31 +315,28 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* --- MAIN CONTENT --- */}
+      {/* MAIN CONTENT */}
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-8 py-12">
-          {/* --- GREETING HEADER --- */}
+          
+          {/* GREETING HEADER */}
           <div className="mb-8 flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">
                 {(() => {
                   const hour = new Date().getHours();
                   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-                  // Try to find the user's first name, fallback to email
+                  // Try to find the user's first name, fallback to email prefix
                   const name = staff.find(s => s.id === user?.id)?.first_name || user?.email?.split('@')[0] || 'Team';
                   return `${greeting}, ${name}`;
                 })()}
               </h1>
-              <p className="mt-1 text-gray-500">
-                {isInternal ? 'Here is what is happening on the production floor.' : 'Track your active print jobs.'}
-              </p>
+              <p className="mt-1 text-gray-500">{isInternal ? 'Here is what is happening on the production floor.' : 'Track your active print jobs.'}</p>
             </div>
             <button onClick={handleOpenNewOrder} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">+ New Order</button>
           </div>
-            <button onClick={handleOpenNewOrder} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">+ New Order</button>
-          </div>
 
-          {/* --- DEPARTMENT TABS --- */}
+          {/* TABS */}
           {isInternal && (
             <div className="mb-6 flex gap-2 overflow-x-auto pb-2">
               {DEPARTMENTS.map((dept) => (
@@ -422,8 +395,6 @@ export default function Dashboard() {
                              {job.current_step || 'Processing...'}
                            </span>
                         </td>
-                        
-                        {/* CSR ASSIGNMENT DROPDOWN */}
                         <td className="px-6 py-4">
                            <select 
                              value={job.assigned_to || ''} 
@@ -436,7 +407,6 @@ export default function Dashboard() {
                              ))}
                            </select>
                         </td>
-
                         <td className="px-6 py-4">
                           {job.next_step_id && (
                              <button onClick={() => handleQuickAdvance(job)} className="flex items-center text-xs font-bold text-gray-400 hover:text-green-600 transition-colors border border-transparent hover:border-green-200 px-2 py-1 rounded">
@@ -462,7 +432,6 @@ export default function Dashboard() {
   );
 }
 
-// --- SUB COMPONENTS ---
 function NavItem({ icon, label, active = false, href = '#' }: { icon: any, label: string, active?: boolean, href?: string }) {
   return (
     <Link href={href} className={`flex items-center rounded-lg px-4 py-3 text-sm font-medium transition-colors ${active ? 'bg-gray-100 text-black' : 'text-gray-600 hover:bg-gray-50 hover:text-black'}`}>
@@ -471,6 +440,7 @@ function NavItem({ icon, label, active = false, href = '#' }: { icon: any, label
     </Link>
   );
 }
+
 function StatusCard({ job }: { job: Job }) {
   const styles: any = { 'Pending Review': 'bg-amber-100 text-amber-700', 'In Production': 'bg-emerald-100 text-emerald-700' };
   return (
