@@ -3,7 +3,7 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { 
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
-  Loader2, X, Scissors, User, Trash2, UserPlus, Filter, ArrowRightCircle, Briefcase
+  Loader2, X, Scissors, User, Trash2, UserPlus, Filter, ArrowRightCircle, Briefcase, Plus, ShoppingCart
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
@@ -24,7 +24,9 @@ type Job = {
   current_step?: string;
   next_step_id?: string;
   assigned_to?: string; 
-  csr_name?: string;    
+  csr_name?: string; 
+  brand?: string;   
+  order_id?: string; // Link to Parent Order
 };
 
 type Profile = {
@@ -32,8 +34,20 @@ type Profile = {
   email: string;
   role: string;
   first_name?: string; 
-  department?: string; // New field for Auto-View logic
+  department?: string;
 };
+
+// Cart Item Type (Temporary items before upload)
+type CartItem = {
+  id: string; // temp id
+  file: File;
+  title: string;
+  quantity: number;
+  notes: string;
+  paper_stock: string;
+};
+
+const MY_BRANDS = ['PrintHQ', 'SignWorld', 'PromoPro', 'DirectMail Co'];
 
 export default function Dashboard() {
   const router = useRouter();
@@ -55,17 +69,21 @@ export default function Dashboard() {
   const [showModal, setShowModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   
-  // Form Fields
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  // --- NEW: CART STATE ---
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [orderBrand, setOrderBrand] = useState('PrintHQ');
+  
+  // Current Form Inputs
+  const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
   const [jobNotes, setJobNotes] = useState('');
+  const [paperStock, setPaperStock] = useState('100lb Gloss Text');
   
   // Customer Selection Logic
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [isNewCustomer, setIsNewCustomer] = useState(false);
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
-  const [paperStock, setPaperStock] = useState('100lb Gloss Text');
   
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -81,10 +99,10 @@ export default function Dashboard() {
     if (!user) return router.push('/login');
     setUser(user);
 
-    // 1. Get Profile (now including 'department')
+    // 1. Get Profile
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role, department') // Fetch department
+      .select('role, department')
       .eq('id', user.id)
       .single();
       
@@ -115,13 +133,10 @@ export default function Dashboard() {
 
     // 5. Fetch Dynamic Data (Internal Only)
     if (isInternal) {
-      // A. Fetch Departments for Tabs
       const { data: dbDepts } = await supabase.from('departments').select('name').order('sort_order');
-      
       const dynamicTabs = dbDepts ? dbDepts.map(d => d.name) : [];
       setDepartmentTabs(['My Queue', 'All', ...dynamicTabs]);
 
-      // B. Fetch People
       const { data: allProfiles } = await supabase.from('profiles').select('*');
       if (allProfiles) {
         setCustomers(allProfiles);
@@ -129,16 +144,12 @@ export default function Dashboard() {
       }
       setSelectedCustomerId(user.id);
       
-      // --- SMART VIEW LOGIC ---
-      // If the user works in a specific department (e.g. 'Press'), default to that tab.
-      // Otherwise, default to "My Queue".
       if (profile?.department && dynamicTabs.includes(profile.department)) {
         setActiveTab(profile.department);
       } else {
         setActiveTab('My Queue'); 
       }
     }
-
     setLoading(false);
   };
 
@@ -161,37 +172,61 @@ export default function Dashboard() {
     fetchDashboardData();
   };
 
+  // --- CART HANDLERS ---
   const handleOpenNewOrder = () => {
-    setSelectedFile(null);
-    setJobTitle('');
-    setJobQty('');
-    setJobNotes('');
+    setCart([]); // Clear cart
+    resetForm();
     setIsNewCustomer(false);
     setNewCustomerEmail('');
     setShowModal(true);
   };
+
+  const resetForm = () => {
+    setCurrentFile(null);
+    setJobTitle('');
+    setJobQty('');
+    setJobNotes('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const triggerFilePicker = () => fileInputRef.current?.click();
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
-      setSelectedFile(file);
+      setCurrentFile(file);
       if (!jobTitle) setJobTitle(file.name.split('.').slice(0, -1).join('.'));
     }
   };
-  const handleRemoveFile = () => setSelectedFile(null);
 
-  const handleSubmitJob = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedFile) return alert("Please upload a file.");
+  const handleAddToCart = () => {
+    if (!currentFile) return alert("Please upload a file.");
+    if (!jobQty) return alert("Please enter quantity.");
+
+    const newItem: CartItem = {
+      id: Math.random().toString(36),
+      file: currentFile,
+      title: jobTitle,
+      quantity: parseInt(jobQty),
+      notes: jobNotes,
+      paper_stock: paperStock
+    };
+
+    setCart([...cart, newItem]);
+    resetForm();
+  };
+
+  const handleRemoveFromCart = (id: string) => {
+    setCart(cart.filter(item => item.id !== id));
+  };
+
+  // --- SUBMIT ORDER (The Big Transaction) ---
+  const handleSubmitOrder = async () => {
+    if (cart.length === 0) return alert("Cart is empty.");
     if (isNewCustomer && !newCustomerEmail.includes('@')) return alert("Invalid email.");
 
     setIsUploading(true);
     try {
-      const fileExt = selectedFile.name.split('.').pop();
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-      const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, selectedFile);
-      if (uploadError) throw uploadError;
-
+      // 1. Determine User
       let finalUserId = user?.id;
       let finalEmail = '';
 
@@ -203,36 +238,64 @@ export default function Dashboard() {
         finalEmail = selectedCustomer?.email || '';
       }
 
-      const { data: newJob, error: dbError } = await supabase
-        .from('jobs')
+      // 2. Create Parent Order
+      const { data: newOrder, error: orderError } = await supabase
+        .from('orders')
         .insert({
-          user_id: finalUserId, 
-          guest_email: isNewCustomer ? finalEmail : null,
-          title: jobTitle,
-          quantity: parseInt(jobQty) || 0,
-          notes: jobNotes,
-          file_url: fileData?.path,
-          status: 'Pending Review',
-          paper_stock: paperStock,
-          assigned_to: user?.id,
-          csr_name: 'Me'
+          user_id: finalUserId,
+          status: 'New',
+          brand: orderBrand
         })
         .select()
         .single();
 
-      if (dbError) throw dbError;
+      if (orderError) throw orderError;
 
-      // Auto-create workflow (Defaulting to Prepress)
-      await supabase.from('job_steps').insert({
-        job_id: newJob.id,
-        department: 'Prepress',
-        step_order: 1,
-        status: 'Pending',
-        notes: 'Review files for print'
-      });
+      // 3. Process Cart Items (Upload & Create Jobs)
+      for (const item of cart) {
+        // A. Upload File
+        const fileExt = item.file.name.split('.').pop();
+        const fileName = `${newOrder.id}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, item.file);
+        
+        if (uploadError) console.error("File upload failed for " + item.title, uploadError);
 
-      if (finalEmail && newJob) {
-        await sendOrderConfirmation(finalEmail, newJob.id, jobTitle);
+        // B. Create Job linked to Order
+        const { data: newJob, error: jobError } = await supabase
+          .from('jobs')
+          .insert({
+            order_id: newOrder.id, // LINK TO PARENT
+            user_id: finalUserId, 
+            guest_email: isNewCustomer ? finalEmail : null,
+            title: item.title,
+            quantity: item.quantity,
+            notes: item.notes,
+            file_url: fileData?.path,
+            status: 'Pending Review',
+            paper_stock: item.paper_stock,
+            assigned_to: user?.id,
+            csr_name: 'Me',
+            brand: orderBrand // Denormalized for easy querying
+          })
+          .select()
+          .single();
+
+        if (!jobError && newJob) {
+            // C. Create Workflow Step
+            await supabase.from('job_steps').insert({
+                job_id: newJob.id,
+                department: 'Prepress',
+                step_order: 1,
+                status: 'Pending',
+                notes: 'Review files for print'
+            });
+        }
+      }
+
+      // 4. Send One Confirmation Email
+      if (finalEmail && newOrder) {
+         // Sending order ID and first job title as reference
+         await sendOrderConfirmation(finalEmail, newOrder.id, `${cart.length} Item(s) from ${orderBrand}`);
       }
 
       setShowModal(false);
@@ -240,7 +303,7 @@ export default function Dashboard() {
 
     } catch (error) {
       console.error('Error:', error);
-      alert('Error uploading job.');
+      alert('Error creating order.');
     } finally {
       setIsUploading(false);
     }
@@ -263,67 +326,135 @@ export default function Dashboard() {
       {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="w-full max-w-xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 my-8">
-             <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-              <h3 className="font-bold text-lg text-gray-900">New Production Ticket</h3>
+          <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 my-8 flex flex-col max-h-[90vh]">
+             
+             {/* HEADER */}
+             <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 flex-shrink-0">
+              <div>
+                <h3 className="font-bold text-lg text-gray-900">New Production Order</h3>
+                <p className="text-xs text-gray-500">Group multiple jobs into one ticket.</p>
+              </div>
               <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-black"><X size={20} /></button>
             </div>
-            <form onSubmit={handleSubmitJob} className="p-6 space-y-6">
-              {isInternal && (
-                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl transition-all">
-                  <div className="flex justify-between items-center mb-2">
-                    <label className="text-xs font-bold uppercase text-yellow-800 flex items-center">
-                      <User size={14} className="mr-1"/> 
-                      {isNewCustomer ? 'Enter New Customer Email:' : 'Select Existing Customer:'}
-                    </label>
-                    <button type="button" onClick={() => setIsNewCustomer(!isNewCustomer)} className="text-xs font-bold text-blue-600 hover:underline flex items-center">
-                      {isNewCustomer ? 'Select Existing Account' : '+ Create New Guest'}
-                    </button>
-                  </div>
-                  {isNewCustomer ? (
-                      <div className="animate-in fade-in zoom-in duration-200">
-                        <input type="email" placeholder="client@newcompany.com" value={newCustomerEmail} onChange={(e) => setNewCustomerEmail(e.target.value)} className="w-full rounded-lg border border-yellow-300 px-3 py-2 bg-white text-gray-900 font-medium outline-none" />
-                        <p className="text-xs text-yellow-600 mt-2 flex items-center"><UserPlus size={12} className="mr-1"/> We will email them an invite.</p>
-                      </div>
-                  ) : (
-                    <select value={selectedCustomerId} onChange={(e) => setSelectedCustomerId(e.target.value)} className="w-full rounded-lg border border-yellow-300 px-3 py-2 bg-white text-gray-900 font-medium outline-none">
-                      {customers.map((c) => <option key={c.id} value={c.id}>{c.email} {c.role !== 'customer' ? `(${c.role.toUpperCase()})` : ''}</option>)}
-                    </select>
-                  )}
-                </div>
-              )}
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
               
-              {!selectedFile ? (
-                <div onClick={triggerFilePicker} className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-black hover:bg-gray-50 transition-all group">
-                  <div className="mx-auto h-12 w-12 bg-gray-100 rounded-full flex items-center justify-center mb-3 group-hover:scale-110"><UploadCloud className="h-6 w-6 text-gray-600 group-hover:text-black" /></div>
-                  <p className="font-bold text-gray-900">Click to upload artwork</p>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl text-blue-900 border border-blue-100">
-                  <div className="flex items-center overflow-hidden">
-                    <FileText size={24} className="mr-3 text-blue-600 flex-shrink-0" />
-                    <p className="font-medium truncate">{selectedFile.name}</p>
+              {/* CUSTOMER & BRAND SECTION */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {isInternal && (
+                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="text-xs font-bold uppercase text-yellow-800 flex items-center">
+                        <User size={14} className="mr-1"/> Customer
+                      </label>
+                      <button type="button" onClick={() => setIsNewCustomer(!isNewCustomer)} className="text-xs font-bold text-blue-600 hover:underline">
+                        {isNewCustomer ? 'Select Existing' : '+ New Guest'}
+                      </button>
+                    </div>
+                    {isNewCustomer ? (
+                        <input type="email" placeholder="client@email.com" value={newCustomerEmail} onChange={(e) => setNewCustomerEmail(e.target.value)} className="w-full rounded-lg border border-yellow-300 px-3 py-2 bg-white text-sm outline-none" />
+                    ) : (
+                      <select value={selectedCustomerId} onChange={(e) => setSelectedCustomerId(e.target.value)} className="w-full rounded-lg border border-yellow-300 px-3 py-2 bg-white text-sm outline-none">
+                        {customers.map((c) => <option key={c.id} value={c.id}>{c.email} {c.role !== 'customer' ? `(${c.role.toUpperCase()})` : ''}</option>)}
+                      </select>
+                    )}
                   </div>
-                  <button type="button" onClick={handleRemoveFile} className="ml-2 p-2 text-blue-400 hover:text-red-500 hover:bg-blue-100 rounded-full"><Trash2 size={18} /></button>
+                )}
+                
+                {/* BRAND SELECTOR */}
+                <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
+                  <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Company / Brand</label>
+                  <select 
+                    value={orderBrand} 
+                    onChange={(e) => setOrderBrand(e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 bg-white text-sm outline-none font-bold"
+                  >
+                    {MY_BRANDS.map(b => <option key={b}>{b}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* CART ITEMS LIST */}
+              {cart.length > 0 && (
+                <div className="border border-gray-200 rounded-xl overflow-hidden">
+                   <div className="bg-gray-100 px-4 py-2 text-xs font-bold uppercase text-gray-500 flex justify-between">
+                     <span>Items in Order ({cart.length})</span>
+                     <span>Qty</span>
+                   </div>
+                   <div className="divide-y divide-gray-100">
+                     {cart.map((item) => (
+                       <div key={item.id} className="p-3 bg-white flex justify-between items-center">
+                         <div className="flex items-center overflow-hidden">
+                           <FileText size={16} className="text-blue-500 mr-3 flex-shrink-0" />
+                           <div className="truncate">
+                             <p className="text-sm font-bold text-gray-900 truncate">{item.title}</p>
+                             <p className="text-xs text-gray-400">{item.paper_stock} • {item.file.name}</p>
+                           </div>
+                         </div>
+                         <div className="flex items-center gap-4">
+                           <span className="text-sm font-mono font-bold">{item.quantity}</span>
+                           <button onClick={() => handleRemoveFromCart(item.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={16}/></button>
+                         </div>
+                       </div>
+                     ))}
+                   </div>
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2"><label className="block text-xs font-bold uppercase text-gray-500 mb-1">Job Title</label><input type="text" required value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-black" /></div>
-                <div><label className="block text-xs font-bold uppercase text-gray-500 mb-1">Quantity</label><input type="number" required value={jobQty} onChange={(e) => setJobQty(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-black" /></div>
-                <div><label className="block text-xs font-bold uppercase text-gray-500 mb-1">Due Date</label><input type="date" className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-black" /></div>
+              {/* ADD ITEM FORM */}
+              <div className="border-t border-gray-100 pt-6">
+                 <h4 className="font-bold text-gray-900 mb-4 flex items-center text-sm">
+                   <Plus size={16} className="mr-2 bg-black text-white rounded-full p-0.5" /> 
+                   Add Item to Order
+                 </h4>
+                 
+                 <div className="space-y-4">
+                   {!currentFile ? (
+                      <div onClick={triggerFilePicker} className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center cursor-pointer hover:border-black hover:bg-gray-50 transition-all">
+                        <UploadCloud className="mx-auto h-8 w-8 text-gray-400 mb-2" />
+                        <p className="text-sm font-bold text-gray-600">Click to upload artwork</p>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl text-blue-900 border border-blue-100">
+                        <div className="flex items-center overflow-hidden">
+                          <FileText size={20} className="mr-3 text-blue-600 flex-shrink-0" />
+                          <p className="text-sm font-medium truncate">{currentFile.name}</p>
+                        </div>
+                        <button type="button" onClick={() => setCurrentFile(null)} className="ml-2 text-blue-400 hover:text-red-500"><X size={16} /></button>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="col-span-2">
+                        <input type="text" placeholder="Item Title (e.g. Business Cards)" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
+                      </div>
+                      <div>
+                        <input type="number" placeholder="Qty" value={jobQty} onChange={(e) => setJobQty(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
+                      </div>
+                    </div>
+                    
+                    <select value={paperStock} onChange={(e) => setPaperStock(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"><option>100lb Gloss Text</option><option>14pt Cardstock</option><option>Vinyl Banner</option></select>
+                    
+                    <button type="button" onClick={handleAddToCart} className="w-full py-3 bg-gray-100 text-black rounded-lg font-bold hover:bg-gray-200 text-sm">
+                      + Add Item to List
+                    </button>
+                 </div>
               </div>
-              
-              <div className="border-t border-gray-100 pt-4">
-                 <p className="text-sm font-bold text-gray-900 mb-4 flex items-center"><Settings size={16} className="mr-2" /> Print Specifications</p>
-                 <select value={paperStock} onChange={(e) => setPaperStock(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2.5 mb-4"><option>100lb Gloss Text</option><option>14pt Cardstock</option></select>
-                 <textarea rows={2} value={jobNotes} onChange={(e) => setJobNotes(e.target.value)} placeholder="Additional Notes..." className="w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none focus:border-black" />
-              </div>
-              
-              <button type="submit" disabled={isUploading || !selectedFile} className="w-full py-4 bg-black text-white rounded-xl font-bold hover:bg-gray-800 flex items-center justify-center shadow-lg disabled:opacity-50">
-                {isUploading ? <Loader2 className="animate-spin mr-2" /> : <UploadCloud className="mr-2" size={20} />} {isUploading ? 'Creating Ticket...' : 'Submit Print Job'}
+
+            </div>
+
+            {/* FOOTER ACTIONS */}
+            <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end">
+              <button 
+                onClick={handleSubmitOrder} 
+                disabled={isUploading || cart.length === 0} 
+                className="px-8 py-3 bg-black text-white rounded-xl font-bold hover:bg-gray-800 disabled:opacity-50 flex items-center shadow-lg"
+              >
+                {isUploading ? <Loader2 className="animate-spin mr-2" /> : <ShoppingCart className="mr-2" size={18} />} 
+                Submit Order ({cart.length} Items)
               </button>
-            </form>
+            </div>
+
           </div>
         </div>
       )}
@@ -418,6 +549,12 @@ export default function Dashboard() {
                         <td className="px-6 py-4 font-mono text-gray-500">#{job.id.substring(0,6).toUpperCase()}</td>
                         <td className="px-6 py-4 font-medium text-gray-900">
                           {job.title}
+                          {/* BRAND BADGE */}
+                          {job.brand && (
+                            <span className="ml-2 inline-flex items-center rounded-md bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">
+                              {job.brand}
+                            </span>
+                          )}
                           {job.guest_email && <div className="text-yellow-600 font-bold mt-1 text-[10px]">Guest: {job.guest_email}</div>}
                         </td>
                         <td className="px-6 py-4">
