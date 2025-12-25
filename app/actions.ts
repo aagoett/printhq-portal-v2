@@ -1,75 +1,43 @@
 'use server';
 
+import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
 
-// Ensure RESEND_API_KEY is in your .env.local
 const resend = new Resend(process.env.RESEND_API_KEY);
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
-// Your verified domain!
-const SENDER_EMAIL = 'orders@gocmyk.com';
-// Your Vercel URL (Update this if you add a custom domain to Vercel later)
-const SITE_URL = 'https://printhq-portal-v2.vercel.app';
+export async function sendProofNotification(jobId: string, fileUrl: string) {
+  // 1. Fetch Job & Customer Data
+  const { data: job } = await supabase
+    .from('jobs')
+    .select('*, profiles:user_id(email, first_name)')
+    .eq('id', jobId)
+    .single();
 
-// 1. ORDER CONFIRMATION
-export async function sendOrderConfirmation(email: string, jobId: string, title: string) {
+  if (!job || !job.profiles?.email) return;
+
+  // 2. Send Email
   try {
-    if (!process.env.RESEND_API_KEY) {
-      console.error("Missing RESEND_API_KEY");
-      return { success: false, error: "Missing API Key" };
-    }
-
-    console.log(`📨 Sending Order Confirmation to ${email}...`);
-
     await resend.emails.send({
-      from: `PrintHQ System <${SENDER_EMAIL}>`,
-      to: email, 
-      subject: `Order Received: ${title}`,
+      from: 'PrintHQ <proofs@yourdomain.com>', // Update this with your verified domain
+      to: job.profiles.email,
+      subject: `Action Required: Proof Ready for ${job.title}`,
       html: `
-        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px;">
-          <h1 style="color: #000;">We received your order! 🖨️</h1>
-          <p style="font-size: 16px; color: #555;">Thanks for submitting <strong>${title}</strong>.</p>
-          <p style="color: #555;">Our team is reviewing your files now. You can track your job status here:</p>
-          <br/>
-          <a href="${SITE_URL}/dashboard/jobs/${jobId}" style="background:#000; color:#fff; padding:12px 24px; text-decoration:none; border-radius:6px; font-weight:bold;">Track Order</a>
-          <br/><br/>
-          <hr style="border:0; border-top:1px solid #eee;" />
-          <p style="font-size:12px; color:#999;">Reference Job ID: #${jobId.substring(0,6).toUpperCase()}</p>
-        </div>
-      `,
+        <h1>New Proof Uploaded</h1>
+        <p>Hi ${job.profiles.first_name},</p>
+        <p>A new digital proof is ready for your review.</p>
+        <p><strong>Job:</strong> ${job.title}</p>
+        <br/>
+        <a href="${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/jobs/${jobId}" style="background: #000; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 5px;">View & Approve Proof</a>
+        <br/><br/>
+        <p>Please approve this as soon as possible so we can begin production.</p>
+      `
     });
-
-    return { success: true };
-
+    console.log(`Proof email sent to ${job.profiles.email}`);
   } catch (error) {
-    console.error("Email Error:", error);
-    return { success: false, error };
-  }
-}
-
-// 2. PROOF NOTIFICATION
-export async function sendProofNotification(email: string, jobId: string, title: string) {
-  try {
-    console.log(`📨 Sending Proof Notification to ${email}...`);
-
-    await resend.emails.send({
-      from: `PrintHQ Production <${SENDER_EMAIL}>`,
-      to: email,
-      subject: `ACTION REQUIRED: Proof Ready for ${title}`,
-      html: `
-        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #e5e7eb; border-radius: 8px;">
-          <h1 style="color: #000;">Digital Proof Ready 🎨</h1>
-          <p style="font-size: 16px; color: #555;">A proof for <strong>${title}</strong> is waiting for your approval.</p>
-          <p style="color: #555;">Please review it carefully. We cannot start production until you approve.</p>
-          <br/>
-          <a href="${SITE_URL}/dashboard/jobs/${jobId}" style="background:#22c55e; color:#fff; padding:12px 24px; text-decoration:none; border-radius:6px; font-weight:bold;">Review Proof</a>
-        </div>
-      `,
-    });
-
-    return { success: true };
-
-  } catch (error) {
-    console.error("Email Error:", error);
-    return { success: false, error };
+    console.error('Email failed:', error);
   }
 }
