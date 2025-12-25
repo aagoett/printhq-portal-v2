@@ -1,9 +1,10 @@
 'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
-import { Plus, Trash2, GripVertical, Settings as SettingsIcon } from 'lucide-react';
+import { Plus, Trash2, GripVertical, Settings as SettingsIcon, ArrowLeft } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation'; // FIXED: Imported correctly now
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 type Department = {
   id: string;
@@ -76,6 +77,11 @@ export default function SettingsPage() {
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-4xl mx-auto">
         
+        {/* BACK BUTTON */}
+        <Link href="/dashboard" className="inline-flex items-center text-sm text-gray-500 hover:text-black mb-8 transition-colors">
+          <ArrowLeft size={16} className="mr-2" /> Back to Dashboard
+        </Link>
+
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 flex items-center">
             <SettingsIcon className="mr-3" /> Shop Settings
