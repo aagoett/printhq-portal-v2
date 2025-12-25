@@ -32,6 +32,7 @@ type Profile = {
   email: string;
   role: string;
   first_name?: string; 
+  department?: string; // New field for Auto-View logic
 };
 
 export default function Dashboard() {
@@ -80,8 +81,13 @@ export default function Dashboard() {
     if (!user) return router.push('/login');
     setUser(user);
 
-    // 1. Get Profile
-    const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+    // 1. Get Profile (now including 'department')
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role, department') // Fetch department
+      .eq('id', user.id)
+      .single();
+      
     const userRole = profile?.role || 'customer';
     setRole(userRole);
     const isInternal = userRole === 'admin' || userRole === 'staff';
@@ -111,10 +117,9 @@ export default function Dashboard() {
     if (isInternal) {
       // A. Fetch Departments for Tabs
       const { data: dbDepts } = await supabase.from('departments').select('name').order('sort_order');
-      if (dbDepts) {
-        // Merge fixed tabs (My Queue, All) with DB tabs (Prepress, Press, etc.)
-        setDepartmentTabs(['My Queue', 'All', ...dbDepts.map(d => d.name)]);
-      }
+      
+      const dynamicTabs = dbDepts ? dbDepts.map(d => d.name) : [];
+      setDepartmentTabs(['My Queue', 'All', ...dynamicTabs]);
 
       // B. Fetch People
       const { data: allProfiles } = await supabase.from('profiles').select('*');
@@ -124,8 +129,14 @@ export default function Dashboard() {
       }
       setSelectedCustomerId(user.id);
       
-      // Default to "My Queue" for staff efficiency
-      setActiveTab('My Queue'); 
+      // --- SMART VIEW LOGIC ---
+      // If the user works in a specific department (e.g. 'Press'), default to that tab.
+      // Otherwise, default to "My Queue".
+      if (profile?.department && dynamicTabs.includes(profile.department)) {
+        setActiveTab(profile.department);
+      } else {
+        setActiveTab('My Queue'); 
+      }
     }
 
     setLoading(false);
@@ -211,7 +222,7 @@ export default function Dashboard() {
 
       if (dbError) throw dbError;
 
-      // Auto-create workflow (Defaulting to Prepress - later you can make this dynamic too!)
+      // Auto-create workflow (Defaulting to Prepress)
       await supabase.from('job_steps').insert({
         job_id: newJob.id,
         department: 'Prepress',
