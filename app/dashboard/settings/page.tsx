@@ -1,10 +1,9 @@
 'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
-import { Plus, Trash2, Save, GripVertical, Settings as SettingsIcon } from 'lucide-react';
+import { Plus, Trash2, GripVertical, Settings as SettingsIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/link'; // Note: standard next/link is for navigation components, logic uses next/navigation
-import { useRouter as useNav } from 'next/navigation';
+import { useRouter } from 'next/navigation'; // FIXED: Imported correctly now
 
 type Department = {
   id: string;
@@ -13,7 +12,7 @@ type Department = {
 };
 
 export default function SettingsPage() {
-  const router = useNav();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [newDeptName, setNewDeptName] = useState('');
@@ -33,7 +32,7 @@ export default function SettingsPage() {
     if (!user) return router.push('/login');
 
     // Fetch Departments sorted by 'sort_order'
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('departments')
       .select('*')
       .order('sort_order', { ascending: true });
@@ -49,7 +48,7 @@ export default function SettingsPage() {
 
     const nextOrder = departments.length > 0 ? Math.max(...departments.map(d => d.sort_order)) + 1 : 1;
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('departments')
       .insert({ name: newDeptName, sort_order: nextOrder })
       .select()
