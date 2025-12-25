@@ -435,8 +435,17 @@ export default function Dashboard() {
                     
                     <select value={paperStock} onChange={(e) => setPaperStock(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"><option>100lb Gloss Text</option><option>14pt Cardstock</option><option>Vinyl Banner</option></select>
                     
-                    <button type="button" onClick={handleAddToCart} className="w-full py-3 bg-gray-100 text-black rounded-lg font-bold hover:bg-gray-200 text-sm">
-                      + Add Item to List
+                    {/* SMART ADD BUTTON */}
+                    <button 
+                      type="button" 
+                      onClick={handleAddToCart}
+                      disabled={!currentFile || !jobQty}
+                      className={`w-full py-3 rounded-lg font-bold text-sm transition-all flex items-center justify-center
+                        ${!currentFile || !jobQty 
+                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                          : 'bg-black text-white hover:bg-gray-800 shadow-md'}`}
+                    >
+                      {!currentFile ? 'Select a File first...' : !jobQty ? 'Enter Quantity...' : '+ Add Item to List'}
                     </button>
                  </div>
               </div>
