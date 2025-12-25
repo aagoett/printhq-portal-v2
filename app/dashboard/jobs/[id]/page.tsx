@@ -11,7 +11,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-// Import server action
+// Import server action (ensure path is correct based on your folder structure)
 import { sendProofNotification } from '../../../actions'; 
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
@@ -26,7 +26,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   
   // UI State
   const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat');
-  const [showUploadModal, setShowUploadModal] = useState(false); // NEW: Modal State
+  const [showUploadModal, setShowUploadModal] = useState(false);
 
   // Upload State
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -61,6 +61,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     fetchPageData();
 
+    // Realtime Subscriptions
     const chatChannel = supabase.channel('job_chat')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, () => fetchMessages())
       .subscribe();
@@ -167,7 +168,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       }
   };
 
-  // --- NEW UPLOAD LOGIC ---
+  // --- NEW UPLOAD LOGIC (Safety Net Added) ---
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setUploadFile(e.target.files[0]);
@@ -178,58 +179,70 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       if (!uploadFile || !user) return;
       setIsUploading(true);
 
-      const fileName = `${params.id}-proof-${Math.random().toString(36).substring(7)}.${uploadFile.name.split('.').pop()}`;
-      
-      // 1. Upload
-      const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
-      if (error) {
-          alert("Upload failed: " + error.message);
-          setIsUploading(false);
-          return;
-      }
+      try {
+          // 1. Prepare File Name
+          const fileName = `${params.id}-proof-${Math.random().toString(36).substring(7)}.${uploadFile.name.split('.').pop()}`;
+          
+          // 2. Upload to Storage
+          const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
+          if (error) throw new Error("Storage Upload failed: " + error.message);
 
-      // 2. Archive Old
-      await supabase.from('job_assets')
-          .update({ status: 'archived' })
-          .eq('job_id', params.id)
-          .eq('asset_type', 'proof')
-          .eq('status', 'pending');
+          // 3. Archive Old Proofs
+          const { error: archiveError } = await supabase.from('job_assets')
+              .update({ status: 'archived' })
+              .eq('job_id', params.id)
+              .eq('asset_type', 'proof')
+              .eq('status', 'pending');
+          
+          if (archiveError) console.error("Archive warning:", archiveError);
 
-      // 3. Insert New
-      const { data: newAsset } = await supabase.from('job_assets').insert({
-          job_id: params.id,
-          uploader_id: user.id,
-          file_url: data?.path,
-          file_name: uploadFile.name,
-          asset_type: 'proof',
-          status: 'pending'
-      }).select().single();
-
-      // 4. Post Message
-      if (uploadMessage.trim()) {
-          await supabase.from('messages').insert({
+          // 4. Insert New Asset Record
+          const { data: newAsset, error: dbError } = await supabase.from('job_assets').insert({
               job_id: params.id,
-              user_id: user.id,
-              content: `PROOF SENT: ${uploadMessage}`
-          });
-          fetchMessages();
-      }
+              uploader_id: user.id,
+              file_url: data?.path,
+              file_name: uploadFile.name,
+              asset_type: 'proof',
+              status: 'pending'
+          }).select().single();
 
-      // 5. Email & Log
-      await sendProofNotification(params.id, data?.path || '', uploadMessage);
-      await logActivity('Proof Uploaded', `New version sent. Note: ${uploadMessage || 'None'}`);
+          if (dbError) throw new Error("Database Save failed: " + dbError.message);
 
-      // 6. Cleanup
-      if (newAsset) {
-          await fetchAssets();
-          loadPreview(newAsset); 
+          // 5. Post Message to Chat
+          if (uploadMessage.trim()) {
+              await supabase.from('messages').insert({
+                  job_id: params.id,
+                  user_id: user.id,
+                  content: `PROOF SENT: ${uploadMessage}`
+              });
+              fetchMessages();
+          }
+
+          // 6. Send Email (Server Action)
+          // We await this, but if it fails, we catch the error below so the UI doesn't freeze
+          await sendProofNotification(params.id, data?.path || '', uploadMessage);
+          
+          // 7. Log Activity
+          await logActivity('Proof Uploaded', `New version sent. Note: ${uploadMessage || 'None'}`);
+
+          // 8. Success Cleanup
+          if (newAsset) {
+              await fetchAssets();
+              loadPreview(newAsset); 
+          }
+          
+          setShowUploadModal(false);
+          setUploadFile(null);
+          setUploadMessage('');
+          alert("Proof sent successfully!");
+
+      } catch (error: any) {
+          console.error("Submission Error:", error);
+          alert("Error sending proof: " + (error.message || "Unknown error"));
+      } finally {
+          // THIS IS THE KEY: Always turn off the loading spinner, success or fail.
+          setIsUploading(false);
       }
-      
-      setIsUploading(false);
-      setShowUploadModal(false);
-      setUploadFile(null);
-      setUploadMessage('');
-      alert("Proof sent successfully!");
   };
 
   const handleApproveProof = async (assetId: string) => {
