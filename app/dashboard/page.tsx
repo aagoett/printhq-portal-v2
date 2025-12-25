@@ -34,8 +34,6 @@ type Profile = {
   first_name?: string; 
 };
 
-const DEPARTMENTS = ['My Queue', 'All', 'Prepress', 'Plates', 'Press', 'Bindery', 'Shipping'];
-
 export default function Dashboard() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -48,15 +46,21 @@ export default function Dashboard() {
   const [customers, setCustomers] = useState<Profile[]>([]);
   const [staff, setStaff] = useState<Profile[]>([]); 
   
+  // Dynamic Tabs State
+  const [departmentTabs, setDepartmentTabs] = useState<string[]>(['My Queue', 'All']);
   const [activeTab, setActiveTab] = useState('All'); 
+  
+  // Modal State
   const [showModal, setShowModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   
+  // Form Fields
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
   const [jobNotes, setJobNotes] = useState('');
   
+  // Customer Selection Logic
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [isNewCustomer, setIsNewCustomer] = useState(false);
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
@@ -76,17 +80,21 @@ export default function Dashboard() {
     if (!user) return router.push('/login');
     setUser(user);
 
+    // 1. Get Profile
     const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single();
     const userRole = profile?.role || 'customer';
     setRole(userRole);
     const isInternal = userRole === 'admin' || userRole === 'staff';
 
+    // 2. Fetch Jobs
     let jobQuery = supabase.from('jobs').select('*').order('created_at', { ascending: false });
     if (!isInternal) jobQuery = jobQuery.eq('user_id', user.id);
     const { data: jobsData } = await jobQuery;
 
+    // 3. Fetch Steps
     const { data: stepsData } = await supabase.from('job_steps').select('*').eq('status', 'Pending');
 
+    // 4. Merge Job Data
     if (jobsData) {
       const processedJobs = jobsData.map(j => {
         const activeStep = stepsData?.find(s => s.job_id === j.id);
@@ -99,13 +107,24 @@ export default function Dashboard() {
       setJobs(processedJobs);
     }
 
+    // 5. Fetch Dynamic Data (Internal Only)
     if (isInternal) {
+      // A. Fetch Departments for Tabs
+      const { data: dbDepts } = await supabase.from('departments').select('name').order('sort_order');
+      if (dbDepts) {
+        // Merge fixed tabs (My Queue, All) with DB tabs (Prepress, Press, etc.)
+        setDepartmentTabs(['My Queue', 'All', ...dbDepts.map(d => d.name)]);
+      }
+
+      // B. Fetch People
       const { data: allProfiles } = await supabase.from('profiles').select('*');
       if (allProfiles) {
         setCustomers(allProfiles);
         setStaff(allProfiles.filter(p => p.role === 'admin' || p.role === 'staff'));
       }
       setSelectedCustomerId(user.id);
+      
+      // Default to "My Queue" for staff efficiency
       setActiveTab('My Queue'); 
     }
 
@@ -192,6 +211,7 @@ export default function Dashboard() {
 
       if (dbError) throw dbError;
 
+      // Auto-create workflow (Defaulting to Prepress - later you can make this dynamic too!)
       await supabase.from('job_steps').insert({
         job_id: newJob.id,
         department: 'Prepress',
@@ -326,7 +346,6 @@ export default function Dashboard() {
                 {(() => {
                   const hour = new Date().getHours();
                   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-                  // Try to find the user's first name, fallback to email prefix
                   const name = staff.find(s => s.id === user?.id)?.first_name || user?.email?.split('@')[0] || 'Team';
                   return `${greeting}, ${name}`;
                 })()}
@@ -336,10 +355,10 @@ export default function Dashboard() {
             <button onClick={handleOpenNewOrder} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">+ New Order</button>
           </div>
 
-          {/* TABS */}
+          {/* DYNAMIC TABS */}
           {isInternal && (
             <div className="mb-6 flex gap-2 overflow-x-auto pb-2">
-              {DEPARTMENTS.map((dept) => (
+              {departmentTabs.map((dept) => (
                 <button 
                   key={dept}
                   onClick={() => setActiveTab(dept)}
