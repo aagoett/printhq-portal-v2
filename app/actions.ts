@@ -13,8 +13,7 @@ const supabase = createClient(
 export async function sendOrderConfirmation(email: string, orderId: string, summary: string) {
   try {
     await resend.emails.send({
-      // FIX: Must match your verified domain
-      from: 'PrintHQ <orders@gocmyk.com>', 
+      from: 'PrintHQ Orders <orders@gocmyk.com>', // ✅ Updated to verified domain
       to: email,
       subject: `Order Confirmation #${orderId.substring(0,8).toUpperCase()}`,
       html: `
@@ -22,11 +21,9 @@ export async function sendOrderConfirmation(email: string, orderId: string, summ
         <p>Thank you for your order!</p>
         <p><strong>Order ID:</strong> ${orderId}</p>
         <p><strong>Summary:</strong> ${summary}</p>
-        <br/>
-        <a href="${process.env.NEXT_PUBLIC_SITE_URL}/dashboard" style="background: #000; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 5px;">View Dashboard</a>
+        <a href="${process.env.NEXT_PUBLIC_SITE_URL}/dashboard">View Dashboard</a>
       `
     });
-    console.log(`Order confirmation sent to ${email}`);
   } catch (error) {
     console.error('Order Email failed:', error);
   }
@@ -40,27 +37,38 @@ export async function sendProofNotification(jobId: string, fileUrl: string) {
     .eq('id', jobId)
     .single();
 
-  if (!job || !job.profiles?.email) return;
+  if (!job || !job.profiles?.email) {
+    console.error("Proof Email Failed: Job or Customer Email not found.");
+    return;
+  }
+
+  console.log(`Attempting to email ${job.profiles.email} from proofs@gocmyk.com...`);
 
   try {
-    await resend.emails.send({
-      // FIX: Must match your verified domain
-      from: 'PrintHQ <proofs@gocmyk.com>', 
+    const data = await resend.emails.send({
+      from: 'PrintHQ Proofs <proofs@gocmyk.com>', // ✅ Updated to verified domain
       to: job.profiles.email,
       subject: `Action Required: Proof Ready for ${job.title}`,
       html: `
-        <h1>New Proof Uploaded</h1>
-        <p>Hi ${job.profiles.first_name},</p>
-        <p>A new digital proof is ready for your review.</p>
-        <p><strong>Job:</strong> ${job.title}</p>
-        <br/>
-        <a href="${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/jobs/${jobId}" style="background: #000; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 5px;">View & Approve Proof</a>
-        <br/><br/>
-        <p>Please approve this as soon as possible so we can begin production.</p>
+        <div style="font-family: sans-serif; padding: 20px;">
+          <h1>New Proof Uploaded</h1>
+          <p>Hi ${job.profiles.first_name},</p>
+          <p>A new version of your artwork is ready for review.</p>
+          <p><strong>Job:</strong> ${job.title}</p>
+          <p style="color: red; font-weight: bold;">Note: This is the latest version. Previous versions have been archived.</p>
+          <br/>
+          <a href="${process.env.NEXT_PUBLIC_SITE_URL}/dashboard/jobs/${jobId}" style="background: #000; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 5px;">Review & Approve</a>
+        </div>
       `
     });
-    console.log(`Proof email sent to ${job.profiles.email}`);
+    
+    if (data.error) {
+        console.error("Resend API Error:", data.error);
+    } else {
+        console.log("Proof Email Sent Successfully ID:", data.data?.id);
+    }
+    
   } catch (error) {
-    console.error('Proof Email failed:', error);
+    console.error('Proof Email Unexpected Error:', error);
   }
 }
