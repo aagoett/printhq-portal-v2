@@ -6,11 +6,12 @@ import {
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock
+  Activity, Save, Lock, X, UploadCloud
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
+// Import server action
 import { sendProofNotification } from '../../../actions'; 
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
@@ -18,13 +19,19 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [job, setJob] = useState<any>(null);
   const [activeStep, setActiveStep] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
-  const [logs, setLogs] = useState<any[]>([]); // NEW: Activity Logs
+  const [logs, setLogs] = useState<any[]>([]); 
   const [assets, setAssets] = useState<any[]>([]);
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
   // UI State
   const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat');
+  const [showUploadModal, setShowUploadModal] = useState(false); // NEW: Modal State
+
+  // Upload State
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadMessage, setUploadMessage] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
 
   // Resources
   const [serviceList, setServiceList] = useState<any[]>([]);
@@ -36,7 +43,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
   // Input State
   const [newMessage, setNewMessage] = useState('');
-  const [internalNotes, setInternalNotes] = useState(''); // NEW: Notes
+  const [internalNotes, setInternalNotes] = useState('');
   const [quoteAmount, setQuoteAmount] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -54,7 +61,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     fetchPageData();
 
-    // Realtime Subscriptions
     const chatChannel = supabase.channel('job_chat')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, () => fetchMessages())
       .subscribe();
@@ -84,7 +90,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     const { data: { user } } = await supabase.auth.getUser();
     setUser(user);
 
-    // 1. Fetch Job
     const { data: jobData } = await supabase
       .from('jobs')
       .select('*, orders(brand), profiles:user_id(first_name, last_name, email, company, phone)')
@@ -96,7 +101,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     if (jobData?.internal_notes) setInternalNotes(jobData.internal_notes);
     if (jobData?.due_date) setDueDate(new Date(jobData.due_date).toISOString().split('T')[0]);
 
-    // 2. Fetch Workflow Step
     const { data: stepData } = await supabase
       .from('job_steps')
       .select('*')
@@ -107,11 +111,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       .single();
     if (stepData) setActiveStep(stepData);
 
-    // 3. Fetch Services
     const { data: services } = await supabase.from('finishing_services').select('*').order('name');
     if (services) setServiceList(services);
 
-    // 4. Fetch All Lists
     await fetchAssets();
     await fetchMessages();
     await fetchLogs();
@@ -124,7 +126,10 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         setAssets(data);
         const approved = data.find((a: any) => a.status === 'approved');
         const latestProof = data.find((a: any) => a.asset_type === 'proof' && a.status !== 'archived');
-        if (!viewingAssetId) loadPreview(approved || latestProof || data[0]);
+        
+        if (!viewingAssetId) {
+             loadPreview(approved || latestProof || data[0]);
+        }
     }
   };
 
@@ -162,29 +167,69 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       }
   };
 
-  const handleUploadProof = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (!e.target.files || e.target.files.length === 0 || !user) return;
-      const file = e.target.files[0];
-      const fileName = `${params.id}-proof-${Math.random().toString(36).substring(7)}.${file.name.split('.').pop()}`;
-      
-      const { data, error } = await supabase.storage.from('uploads').upload(fileName, file);
-      if (error) return alert("Upload failed");
+  // --- NEW UPLOAD LOGIC ---
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setUploadFile(e.target.files[0]);
+    }
+  };
 
-      await supabase.from('job_assets').update({ status: 'archived' }).eq('job_id', params.id).eq('asset_type', 'proof').eq('status', 'pending');
-      await supabase.from('job_assets').insert({
+  const handleSubmitProof = async () => {
+      if (!uploadFile || !user) return;
+      setIsUploading(true);
+
+      const fileName = `${params.id}-proof-${Math.random().toString(36).substring(7)}.${uploadFile.name.split('.').pop()}`;
+      
+      // 1. Upload
+      const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
+      if (error) {
+          alert("Upload failed: " + error.message);
+          setIsUploading(false);
+          return;
+      }
+
+      // 2. Archive Old
+      await supabase.from('job_assets')
+          .update({ status: 'archived' })
+          .eq('job_id', params.id)
+          .eq('asset_type', 'proof')
+          .eq('status', 'pending');
+
+      // 3. Insert New
+      const { data: newAsset } = await supabase.from('job_assets').insert({
           job_id: params.id,
           uploader_id: user.id,
           file_url: data?.path,
-          file_name: file.name,
+          file_name: uploadFile.name,
           asset_type: 'proof',
           status: 'pending'
-      });
+      }).select().single();
 
-      await sendProofNotification(params.id, data?.path || '');
-      await logActivity('Proof Uploaded', `Uploaded ${file.name} for review.`);
+      // 4. Post Message
+      if (uploadMessage.trim()) {
+          await supabase.from('messages').insert({
+              job_id: params.id,
+              user_id: user.id,
+              content: `PROOF SENT: ${uploadMessage}`
+          });
+          fetchMessages();
+      }
 
-      fetchAssets();
-      alert("Proof uploaded. Previous versions archived.");
+      // 5. Email & Log
+      await sendProofNotification(params.id, data?.path || '', uploadMessage);
+      await logActivity('Proof Uploaded', `New version sent. Note: ${uploadMessage || 'None'}`);
+
+      // 6. Cleanup
+      if (newAsset) {
+          await fetchAssets();
+          loadPreview(newAsset); 
+      }
+      
+      setIsUploading(false);
+      setShowUploadModal(false);
+      setUploadFile(null);
+      setUploadMessage('');
+      alert("Proof sent successfully!");
   };
 
   const handleApproveProof = async (assetId: string) => {
@@ -192,7 +237,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       await supabase.from('job_assets').update({ status: 'approved' }).eq('id', assetId);
       await supabase.from('jobs').update({ status: 'In Production' }).eq('id', params.id);
       await logActivity('Proof Approved', 'Moved job to Production status.');
-      
       fetchPageData();
       alert("Job moved to Production!");
   };
@@ -211,14 +255,12 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     if (quoteAmount) updates.quote_price = parseFloat(quoteAmount); else updates.quote_price = null;
     if (dueDate) updates.due_date = dueDate; else updates.due_date = null;
     
-    // Check if anything changed to log it
     let changes = [];
     if (job.quote_price != updates.quote_price) changes.push(`Quote: $${updates.quote_price}`);
     if (job.due_date !== updates.due_date) changes.push(`Due: ${updates.due_date}`);
 
     const { error } = await supabase.from('jobs').update(updates).eq('id', params.id);
     if (!error && changes.length > 0) await logActivity('Job Updated', changes.join(', '));
-    
     setIsSaving(false);
     if (!error) { fetchPageData(); alert('Saved!'); }
   };
@@ -236,7 +278,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       let newOptions = currentOptions.includes(optionName) ? currentOptions.filter((o: string) => o !== optionName) : [...currentOptions, optionName];
       setJob({ ...job, finishing_options: newOptions }); 
       await supabase.from('jobs').update({ finishing_options: newOptions }).eq('id', params.id);
-      // Log the specific change
+      
       const action = currentOptions.includes(optionName) ? 'Removed' : 'Added';
       await logActivity('Finishing Updated', `${action} service: ${optionName}`);
   };
@@ -271,10 +313,53 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const stepNotes = activeStep?.notes;
   const currentAsset = assets.find(a => a.id === viewingAssetId);
   const isApprovedAsset = currentAsset?.status === 'approved';
+  const originalAsset = [...assets].reverse().find(a => a.asset_type === 'source');
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col">
-      <input type="file" ref={fileInputRef} onChange={handleUploadProof} className="hidden" />
+    <div className="min-h-screen bg-gray-100 flex flex-col relative">
+      
+      {/* --- UPLOAD MODAL --- */}
+      {showUploadModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+                <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                    <h3 className="font-bold text-lg text-gray-900">Send New Proof</h3>
+                    <button onClick={() => setShowUploadModal(false)} className="text-gray-400 hover:text-black"><X size={20}/></button>
+                </div>
+                <div className="p-6 space-y-4">
+                    {/* File Input */}
+                    <div onClick={() => fileInputRef.current?.click()} className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${uploadFile ? 'border-green-400 bg-green-50' : 'border-gray-300 hover:border-black hover:bg-gray-50'}`}>
+                        <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+                        <UploadCloud className={`mx-auto h-10 w-10 mb-2 ${uploadFile ? 'text-green-600' : 'text-gray-400'}`} />
+                        {uploadFile ? (
+                            <p className="font-bold text-green-700 text-sm truncate">{uploadFile.name}</p>
+                        ) : (
+                            <p className="text-sm font-bold text-gray-600">Click to Select File</p>
+                        )}
+                    </div>
+                    
+                    {/* Message Input */}
+                    <div>
+                        <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Message to Customer</label>
+                        <textarea 
+                            value={uploadMessage}
+                            onChange={(e) => setUploadMessage(e.target.value)}
+                            placeholder="e.g. Please check the spelling on the back..."
+                            className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:outline-none focus:border-black h-24 resize-none"
+                        />
+                    </div>
+
+                    <button 
+                        onClick={handleSubmitProof} 
+                        disabled={!uploadFile || isUploading}
+                        className={`w-full py-3 rounded-xl font-bold text-white transition-all ${!uploadFile || isUploading ? 'bg-gray-300 cursor-not-allowed' : 'bg-black hover:bg-gray-800 shadow-lg'}`}
+                    >
+                        {isUploading ? 'Sending...' : 'Send Proof'}
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
 
       {/* 1. HEADER */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
@@ -363,7 +448,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* INTERNAL NOTES (NEW) */}
+            {/* INTERNAL NOTES */}
             <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-yellow-700 mb-2 flex items-center gap-2"><Lock size={14}/> Internal Notes</h3>
                 <textarea 
@@ -375,6 +460,22 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 <button onClick={handleSaveNotes} disabled={isSaving} className="w-full bg-yellow-400 text-yellow-900 text-xs font-bold py-1.5 rounded hover:bg-yellow-500 flex items-center justify-center gap-2">
                     <Save size={12}/> Save Notes
                 </button>
+            </div>
+
+             {/* ORIGINAL FILE (REFERENCE) */}
+             <div className="bg-blue-50 rounded-lg border border-blue-100 p-4">
+                <h3 className="text-xs font-bold uppercase text-blue-800 mb-2 flex items-center gap-2"><FileText size={14}/> Original Asset</h3>
+                {originalAsset ? (
+                    <div onClick={() => loadPreview(originalAsset)} className="flex items-center gap-3 p-2 bg-white rounded border border-blue-200 cursor-pointer hover:border-blue-400 transition-all">
+                        <div className="bg-blue-100 p-2 rounded text-blue-600"><FileImage size={20}/></div>
+                        <div className="overflow-hidden">
+                            <p className="text-xs font-bold text-gray-900 truncate w-32">{originalAsset.file_name}</p>
+                            <p className="text-[10px] text-gray-500">Click to view</p>
+                        </div>
+                    </div>
+                ) : (
+                    <p className="text-xs text-blue-400 italic">No source file found.</p>
+                )}
             </div>
         </div>
 
@@ -426,7 +527,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/3">
                 <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                      <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File Vault</h3>
-                     <button onClick={() => fileInputRef.current?.click()} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
+                     <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
                     {assets.map((asset) => {
@@ -475,7 +576,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 
                 {/* TAB CONTENT */}
                 <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
-                    
                     {/* CHAT VIEW */}
                     {rightTab === 'chat' && (
                         <>
