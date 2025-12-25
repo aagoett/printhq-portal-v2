@@ -3,7 +3,8 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { 
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
-  Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, Briefcase, Plus, ShoppingCart, Clock
+  Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, 
+  Briefcase, Plus, ShoppingCart, Clock, Calendar, AlertTriangle
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
@@ -16,6 +17,7 @@ type Job = {
   title: string;
   status: string;
   created_at: string;
+  due_date?: string; 
   quantity: number;
   notes: string;
   user_id: string;
@@ -34,6 +36,8 @@ type Profile = {
   email: string;
   role: string;
   first_name?: string; 
+  last_name?: string;
+  company?: string;
   department?: string;
 };
 
@@ -96,7 +100,7 @@ export default function Dashboard() {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role, department')
+      .select('*') // Get all fields including company/names
       .eq('id', user.id)
       .single();
       
@@ -290,11 +294,27 @@ export default function Dashboard() {
     }
   };
 
-  // --- DATE FORMATTER ---
+  // --- HELPERS ---
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
     });
+  };
+
+  const getDueStatus = (dueString?: string) => {
+    if (!dueString) return { color: 'text-gray-400', label: '--' };
+    const due = new Date(dueString);
+    const now = new Date();
+    due.setHours(23, 59, 59);
+    now.setHours(0, 0, 0);
+    
+    const diff = (due.getTime() - now.getTime()) / (1000 * 3600 * 24);
+
+    if (diff < 0) return { color: 'text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded', label: 'OVERDUE' };
+    if (diff < 1) return { color: 'text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded', label: 'TODAY' };
+    if (diff <= 3) return { color: 'text-orange-600 font-bold', label: due.toLocaleDateString('en-US', {month:'short', day:'numeric'}) };
+    
+    return { color: 'text-gray-900 font-medium', label: due.toLocaleDateString('en-US', {month:'short', day:'numeric'}) };
   };
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
@@ -502,6 +522,8 @@ export default function Dashboard() {
                     <tr>
                       <th className="px-6 py-3">Job ID</th>
                       <th className="px-6 py-3">Date In</th>
+                      <th className="px-6 py-3 text-center">Due Date</th>
+                      <th className="px-6 py-3">Customer</th> 
                       <th className="px-6 py-3">Title</th>
                       <th className="px-6 py-3">Current Station</th>
                       <th className="px-6 py-3">Assign CSR</th>
@@ -510,16 +532,39 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {filteredJobs.map((job: any) => (
+                    {filteredJobs.map((job: any) => {
+                      const dueStatus = getDueStatus(job.due_date);
+                      
+                      // Resolve Customer Info
+                      const customerProfile = customers.find(c => c.id === job.user_id);
+                      const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
+                      const companyName = customerProfile?.company || job.brand || 'No Company';
+                      
+                      return (
                       <tr key={job.id} className="hover:bg-gray-50 transition-colors group">
                         <td className="px-6 py-4 font-mono text-gray-500">#{job.id.substring(0,6).toUpperCase()}</td>
-                        <td className="px-6 py-4 font-medium text-gray-500 whitespace-nowrap">
+                        <td className="px-6 py-4 font-medium text-gray-500 whitespace-nowrap text-xs">
                             {formatDate(job.created_at)}
+                        </td>
+                         <td className="px-6 py-4 whitespace-nowrap text-center">
+                             <span className={`text-xs ${dueStatus.color}`}>
+                                {dueStatus.label}
+                             </span>
+                        </td>
+                        <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                                <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold text-gray-600">
+                                    {typeof customerName === 'string' ? customerName.charAt(0).toUpperCase() : '?'}
+                                </div>
+                                <div>
+                                    <p className="text-sm font-bold text-gray-900">{customerName}</p>
+                                    <p className="text-[10px] text-gray-400 uppercase tracking-wider">{companyName}</p>
+                                </div>
+                            </div>
                         </td>
                         <td className="px-6 py-4 font-medium text-gray-900">
                           {job.title}
                           {job.brand && <span className="ml-2 inline-flex items-center rounded-md bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">{job.brand}</span>}
-                          {job.guest_email && <div className="text-yellow-600 font-bold mt-1 text-[10px]">Guest: {job.guest_email}</div>}
                         </td>
                         <td className="px-6 py-4">
                            <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${job.current_step === 'Complete' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
@@ -541,14 +586,20 @@ export default function Dashboard() {
                         </td>
                         <td className="px-6 py-4"><Link href={`/dashboard/jobs/${job.id}`} className="text-black font-bold hover:underline">View Ticket</Link></td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
             </div>
           ) : (
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-               {jobs.map((job) => (<StatusCard key={job.id} job={job} formatDate={formatDate} />))}
+               {jobs.map((job) => {
+                   const dueStatus = getDueStatus(job.due_date);
+                   return (
+                   <StatusCard key={job.id} job={job} formatDate={formatDate} dueStatus={dueStatus} />
+                   );
+               })}
             </div>
           )}
         </div>
@@ -566,7 +617,7 @@ function NavItem({ icon, label, active = false, href = '#' }: { icon: any, label
   );
 }
 
-function StatusCard({ job, formatDate }: { job: Job, formatDate: (d: string) => string }) {
+function StatusCard({ job, formatDate, dueStatus }: { job: Job, formatDate: (d: string) => string, dueStatus: any }) {
   const styles: any = { 'Pending Review': 'bg-amber-100 text-amber-700', 'In Production': 'bg-emerald-100 text-emerald-700' };
   return (
     <Link href={`/dashboard/jobs/${job.id}`}>
@@ -579,6 +630,12 @@ function StatusCard({ job, formatDate }: { job: Job, formatDate: (d: string) => 
         <div className="mt-1 flex items-center justify-between">
              <span className="text-sm text-gray-500">{job.quantity} units</span>
              <span className="text-xs text-gray-400 flex items-center"><Clock size={12} className="mr-1" /> {formatDate(job.created_at)}</span>
+        </div>
+        
+        {/* DUE DATE BADGE ON CARD */}
+        <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
+            <span className="text-[10px] font-bold uppercase text-gray-400">Due Date</span>
+            <span className={`text-xs ${dueStatus.color}`}>{dueStatus.label}</span>
         </div>
       </div>
     </Link>
