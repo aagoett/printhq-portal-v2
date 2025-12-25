@@ -3,8 +3,8 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, DollarSign, 
-  Clock, MessageSquare, Printer, Save, Calendar, Layers, Hash,
-  AlertTriangle, CheckCircle, User, Briefcase
+  Clock, MessageSquare, Printer, Calendar, Layers, Hash,
+  AlertTriangle, User
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -107,28 +107,43 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const handleUpdateJob = async () => {
     setIsSaving(true);
     const updates: any = {};
-    if (quoteAmount) updates.quote_price = parseFloat(quoteAmount);
-    if (dueDate) updates.due_date = dueDate;
     
-    await supabase.from('jobs').update(updates).eq('id', params.id);
+    // Handle Quote
+    if (quoteAmount) updates.quote_price = parseFloat(quoteAmount);
+    else updates.quote_price = null; // Allow clearing
+    
+    // Handle Date
+    if (dueDate) updates.due_date = dueDate;
+    else updates.due_date = null; // Allow clearing
+
+    const { error } = await supabase.from('jobs').update(updates).eq('id', params.id);
+    
     setIsSaving(false);
-    // Refresh page data to update countdown
-    fetchPageData(); 
-    alert('Job details updated!');
+    
+    if (error) {
+        alert("Error saving: " + error.message);
+    } else {
+        fetchPageData(); // Refresh to update countdown
+        alert('Saved!');
+    }
   };
 
   // --- COUNTDOWN LOGIC ---
   const getCountdown = () => {
-      if (!job?.due_date) return { text: "NO DUE DATE SET", color: "bg-gray-800", textCol: "text-gray-400" };
+      if (!job?.due_date) return { text: "NO DUE DATE SET", color: "bg-gray-800", textCol: "text-gray-500" };
       
       const due = new Date(job.due_date);
       const now = new Date();
+      // Reset time portion for accurate day calculation
+      due.setHours(23, 59, 59, 999);
+      now.setHours(0, 0, 0, 0);
+
       const diffTime = due.getTime() - now.getTime();
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
       if (diffDays < 0) return { text: `OVERDUE BY ${Math.abs(diffDays)} DAYS`, color: "bg-red-600", textCol: "text-white" };
-      if (diffDays === 0) return { text: "DUE TODAY", color: "bg-red-500", textCol: "text-white" };
-      if (diffDays <= 2) return { text: `DUE IN ${diffDays} DAYS`, color: "bg-orange-500", textCol: "text-white" };
+      if (diffDays === 0) return { text: "DUE TODAY", color: "bg-orange-500", textCol: "text-white" };
+      if (diffDays <= 2) return { text: `DUE IN ${diffDays} DAYS`, color: "bg-yellow-500", textCol: "text-black" };
       return { text: `${diffDays} DAYS LEFT`, color: "bg-emerald-500", textCol: "text-white" };
   };
 
@@ -196,7 +211,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
 
                 {/* Right: THE COUNTDOWN */}
-                <div className={`p-6 flex items-center justify-end gap-6 ${countdown.color}`}>
+                <div className={`p-6 flex items-center justify-end gap-6 transition-colors duration-500 ${countdown.color}`}>
                     <div className="text-right">
                         <p className={`text-xs font-bold uppercase tracking-widest opacity-80 ${countdown.textCol}`}>Production Deadline</p>
                         <h2 className={`text-3xl font-black ${countdown.textCol}`}>{countdown.text}</h2>
@@ -226,19 +241,29 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     <p className="text-base font-bold text-white">{new Date(job.created_at).toLocaleDateString()}</p>
                 </div>
 
-                {/* DUE DATE INPUT */}
-                <div className="p-4 flex flex-col justify-center bg-gray-800/50">
+                {/* DUE DATE INPUT - FIXED */}
+                <div className="p-4 flex flex-col justify-center bg-gray-800/50 relative group">
                     <p className="text-[10px] font-bold uppercase text-blue-400 mb-1 flex items-center gap-1"><AlertTriangle size={12}/> Target Due Date</p>
-                    <input 
-                        type="date" 
-                        value={dueDate}
-                        onChange={(e) => setDueDate(e.target.value)}
-                        className="bg-transparent text-white font-bold focus:outline-none w-full cursor-pointer"
-                    />
+                    <div className="flex items-center gap-2">
+                         <input 
+                            type="date" 
+                            value={dueDate}
+                            onChange={(e) => setDueDate(e.target.value)}
+                            className="bg-transparent text-white font-bold focus:outline-none w-full cursor-pointer uppercase"
+                        />
+                         {/* DEDICATED SAVE BUTTON */}
+                        <button 
+                            onClick={handleUpdateJob}
+                            disabled={isSaving}
+                            className="bg-blue-600 text-white px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-blue-500 shadow-lg"
+                        >
+                            {isSaving ? '...' : 'Set'}
+                        </button>
+                    </div>
                 </div>
 
                 {/* QUOTE INPUT */}
-                <div className="p-4 flex flex-col justify-center bg-gray-800/50 relative">
+                <div className="p-4 flex flex-col justify-center bg-gray-800/50 relative group">
                     <p className="text-[10px] font-bold uppercase text-yellow-400 mb-1 flex items-center gap-1"><DollarSign size={12}/> Quote Price</p>
                     <div className="flex items-center gap-1">
                         <span className="text-gray-400 font-bold">$</span>
@@ -249,14 +274,14 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                             placeholder="0.00"
                             className="bg-transparent text-white font-bold focus:outline-none w-24 text-lg"
                         />
+                        <button 
+                            onClick={handleUpdateJob}
+                            disabled={isSaving}
+                            className="ml-auto bg-white text-black px-2 py-1 rounded text-[10px] font-bold uppercase hover:bg-gray-200"
+                        >
+                            {isSaving ? '...' : 'Save'}
+                        </button>
                     </div>
-                    <button 
-                        onClick={handleUpdateJob}
-                        disabled={isSaving}
-                        className="absolute right-4 top-1/2 -translate-y-1/2 bg-white text-black px-3 py-1 rounded text-xs font-bold hover:bg-gray-200"
-                    >
-                        {isSaving ? '...' : 'Save'}
-                    </button>
                 </div>
 
             </div>
