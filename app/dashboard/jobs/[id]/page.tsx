@@ -5,11 +5,12 @@ import {
   ArrowLeft, Send, FileText, Download, DollarSign, 
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
-  History, Eye, FileImage
+  History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
+import { sendProofNotification } from '../../actions'; // Import the new action
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
   // --- STATE ---
@@ -23,7 +24,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   // Resources
   const [serviceList, setServiceList] = useState<any[]>([]);
 
-  // Active Preview State (Defaults to latest proof, falls back to source)
+  // Active Preview State
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<string>('unknown');
   const [viewingAssetId, setViewingAssetId] = useState<string>('');
@@ -56,7 +57,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         filter: `job_id=eq.${params.id}` 
       }, 
       (payload) => {
-        // Optimistically add or re-fetch
+        // Fetch to ensure we get profile data
         fetchMessages(); 
       })
       .subscribe();
@@ -65,7 +66,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     const assetChannel = supabase
       .channel('job_assets')
       .on('postgres_changes', { 
-        event: 'INSERT', 
+        event: '*', 
         schema: 'public', 
         table: 'job_assets', 
         filter: `job_id=eq.${params.id}` 
@@ -114,7 +115,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     const { data: services } = await supabase.from('finishing_services').select('*').order('name');
     if (services) setServiceList(services);
 
-    // 4. Fetch Assets (Files)
+    // 4. Fetch Assets & Messages
     await fetchAssets();
     await fetchMessages();
     setLoading(false);
@@ -125,18 +126,17 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       .from('job_assets')
       .select('*, profiles(first_name, email)')
       .eq('job_id', params.id)
-      .order('created_at', { ascending: false }); // Newest first
+      .order('created_at', { ascending: false });
 
     if (data && data.length > 0) {
         setAssets(data);
-        // If we aren't viewing anything yet, default to the newest file
+        
+        // NORTH STAR LOGIC: Default to Approved, then Proof, then Source
+        const approved = data.find((a: any) => a.status === 'approved');
+        const latestProof = data.find((a: any) => a.asset_type === 'proof');
+        
         if (!viewingAssetId) {
-            loadPreview(data[0]);
-        }
-    } else {
-        // Fallback for legacy jobs that only have data in the jobs table
-        if (job?.file_url) {
-            // (Ideally we migrated these in SQL, but just in case)
+            loadPreview(approved || latestProof || data[0]);
         }
     }
   };
@@ -171,24 +171,57 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       const { data, error } = await supabase.storage.from('uploads').upload(fileName, file);
       if (error) return alert("Upload failed");
 
+      // 1. Create Asset Record
       await supabase.from('job_assets').insert({
           job_id: params.id,
           uploader_id: user.id,
           file_url: data?.path,
           file_name: file.name,
-          asset_type: 'proof' // Mark as proof
+          asset_type: 'proof',
+          status: 'pending'
       });
+
+      // 2. Trigger Email Action
+      await sendProofNotification(params.id, data?.path || '');
+
       fetchAssets();
+      alert("Proof uploaded & customer notified!");
+  };
+
+  const handleApproveProof = async (assetId: string) => {
+      if (!confirm("Mark this file as APPROVED for production?")) return;
+      
+      // 1. Mark this asset as Approved
+      await supabase.from('job_assets').update({ status: 'approved' }).eq('id', assetId);
+      
+      // 2. Mark job as In Production
+      await supabase.from('jobs').update({ status: 'In Production' }).eq('id', params.id);
+      
+      fetchPageData();
+      alert("Job moved to Production!");
   };
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !user) return;
+    
+    // Optimistic Update
+    const tempMsg = {
+        id: Math.random(), 
+        content: newMessage, 
+        user_id: user.id, 
+        created_at: new Date().toISOString(),
+        profiles: { first_name: 'Me' }
+    };
+    setMessages([...messages, tempMsg]);
+    const msgToSend = newMessage;
+    setNewMessage('');
+
     await supabase.from('messages').insert({
       job_id: params.id,
       user_id: user.id,
-      content: newMessage
+      content: msgToSend
     });
-    setNewMessage('');
+    fetchMessages();
   };
 
   const handleUpdateJob = async () => {
@@ -223,24 +256,12 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       return { text: `${diffDays} DAYS LEFT`, color: "bg-emerald-500", textCol: "text-white" };
   };
 
-  const getStatusColor = (status: string) => {
-      const s = status?.toLowerCase() || '';
-      if (s.includes('prepress')) return 'bg-blue-600';
-      if (s.includes('press')) return 'bg-purple-600';
-      if (s.includes('bindery')) return 'bg-orange-600';
-      if (s.includes('ship') || s.includes('complete')) return 'bg-green-600';
-      return 'bg-gray-800';
-  };
-
   if (loading) return <div className="p-12 text-center">Loading Job...</div>;
   if (!job) return <div className="p-12 text-center">Job not found</div>;
 
   const countdown = getCountdown();
-  const currentDepartment = activeStep ? activeStep.department : job.status;
-  const statusColor = getStatusColor(currentDepartment);
-  
-  // Find Original vs Latest Proof
-  const originalAsset = [...assets].reverse().find(a => a.asset_type === 'source');
+  const currentAsset = assets.find(a => a.id === viewingAssetId);
+  const isApprovedAsset = currentAsset?.status === 'approved';
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
@@ -257,27 +278,117 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
              </div>
           </div>
           <div className="flex gap-2">
-             <div className={`px-4 py-1 rounded-md text-white font-bold uppercase text-xs flex items-center ${statusColor}`}>
-                {currentDepartment}
+             <div className="px-4 py-1 rounded-md bg-black text-white font-bold uppercase text-xs flex items-center">
+                {job.status}
              </div>
           </div>
         </div>
       </div>
 
-      {/* 2. MAIN LAYOUT (3 Column Grid) */}
+      {/* 2. MAIN LAYOUT */}
       <div className="flex-1 max-w-[1920px] mx-auto w-full p-4 grid grid-cols-12 gap-4">
         
-        {/* LEFT COL: SPECS & FINISHING (Width 3) */}
+        {/* LEFT COL: ASSETS & VAULT (Width 3) */}
         <div className="col-span-12 lg:col-span-3 space-y-4">
             
-            {/* SPECS CARD */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 flex items-center gap-2"><Layers size={14}/> Job Specs</h3>
-                <div className="space-y-3 text-sm">
-                    <div className="flex justify-between border-b border-gray-50 pb-2">
-                        <span className="text-gray-500">Customer</span>
-                        <span className="font-bold">{job.profiles?.first_name || 'Guest'}</span>
+            {/* FILE VAULT */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-[calc(100vh-140px)]">
+                <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                     <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File History</h3>
+                     <button onClick={() => fileInputRef.current?.click()} className="text-[10px] bg-black text-white px-3 py-1.5 rounded font-bold hover:bg-gray-800 shadow-sm">+ Upload Proof</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                    {assets.map((asset) => {
+                        const isCurrent = viewingAssetId === asset.id;
+                        return (
+                        <div 
+                           key={asset.id} 
+                           onClick={() => loadPreview(asset)}
+                           className={`p-3 rounded-lg border cursor-pointer transition-all group relative
+                              ${isCurrent ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-200' : 'bg-white border-gray-100 hover:border-gray-300'}
+                           `}
+                        >
+                            <div className="flex items-start justify-between">
+                                <div className="flex items-center gap-3 overflow-hidden">
+                                    <div className={`p-2 rounded-md ${asset.asset_type === 'source' ? 'bg-gray-100 text-gray-500' : 'bg-purple-100 text-purple-600'}`}>
+                                        {asset.asset_type === 'source' ? <FileText size={16}/> : <FileImage size={16}/>}
+                                    </div>
+                                    <div>
+                                        <p className="text-xs font-bold text-gray-800 truncate w-32">{asset.file_name}</p>
+                                        <p className="text-[10px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()} • {asset.asset_type.toUpperCase()}</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* STATUS BADGE */}
+                            <div className="mt-2 flex items-center justify-between">
+                                {asset.status === 'approved' ? (
+                                    <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded flex items-center gap-1"><CheckCircle size={10}/> APPROVED</span>
+                                ) : asset.status === 'pending' && asset.asset_type === 'proof' ? (
+                                    <span className="text-[10px] font-bold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">PENDING</span>
+                                ) : (
+                                    <span></span>
+                                )}
+                                {isCurrent && <Eye size={14} className="text-blue-400"/>}
+                            </div>
+                        </div>
+                        );
+                    })}
+                </div>
+            </div>
+        </div>
+
+        {/* MIDDLE COL: PREVIEW (Width 6) */}
+        <div className="col-span-12 lg:col-span-6 flex flex-col gap-4">
+             <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden min-h-[600px] relative ${isApprovedAsset ? 'border-green-400 ring-2 ring-green-100' : 'border-gray-200'}`}>
+                
+                {/* PREVIEW HEADER */}
+                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                        {isApprovedAsset ? (
+                            <span className="bg-green-600 text-white text-xs font-bold px-2 py-1 rounded flex items-center gap-1"><CheckCircle size={12}/> PRODUCTION FILE</span>
+                        ) : (
+                            <span className="text-xs font-bold uppercase text-gray-500">Preview Mode</span>
+                        )}
+                        <span className="text-xs text-gray-400">| {currentAsset?.file_name}</span>
                     </div>
+                    
+                    <div className="flex items-center gap-2">
+                        {currentAsset?.asset_type === 'proof' && currentAsset.status === 'pending' && (
+                             <button onClick={() => handleApproveProof(currentAsset.id)} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-green-500 shadow-sm flex items-center gap-1">
+                                 <ThumbsUp size={12}/> Approve for Production
+                             </button>
+                        )}
+                        {previewUrl && (
+                            <a href={previewUrl} target="_blank" className="text-xs font-bold text-gray-600 hover:text-black border border-gray-300 px-2 py-1 rounded bg-white">
+                                <Download size={12}/>
+                            </a>
+                        )}
+                    </div>
+                </div>
+
+                <div className="flex-1 bg-gray-100 flex items-center justify-center p-6 relative">
+                    {!previewUrl ? (
+                        <div className="text-gray-400 text-sm">Select a file to preview</div>
+                    ) : previewType === 'image' ? (
+                        <img src={previewUrl} className="max-w-full max-h-[70vh] shadow-lg border border-gray-300 bg-white" />
+                    ) : (
+                        <iframe src={`${previewUrl}#toolbar=0`} className="w-full h-full shadow-lg bg-white" />
+                    )}
+                </div>
+             </div>
+        </div>
+
+        {/* RIGHT COL: CHAT & INFO (Width 3) */}
+        <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
+            
+            {/* SPECS CARD */}
+             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                <div className="flex justify-between items-center mb-4">
+                     <h3 className="text-xs font-bold uppercase text-gray-400 flex items-center gap-2"><Layers size={14}/> Specs</h3>
+                     <div className={`text-[10px] px-2 py-0.5 rounded font-bold ${countdown.color} text-white`}>{countdown.text}</div>
+                </div>
+                <div className="space-y-3 text-sm">
                     <div className="flex justify-between border-b border-gray-50 pb-2">
                         <span className="text-gray-500">Qty</span>
                         <span className="font-bold">{job.quantity}</span>
@@ -286,105 +397,11 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                         <span className="text-gray-500">Stock</span>
                         <span className="font-bold text-right w-1/2">{job.paper_stock}</span>
                     </div>
-                    <div className="flex justify-between items-center pt-2">
-                         <span className="text-gray-500">Due Date</span>
-                         <div className={`text-[10px] px-2 py-0.5 rounded font-bold ${countdown.color} text-white`}>
-                             {countdown.text}
-                         </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* FINISHING CHECKLIST */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <h3 className="text-xs font-bold uppercase text-gray-400 mb-3 flex items-center gap-2"><Scissors size={14}/> Finishing</h3>
-                <div className="flex flex-wrap gap-2">
-                    {serviceList.map((service) => {
-                        const isSelected = job.finishing_options?.includes(service.name);
-                        return (
-                            <button key={service.id} onClick={() => toggleFinishingOption(service.name)} className={`px-3 py-1.5 rounded text-xs font-bold border transition-all flex items-center gap-2 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
-                                {isSelected && <CheckSquare size={12} />} {service.name}
-                            </button>
-                        );
-                    })}
-                </div>
-            </div>
-
-             {/* ORIGINAL FILE (REFERENCE) */}
-            <div className="bg-blue-50 rounded-lg border border-blue-100 p-4">
-                <h3 className="text-xs font-bold uppercase text-blue-800 mb-2 flex items-center gap-2"><FileText size={14}/> Original Asset</h3>
-                {originalAsset ? (
-                    <div onClick={() => loadPreview(originalAsset)} className="flex items-center gap-3 p-2 bg-white rounded border border-blue-200 cursor-pointer hover:border-blue-400 transition-all">
-                        <div className="bg-blue-100 p-2 rounded text-blue-600"><FileImage size={20}/></div>
-                        <div className="overflow-hidden">
-                            <p className="text-xs font-bold text-gray-900 truncate w-32">{originalAsset.file_name}</p>
-                            <p className="text-[10px] text-gray-500">Click to view</p>
-                        </div>
-                    </div>
-                ) : (
-                    <p className="text-xs text-blue-400 italic">No source file found.</p>
-                )}
-            </div>
-        </div>
-
-        {/* MIDDLE COL: MAIN PROOF STAGE (Width 6) */}
-        <div className="col-span-12 lg:col-span-6 flex flex-col gap-4">
-             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex-1 flex flex-col overflow-hidden min-h-[600px]">
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                        <Eye size={16} className="text-gray-500"/>
-                        <span className="text-xs font-bold uppercase text-gray-600">Active View: {assets.find(a => a.id === viewingAssetId)?.file_name || 'Loading...'}</span>
-                    </div>
-                    {previewUrl && (
-                        <a href={previewUrl} target="_blank" className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1">
-                            <Download size={12}/> Download
-                        </a>
-                    )}
-                </div>
-                <div className="flex-1 bg-gray-100 flex items-center justify-center p-6 relative">
-                    {!previewUrl ? (
-                        <div className="text-gray-400 text-sm">Select a file to preview</div>
-                    ) : previewType === 'image' ? (
-                        <img src={previewUrl} className="max-w-full max-h-[70vh] shadow-lg border border-gray-300" />
-                    ) : (
-                        <iframe src={`${previewUrl}#toolbar=0`} className="w-full h-full shadow-lg bg-white" />
-                    )}
-                </div>
-             </div>
-        </div>
-
-        {/* RIGHT COL: FILE VAULT & CHAT (Width 3) */}
-        <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
-            
-            {/* FILE VAULT */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/3">
-                <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                     <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File Vault</h3>
-                     <button onClick={() => fileInputRef.current?.click()} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                    {assets.map((asset) => (
-                        <div 
-                           key={asset.id} 
-                           onClick={() => loadPreview(asset)}
-                           className={`p-2 rounded border cursor-pointer transition-all flex items-center justify-between group
-                              ${viewingAssetId === asset.id ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}
-                           `}
-                        >
-                            <div className="flex items-center gap-2 overflow-hidden">
-                                {asset.asset_type === 'source' ? <FileText size={16} className="text-gray-400"/> : <FileImage size={16} className="text-purple-500"/>}
-                                <div>
-                                    <p className="text-xs font-bold text-gray-700 truncate w-32">{asset.file_name}</p>
-                                    <p className="text-[10px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</p>
-                                </div>
-                            </div>
-                        </div>
-                    ))}
                 </div>
             </div>
 
             {/* CHAT */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-2/3">
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col flex-1">
                 <div className="px-4 py-2 border-b border-gray-100 bg-gray-50">
                     <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><MessageSquare size={14}/> Discussion</h3>
                 </div>
