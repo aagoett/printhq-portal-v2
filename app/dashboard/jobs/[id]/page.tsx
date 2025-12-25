@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, DollarSign, 
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
-  AlertTriangle, User
+  AlertTriangle, User, Scissors, CheckSquare
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -17,6 +17,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
+  // Resources State
+  const [serviceList, setServiceList] = useState<any[]>([]);
+
   // File Preview State
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [fileType, setFileType] = useState<string>('unknown');
@@ -63,13 +66,13 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     
     setJob(jobData);
     if (jobData?.quote_price) setQuoteAmount(jobData.quote_price);
-    
-    // Format existing due date for the input field (YYYY-MM-DD)
-    if (jobData?.due_date) {
-        setDueDate(new Date(jobData.due_date).toISOString().split('T')[0]);
-    }
+    if (jobData?.due_date) setDueDate(new Date(jobData.due_date).toISOString().split('T')[0]);
 
-    // 2. Generate File Preview URL
+    // 2. Fetch Available Services
+    const { data: services } = await supabase.from('finishing_services').select('*').order('name');
+    if (services) setServiceList(services);
+
+    // 3. Generate File Preview URL
     if (jobData?.file_url) {
         const { data: urlData } = await supabase.storage.from('uploads').createSignedUrl(jobData.file_url, 3600);
         if (urlData?.signedUrl) {
@@ -107,39 +110,42 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const handleUpdateJob = async () => {
     setIsSaving(true);
     const updates: any = {};
-    
-    // Handle Quote
     if (quoteAmount) updates.quote_price = parseFloat(quoteAmount);
-    else updates.quote_price = null; // Allow clearing
-    
-    // Handle Date
+    else updates.quote_price = null;
     if (dueDate) updates.due_date = dueDate;
-    else updates.due_date = null; // Allow clearing
+    else updates.due_date = null;
 
     const { error } = await supabase.from('jobs').update(updates).eq('id', params.id);
-    
     setIsSaving(false);
-    
-    if (error) {
-        alert("Error saving: " + error.message);
-    } else {
-        fetchPageData(); // Refresh to update countdown
+    if (!error) {
+        fetchPageData(); 
         alert('Saved!');
     }
+  };
+
+  const toggleFinishingOption = async (optionName: string) => {
+      // Optimistic Update
+      const currentOptions = job.finishing_options || [];
+      let newOptions;
+      if (currentOptions.includes(optionName)) {
+          newOptions = currentOptions.filter((o: string) => o !== optionName);
+      } else {
+          newOptions = [...currentOptions, optionName];
+      }
+      
+      setJob({ ...job, finishing_options: newOptions }); // Update UI immediately
+
+      await supabase.from('jobs').update({ finishing_options: newOptions }).eq('id', params.id);
   };
 
   // --- COUNTDOWN LOGIC ---
   const getCountdown = () => {
       if (!job?.due_date) return { text: "NO DUE DATE SET", color: "bg-gray-800", textCol: "text-gray-500" };
-      
       const due = new Date(job.due_date);
       const now = new Date();
-      // Reset time portion for accurate day calculation
       due.setHours(23, 59, 59, 999);
       now.setHours(0, 0, 0, 0);
-
-      const diffTime = due.getTime() - now.getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      const diffDays = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
       if (diffDays < 0) return { text: `OVERDUE BY ${Math.abs(diffDays)} DAYS`, color: "bg-red-600", textCol: "text-white" };
       if (diffDays === 0) return { text: "DUE TODAY", color: "bg-orange-500", textCol: "text-white" };
@@ -187,16 +193,10 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {/* 2. THE PRODUCTION COMMAND CENTER (Banner) */}
+      {/* 2. PRODUCTION BANNER */}
       <div className="bg-gray-900 text-white border-b border-black shadow-xl relative overflow-hidden">
-        {/* Background Accent */}
-        <div className="absolute top-0 right-0 w-64 h-full bg-gradient-to-l from-gray-800 to-transparent opacity-50 pointer-events-none"></div>
-
         <div className="max-w-[1800px] mx-auto">
-            
-            {/* TOP ROW: CUSTOMER & COUNTDOWN */}
             <div className="grid grid-cols-1 md:grid-cols-2 border-b border-gray-800">
-                {/* Left: Customer Info */}
                 <div className="p-6 flex items-center gap-5">
                     <div className="h-12 w-12 rounded-full bg-blue-600 flex items-center justify-center text-lg font-bold">
                         {customerName.charAt(0).toUpperCase()}
@@ -209,8 +209,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                         <p className="text-sm text-gray-400 font-medium mt-1">{customerCompany}</p>
                     </div>
                 </div>
-
-                {/* Right: THE COUNTDOWN */}
                 <div className={`p-6 flex items-center justify-end gap-6 transition-colors duration-500 ${countdown.color}`}>
                     <div className="text-right">
                         <p className={`text-xs font-bold uppercase tracking-widest opacity-80 ${countdown.textCol}`}>Production Deadline</p>
@@ -219,161 +217,127 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     <Clock size={40} className={`opacity-80 ${countdown.textCol}`} />
                 </div>
             </div>
-
-            {/* BOTTOM ROW: SPECS STRIP */}
             <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-gray-800 text-sm">
-                
-                {/* QTY */}
                 <div className="p-4 flex flex-col justify-center">
                     <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><Hash size={12}/> Quantity</p>
                     <p className="text-xl font-bold text-white">{job.quantity}</p>
                 </div>
-
-                {/* STOCK */}
                 <div className="p-4 flex flex-col justify-center">
                     <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><Layers size={12}/> Material</p>
                     <p className="text-base font-bold text-white">{job.paper_stock || 'Standard'}</p>
                 </div>
-
-                {/* DATE IN */}
                 <div className="p-4 flex flex-col justify-center">
                     <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><Calendar size={12}/> Date In</p>
                     <p className="text-base font-bold text-white">{new Date(job.created_at).toLocaleDateString()}</p>
                 </div>
-
-                {/* DUE DATE INPUT - FIXED */}
                 <div className="p-4 flex flex-col justify-center bg-gray-800/50 relative group">
                     <p className="text-[10px] font-bold uppercase text-blue-400 mb-1 flex items-center gap-1"><AlertTriangle size={12}/> Target Due Date</p>
                     <div className="flex items-center gap-2">
-                         <input 
-                            type="date" 
-                            value={dueDate}
-                            onChange={(e) => setDueDate(e.target.value)}
-                            className="bg-transparent text-white font-bold focus:outline-none w-full cursor-pointer uppercase"
-                        />
-                         {/* DEDICATED SAVE BUTTON */}
-                        <button 
-                            onClick={handleUpdateJob}
-                            disabled={isSaving}
-                            className="bg-blue-600 text-white px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-blue-500 shadow-lg"
-                        >
-                            {isSaving ? '...' : 'Set'}
-                        </button>
+                         <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="bg-transparent text-white font-bold focus:outline-none w-full cursor-pointer uppercase"/>
+                        <button onClick={handleUpdateJob} disabled={isSaving} className="bg-blue-600 text-white px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-blue-500 shadow-lg">{isSaving ? '...' : 'Set'}</button>
                     </div>
                 </div>
-
-                {/* QUOTE INPUT */}
                 <div className="p-4 flex flex-col justify-center bg-gray-800/50 relative group">
                     <p className="text-[10px] font-bold uppercase text-yellow-400 mb-1 flex items-center gap-1"><DollarSign size={12}/> Quote Price</p>
                     <div className="flex items-center gap-1">
                         <span className="text-gray-400 font-bold">$</span>
-                        <input 
-                            type="number" 
-                            value={quoteAmount}
-                            onChange={(e) => setQuoteAmount(e.target.value)}
-                            placeholder="0.00"
-                            className="bg-transparent text-white font-bold focus:outline-none w-24 text-lg"
-                        />
-                        <button 
-                            onClick={handleUpdateJob}
-                            disabled={isSaving}
-                            className="ml-auto bg-white text-black px-2 py-1 rounded text-[10px] font-bold uppercase hover:bg-gray-200"
-                        >
-                            {isSaving ? '...' : 'Save'}
-                        </button>
+                        <input type="number" value={quoteAmount} onChange={(e) => setQuoteAmount(e.target.value)} placeholder="0.00" className="bg-transparent text-white font-bold focus:outline-none w-24 text-lg"/>
+                        <button onClick={handleUpdateJob} disabled={isSaving} className="ml-auto bg-white text-black px-2 py-1 rounded text-[10px] font-bold uppercase hover:bg-gray-200">{isSaving ? '...' : 'Save'}</button>
                     </div>
                 </div>
-
             </div>
         </div>
       </div>
 
-      {/* 3. MAIN CONTENT (Split View) */}
+      {/* 3. MAIN CONTENT */}
       <div className="flex-1 max-w-[1800px] mx-auto w-full p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* LEFT: VISUAL PROOF */}
-        <div className="lg:col-span-2 flex flex-col">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex-1 flex flex-col min-h-[600px]">
-             <div className="px-6 py-3 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                <h3 className="font-bold text-gray-700 text-sm flex items-center gap-2">
-                    <FileText size={16} /> Digital Proof Preview
-                </h3>
-             </div>
-             
-             <div className="flex-1 bg-gray-100/50 flex items-center justify-center p-8 relative">
-               {!fileUrl ? (
-                 <div className="text-gray-400 text-sm">No file uploaded</div>
-               ) : fileType === 'image' ? (
-                 <img src={fileUrl} alt="Preview" className="max-w-full max-h-[70vh] object-contain shadow-2xl rounded border border-gray-200" />
-               ) : fileType === 'pdf' ? (
-                 <iframe src={`${fileUrl}#toolbar=0`} className="w-full h-full min-h-[600px] rounded shadow-sm bg-white" title="PDF Preview"></iframe>
-               ) : (
-                 <div className="text-center">
-                   <FileText size={48} className="mx-auto text-gray-300 mb-2" />
-                   <p className="text-sm text-gray-500">Preview not available.</p>
-                   <a href={fileUrl} className="text-blue-600 underline text-sm">Download File</a>
+        {/* LEFT COLUMN */}
+        <div className="lg:col-span-2 flex flex-col gap-6">
+            
+            {/* FILE PREVIEW */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden min-h-[500px] flex flex-col">
+                <div className="px-6 py-3 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                    <h3 className="font-bold text-gray-700 text-sm flex items-center gap-2"><FileText size={16} /> Digital Proof Preview</h3>
+                </div>
+                <div className="flex-1 bg-gray-100/50 flex items-center justify-center p-8 relative">
+                {!fileUrl ? (
+                    <div className="text-gray-400 text-sm">No file uploaded</div>
+                ) : fileType === 'image' ? (
+                    <img src={fileUrl} alt="Preview" className="max-w-full max-h-[60vh] object-contain shadow-2xl rounded border border-gray-200" />
+                ) : fileType === 'pdf' ? (
+                    <iframe src={`${fileUrl}#toolbar=0`} className="w-full h-full min-h-[500px] rounded shadow-sm bg-white" title="PDF Preview"></iframe>
+                ) : (
+                    <div className="text-center">
+                    <FileText size={48} className="mx-auto text-gray-300 mb-2" />
+                    <p className="text-sm text-gray-500">Preview not available.</p>
+                    <a href={fileUrl} className="text-blue-600 underline text-sm">Download File</a>
+                    </div>
+                )}
+                </div>
+                 <div className="p-4 bg-white border-t border-gray-100 text-xs text-gray-400 flex justify-between">
+                    <span>File: {job.file_url?.split('/').pop()}</span>
+                    <span>{job.notes ? `Note: ${job.notes}` : 'No notes provided'}</span>
                  </div>
-               )}
-             </div>
+            </div>
 
-             <div className="p-4 bg-white border-t border-gray-100 text-xs text-gray-400 flex justify-between">
-                <span>File: {job.file_url?.split('/').pop()}</span>
-                <span>{job.notes ? `Note: ${job.notes}` : 'No notes provided'}</span>
-             </div>
-          </div>
+            {/* FINISHING OPTIONS CARD (NEW) */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div className="px-6 py-3 border-b border-gray-100 bg-gray-50">
+                    <h3 className="font-bold text-gray-700 text-sm flex items-center gap-2">
+                        <Scissors size={16} /> Finishing & Bindery Requirements
+                    </h3>
+                </div>
+                <div className="p-6">
+                    <div className="flex flex-wrap gap-2">
+                        {serviceList.map((service) => {
+                            const isSelected = job.finishing_options?.includes(service.name);
+                            return (
+                                <button 
+                                    key={service.id}
+                                    onClick={() => toggleFinishingOption(service.name)}
+                                    className={`px-4 py-2 rounded-lg text-sm font-bold border transition-all flex items-center gap-2
+                                        ${isSelected 
+                                            ? 'bg-blue-600 text-white border-blue-600 shadow-md transform scale-105' 
+                                            : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400 hover:bg-gray-50'
+                                        }`}
+                                >
+                                    {isSelected ? <CheckSquare size={16} /> : <div className="w-4 h-4 border-2 border-gray-300 rounded-sm" />}
+                                    {service.name}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            </div>
+
         </div>
 
-        {/* RIGHT: CHAT & ACTIVITY */}
+        {/* RIGHT: CHAT */}
         <div className="lg:col-span-1">
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-full max-h-[calc(100vh-320px)] sticky top-6">
                 <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
-                    <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
-                        <MessageSquare size={16} className="text-gray-500" /> Team Discussion
-                    </h3>
+                    <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2"><MessageSquare size={16} className="text-gray-500" /> Team Discussion</h3>
                 </div>
-                
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
-                    {messages.length === 0 && (
-                        <div className="text-center text-gray-400 text-xs mt-10">No messages yet.<br/>Start the conversation below.</div>
-                    )}
+                    {messages.length === 0 && <div className="text-center text-gray-400 text-xs mt-10">No messages yet.</div>}
                     {messages.map((msg) => {
                         const isMe = msg.user_id === user?.id;
                         const senderName = msg.profiles?.first_name || msg.profiles?.email?.split('@')[0] || 'User';
                         const isAdmin = msg.profiles?.role === 'admin' || msg.profiles?.role === 'staff';
-
                         return (
                             <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                                <span className="text-[10px] text-gray-400 mb-1 px-1">
-                                    {isAdmin && !isMe ? 'Staff' : senderName} • {new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                </span>
-                                <div className={`max-w-[85%] px-4 py-2 rounded-2xl text-sm ${
-                                    isMe ? 'bg-black text-white rounded-tr-none' : 'bg-gray-100 text-gray-800 rounded-tl-none'
-                                }`}>
-                                    {msg.content}
-                                </div>
+                                <span className="text-[10px] text-gray-400 mb-1 px-1">{isAdmin && !isMe ? 'Staff' : senderName} • {new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                <div className={`max-w-[85%] px-4 py-2 rounded-2xl text-sm ${isMe ? 'bg-black text-white rounded-tr-none' : 'bg-gray-100 text-gray-800 rounded-tl-none'}`}>{msg.content}</div>
                             </div>
                         );
                     })}
                     <div ref={messagesEndRef} />
                 </div>
-
                 <div className="p-4 border-t border-gray-100 bg-gray-50">
                     <div className="flex gap-2">
-                        <input 
-                            type="text" 
-                            value={newMessage}
-                            onChange={(e) => setNewMessage(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                            placeholder="Type a message..."
-                            className="flex-1 px-4 py-2 rounded-full border border-gray-300 text-sm focus:outline-none focus:border-black"
-                        />
-                        <button 
-                            onClick={handleSendMessage}
-                            disabled={!newMessage.trim()}
-                            className="bg-black text-white p-2 rounded-full hover:bg-gray-800 disabled:opacity-50"
-                        >
-                            <Send size={16} />
-                        </button>
+                        <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} placeholder="Type a message..." className="flex-1 px-4 py-2 rounded-full border border-gray-300 text-sm focus:outline-none focus:border-black" />
+                        <button onClick={handleSendMessage} disabled={!newMessage.trim()} className="bg-black text-white p-2 rounded-full hover:bg-gray-800 disabled:opacity-50"><Send size={16} /></button>
                     </div>
                 </div>
             </div>
