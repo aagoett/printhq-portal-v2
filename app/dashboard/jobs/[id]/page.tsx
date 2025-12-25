@@ -3,7 +3,8 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, DollarSign, 
-  Clock, MessageSquare, Printer, Save, Calendar, Layers, Hash
+  Clock, MessageSquare, Printer, Save, Calendar, Layers, Hash,
+  AlertTriangle, CheckCircle, User, Briefcase
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -23,7 +24,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   // Input State
   const [newMessage, setNewMessage] = useState('');
   const [quoteAmount, setQuoteAmount] = useState('');
-  const [isSavingQuote, setIsSavingQuote] = useState(false);
+  const [dueDate, setDueDate] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -35,13 +37,10 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     fetchPageData();
     
-    // Real-time Subscription for new messages
     const channel = supabase
       .channel('chat_room')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, 
-      (payload) => {
-        fetchMessages(); 
-      })
+      (payload) => { fetchMessages(); })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
@@ -55,15 +54,20 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     const { data: { user } } = await supabase.auth.getUser();
     setUser(user);
 
-    // 1. Fetch Job
+    // 1. Fetch Job WITH Customer Profile
     const { data: jobData } = await supabase
       .from('jobs')
-      .select('*, orders(brand)')
+      .select('*, orders(brand), profiles:user_id(first_name, last_name, email, company, phone)')
       .eq('id', params.id)
       .single();
     
     setJob(jobData);
     if (jobData?.quote_price) setQuoteAmount(jobData.quote_price);
+    
+    // Format existing due date for the input field (YYYY-MM-DD)
+    if (jobData?.due_date) {
+        setDueDate(new Date(jobData.due_date).toISOString().split('T')[0]);
+    }
 
     // 2. Generate File Preview URL
     if (jobData?.file_url) {
@@ -77,7 +81,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         }
     }
 
-    // 3. Fetch Messages
     fetchMessages();
     setLoading(false);
   };
@@ -101,22 +104,47 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     setNewMessage('');
   };
 
-  const handleSaveQuote = async () => {
-    setIsSavingQuote(true);
-    await supabase.from('jobs').update({ quote_price: parseFloat(quoteAmount) }).eq('id', params.id);
-    setIsSavingQuote(false);
-    alert('Quote saved!');
+  const handleUpdateJob = async () => {
+    setIsSaving(true);
+    const updates: any = {};
+    if (quoteAmount) updates.quote_price = parseFloat(quoteAmount);
+    if (dueDate) updates.due_date = dueDate;
+    
+    await supabase.from('jobs').update(updates).eq('id', params.id);
+    setIsSaving(false);
+    // Refresh page data to update countdown
+    fetchPageData(); 
+    alert('Job details updated!');
+  };
+
+  // --- COUNTDOWN LOGIC ---
+  const getCountdown = () => {
+      if (!job?.due_date) return { text: "NO DUE DATE SET", color: "bg-gray-800", textCol: "text-gray-400" };
+      
+      const due = new Date(job.due_date);
+      const now = new Date();
+      const diffTime = due.getTime() - now.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      if (diffDays < 0) return { text: `OVERDUE BY ${Math.abs(diffDays)} DAYS`, color: "bg-red-600", textCol: "text-white" };
+      if (diffDays === 0) return { text: "DUE TODAY", color: "bg-red-500", textCol: "text-white" };
+      if (diffDays <= 2) return { text: `DUE IN ${diffDays} DAYS`, color: "bg-orange-500", textCol: "text-white" };
+      return { text: `${diffDays} DAYS LEFT`, color: "bg-emerald-500", textCol: "text-white" };
   };
 
   if (loading) return <div className="p-12 text-center">Loading...</div>;
   if (!job) return <div className="p-12 text-center">Job not found</div>;
+
+  const countdown = getCountdown();
+  const customerName = job.profiles ? `${job.profiles.first_name || ''} ${job.profiles.last_name || ''}` : 'Guest User';
+  const customerCompany = job.profiles?.company || job.guest_email || 'No Company';
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       
       {/* 1. TOP NAV BAR */}
       <div className="bg-white border-b border-gray-200">
-        <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
+        <div className="max-w-[1800px] mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
              <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-full text-gray-500">
                <ArrowLeft size={20} />
@@ -144,63 +172,99 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {/* 2. THE PRODUCTION BANNER (New High-Priority Strip) */}
-      <div className="bg-gray-900 text-white border-b border-black">
-        <div className="max-w-[1600px] mx-auto px-6 py-4 grid grid-cols-2 md:grid-cols-4 gap-8">
+      {/* 2. THE PRODUCTION COMMAND CENTER (Banner) */}
+      <div className="bg-gray-900 text-white border-b border-black shadow-xl relative overflow-hidden">
+        {/* Background Accent */}
+        <div className="absolute top-0 right-0 w-64 h-full bg-gradient-to-l from-gray-800 to-transparent opacity-50 pointer-events-none"></div>
+
+        <div className="max-w-[1800px] mx-auto">
             
-            {/* QTY */}
-            <div className="flex items-center gap-3 border-r border-gray-700">
-                <div className="p-2 bg-gray-800 rounded-lg"><Hash size={20} className="text-blue-400"/></div>
-                <div>
-                    <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Quantity</p>
-                    <p className="text-2xl font-bold text-white leading-none">{job.quantity}</p>
-                </div>
-            </div>
-
-            {/* STOCK */}
-            <div className="flex items-center gap-3 border-r border-gray-700">
-                <div className="p-2 bg-gray-800 rounded-lg"><Layers size={20} className="text-purple-400"/></div>
-                <div>
-                    <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Paper Stock</p>
-                    <p className="text-sm font-bold text-white leading-tight">{job.paper_stock || 'Standard'}</p>
-                </div>
-            </div>
-
-            {/* DATE */}
-            <div className="flex items-center gap-3 border-r border-gray-700">
-                <div className="p-2 bg-gray-800 rounded-lg"><Calendar size={20} className="text-green-400"/></div>
-                <div>
-                    <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Date In</p>
-                    <p className="text-sm font-bold text-white leading-tight">{new Date(job.created_at).toLocaleDateString()}</p>
-                </div>
-            </div>
-
-            {/* QUOTE (Editable) */}
-            <div className="flex items-center gap-3">
-                <div className="p-2 bg-gray-800 rounded-lg"><DollarSign size={20} className="text-yellow-400"/></div>
-                <div className="flex-1">
-                    <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Project Quote</p>
-                    <div className="flex items-center gap-2 mt-1">
-                        <span className="text-gray-400 text-sm">$</span>
-                        <input 
-                            type="number" 
-                            value={quoteAmount} 
-                            onChange={(e) => setQuoteAmount(e.target.value)}
-                            className="bg-transparent border-b border-gray-600 w-24 text-white font-bold focus:outline-none focus:border-yellow-400 text-lg"
-                            placeholder="0.00"
-                        />
-                        <button onClick={handleSaveQuote} disabled={isSavingQuote} className="text-xs bg-yellow-500 text-black px-2 py-1 rounded hover:bg-yellow-400 font-bold">
-                           {isSavingQuote ? '...' : 'Save'}
-                        </button>
+            {/* TOP ROW: CUSTOMER & COUNTDOWN */}
+            <div className="grid grid-cols-1 md:grid-cols-2 border-b border-gray-800">
+                {/* Left: Customer Info */}
+                <div className="p-6 flex items-center gap-5">
+                    <div className="h-12 w-12 rounded-full bg-blue-600 flex items-center justify-center text-lg font-bold">
+                        {customerName.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                        <div className="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">
+                            <User size={12} /> Customer
+                        </div>
+                        <h2 className="text-2xl font-bold text-white leading-none">{customerName}</h2>
+                        <p className="text-sm text-gray-400 font-medium mt-1">{customerCompany}</p>
                     </div>
                 </div>
+
+                {/* Right: THE COUNTDOWN */}
+                <div className={`p-6 flex items-center justify-end gap-6 ${countdown.color}`}>
+                    <div className="text-right">
+                        <p className={`text-xs font-bold uppercase tracking-widest opacity-80 ${countdown.textCol}`}>Production Deadline</p>
+                        <h2 className={`text-3xl font-black ${countdown.textCol}`}>{countdown.text}</h2>
+                    </div>
+                    <Clock size={40} className={`opacity-80 ${countdown.textCol}`} />
+                </div>
             </div>
 
+            {/* BOTTOM ROW: SPECS STRIP */}
+            <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-gray-800 text-sm">
+                
+                {/* QTY */}
+                <div className="p-4 flex flex-col justify-center">
+                    <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><Hash size={12}/> Quantity</p>
+                    <p className="text-xl font-bold text-white">{job.quantity}</p>
+                </div>
+
+                {/* STOCK */}
+                <div className="p-4 flex flex-col justify-center">
+                    <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><Layers size={12}/> Material</p>
+                    <p className="text-base font-bold text-white">{job.paper_stock || 'Standard'}</p>
+                </div>
+
+                {/* DATE IN */}
+                <div className="p-4 flex flex-col justify-center">
+                    <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><Calendar size={12}/> Date In</p>
+                    <p className="text-base font-bold text-white">{new Date(job.created_at).toLocaleDateString()}</p>
+                </div>
+
+                {/* DUE DATE INPUT */}
+                <div className="p-4 flex flex-col justify-center bg-gray-800/50">
+                    <p className="text-[10px] font-bold uppercase text-blue-400 mb-1 flex items-center gap-1"><AlertTriangle size={12}/> Target Due Date</p>
+                    <input 
+                        type="date" 
+                        value={dueDate}
+                        onChange={(e) => setDueDate(e.target.value)}
+                        className="bg-transparent text-white font-bold focus:outline-none w-full cursor-pointer"
+                    />
+                </div>
+
+                {/* QUOTE INPUT */}
+                <div className="p-4 flex flex-col justify-center bg-gray-800/50 relative">
+                    <p className="text-[10px] font-bold uppercase text-yellow-400 mb-1 flex items-center gap-1"><DollarSign size={12}/> Quote Price</p>
+                    <div className="flex items-center gap-1">
+                        <span className="text-gray-400 font-bold">$</span>
+                        <input 
+                            type="number" 
+                            value={quoteAmount}
+                            onChange={(e) => setQuoteAmount(e.target.value)}
+                            placeholder="0.00"
+                            className="bg-transparent text-white font-bold focus:outline-none w-24 text-lg"
+                        />
+                    </div>
+                    <button 
+                        onClick={handleUpdateJob}
+                        disabled={isSaving}
+                        className="absolute right-4 top-1/2 -translate-y-1/2 bg-white text-black px-3 py-1 rounded text-xs font-bold hover:bg-gray-200"
+                    >
+                        {isSaving ? '...' : 'Save'}
+                    </button>
+                </div>
+
+            </div>
         </div>
       </div>
 
       {/* 3. MAIN CONTENT (Split View) */}
-      <div className="flex-1 max-w-[1600px] mx-auto w-full p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="flex-1 max-w-[1800px] mx-auto w-full p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* LEFT: VISUAL PROOF */}
         <div className="lg:col-span-2 flex flex-col">
@@ -227,7 +291,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                )}
              </div>
 
-             {/* Footer Note */}
              <div className="p-4 bg-white border-t border-gray-100 text-xs text-gray-400 flex justify-between">
                 <span>File: {job.file_url?.split('/').pop()}</span>
                 <span>{job.notes ? `Note: ${job.notes}` : 'No notes provided'}</span>
@@ -237,14 +300,13 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
         {/* RIGHT: CHAT & ACTIVITY */}
         <div className="lg:col-span-1">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-full max-h-[calc(100vh-220px)] sticky top-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-full max-h-[calc(100vh-320px)] sticky top-6">
                 <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
                     <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
                         <MessageSquare size={16} className="text-gray-500" /> Team Discussion
                     </h3>
                 </div>
                 
-                {/* MESSAGES LIST */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white">
                     {messages.length === 0 && (
                         <div className="text-center text-gray-400 text-xs mt-10">No messages yet.<br/>Start the conversation below.</div>
@@ -270,7 +332,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     <div ref={messagesEndRef} />
                 </div>
 
-                {/* INPUT AREA */}
                 <div className="p-4 border-t border-gray-100 bg-gray-50">
                     <div className="flex gap-2">
                         <input 
