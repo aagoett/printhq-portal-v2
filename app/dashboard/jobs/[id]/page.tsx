@@ -2,8 +2,8 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { 
-  ArrowLeft, Send, FileText, Download, DollarSign, CheckCircle, 
-  Clock, MessageSquare, User, Save
+  ArrowLeft, Send, FileText, Download, DollarSign, 
+  Clock, MessageSquare, Printer, Save, Calendar, Layers, Hash
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -40,7 +40,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       .channel('chat_room')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, 
       (payload) => {
-        // Fetch fresh to get the user details
         fetchMessages(); 
       })
       .subscribe();
@@ -48,7 +47,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     return () => { supabase.removeChannel(channel); };
   }, [params.id]);
 
-  // Scroll to bottom of chat when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -87,7 +85,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const fetchMessages = async () => {
     const { data } = await supabase
       .from('messages')
-      .select('*, profiles(email, first_name, role)') // Join profiles to get names
+      .select('*, profiles(email, first_name, role)') 
       .eq('job_id', params.id)
       .order('created_at', { ascending: true });
     if (data) setMessages(data);
@@ -113,134 +111,136 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   if (loading) return <div className="p-12 text-center">Loading...</div>;
   if (!job) return <div className="p-12 text-center">Job not found</div>;
 
-  const isInternal = user?.email?.includes('@printedunion.com'); // Simple check, or use role
-
   return (
-    <div className="min-h-screen bg-gray-50 pb-12">
-      {/* HEADER */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <Link href="/dashboard" className="inline-flex items-center text-xs font-bold text-gray-500 hover:text-black mb-2">
-            <ArrowLeft size={14} className="mr-1" /> Back to Dashboard
-          </Link>
-          <div className="flex justify-between items-end">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-                {job.title}
-                <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${job.status === 'Completed' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      
+      {/* 1. TOP NAV BAR */}
+      <div className="bg-white border-b border-gray-200">
+        <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+             <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-full text-gray-500">
+               <ArrowLeft size={20} />
+             </Link>
+             <div>
+               <div className="flex items-center gap-3">
+                 <h1 className="text-xl font-bold text-gray-900">{job.title}</h1>
+                 <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${job.status === 'Completed' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
                     {job.status}
-                </span>
-              </h1>
-              <p className="text-xs font-mono text-gray-400 mt-1">ID: #{job.id.substring(0,8).toUpperCase()} • {job.orders?.brand}</p>
-            </div>
-            {fileUrl && (
-                <a href={fileUrl} target="_blank" className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-gray-800">
-                    <Download size={16} /> Download Source
+                 </span>
+               </div>
+               <p className="text-xs font-mono text-gray-400">#{job.id.substring(0,8).toUpperCase()} • {job.orders?.brand}</p>
+             </div>
+          </div>
+          <div className="flex gap-2">
+             <button className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold hover:bg-gray-50 text-gray-700">
+                <Printer size={16} /> Print Ticket
+             </button>
+             {fileUrl && (
+                <a href={fileUrl} target="_blank" className="flex items-center gap-2 px-3 py-2 bg-black text-white rounded-lg text-xs font-bold hover:bg-gray-800">
+                  <Download size={16} /> Download Source
                 </a>
-            )}
+             )}
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* LEFT COLUMN (Production Data) */}
-        <div className="lg:col-span-2 space-y-6">
-          
-          {/* 1. ADMIN QUOTE BOX */}
-          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-5 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-                <div className="bg-yellow-400 p-2 rounded-lg text-yellow-900"><DollarSign size={20} /></div>
+      {/* 2. THE PRODUCTION BANNER (New High-Priority Strip) */}
+      <div className="bg-gray-900 text-white border-b border-black">
+        <div className="max-w-[1600px] mx-auto px-6 py-4 grid grid-cols-2 md:grid-cols-4 gap-8">
+            
+            {/* QTY */}
+            <div className="flex items-center gap-3 border-r border-gray-700">
+                <div className="p-2 bg-gray-800 rounded-lg"><Hash size={20} className="text-blue-400"/></div>
                 <div>
-                    <h3 className="font-bold text-yellow-900 text-sm">Project Quote</h3>
-                    <p className="text-xs text-yellow-700">Set the pricing for this job.</p>
+                    <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Quantity</p>
+                    <p className="text-2xl font-bold text-white leading-none">{job.quantity}</p>
                 </div>
             </div>
-            <div className="flex items-center gap-2">
-                <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">$</span>
-                    <input 
-                        type="number" 
-                        value={quoteAmount}
-                        onChange={(e) => setQuoteAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="pl-7 pr-4 py-2 w-32 rounded-lg border border-yellow-300 focus:outline-none focus:border-yellow-500 font-bold text-gray-900"
-                    />
-                </div>
-                <button 
-                    onClick={handleSaveQuote}
-                    disabled={isSavingQuote}
-                    className="p-2 bg-yellow-400 text-yellow-900 rounded-lg hover:bg-yellow-500 transition-colors"
-                >
-                    <Save size={20} />
-                </button>
-            </div>
-          </div>
 
-          {/* 2. DIGITAL PROOF / FILE PREVIEW */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-             <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
-                    <FileText size={16} className="text-blue-500"/> Digital Proof
+            {/* STOCK */}
+            <div className="flex items-center gap-3 border-r border-gray-700">
+                <div className="p-2 bg-gray-800 rounded-lg"><Layers size={20} className="text-purple-400"/></div>
+                <div>
+                    <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Paper Stock</p>
+                    <p className="text-sm font-bold text-white leading-tight">{job.paper_stock || 'Standard'}</p>
+                </div>
+            </div>
+
+            {/* DATE */}
+            <div className="flex items-center gap-3 border-r border-gray-700">
+                <div className="p-2 bg-gray-800 rounded-lg"><Calendar size={20} className="text-green-400"/></div>
+                <div>
+                    <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Date In</p>
+                    <p className="text-sm font-bold text-white leading-tight">{new Date(job.created_at).toLocaleDateString()}</p>
+                </div>
+            </div>
+
+            {/* QUOTE (Editable) */}
+            <div className="flex items-center gap-3">
+                <div className="p-2 bg-gray-800 rounded-lg"><DollarSign size={20} className="text-yellow-400"/></div>
+                <div className="flex-1">
+                    <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">Project Quote</p>
+                    <div className="flex items-center gap-2 mt-1">
+                        <span className="text-gray-400 text-sm">$</span>
+                        <input 
+                            type="number" 
+                            value={quoteAmount} 
+                            onChange={(e) => setQuoteAmount(e.target.value)}
+                            className="bg-transparent border-b border-gray-600 w-24 text-white font-bold focus:outline-none focus:border-yellow-400 text-lg"
+                            placeholder="0.00"
+                        />
+                        <button onClick={handleSaveQuote} disabled={isSavingQuote} className="text-xs bg-yellow-500 text-black px-2 py-1 rounded hover:bg-yellow-400 font-bold">
+                           {isSavingQuote ? '...' : 'Save'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+      </div>
+
+      {/* 3. MAIN CONTENT (Split View) */}
+      <div className="flex-1 max-w-[1600px] mx-auto w-full p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* LEFT: VISUAL PROOF */}
+        <div className="lg:col-span-2 flex flex-col">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex-1 flex flex-col min-h-[600px]">
+             <div className="px-6 py-3 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                <h3 className="font-bold text-gray-700 text-sm flex items-center gap-2">
+                    <FileText size={16} /> Digital Proof Preview
                 </h3>
-                <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded text-xs font-bold uppercase">
-                    {job.proof_status || 'Pending Approval'}
-                </span>
              </div>
              
-             <div className="bg-gray-100 min-h-[500px] flex items-center justify-center p-4">
+             <div className="flex-1 bg-gray-100/50 flex items-center justify-center p-8 relative">
                {!fileUrl ? (
                  <div className="text-gray-400 text-sm">No file uploaded</div>
                ) : fileType === 'image' ? (
-                 <img src={fileUrl} alt="Preview" className="max-w-full max-h-[600px] object-contain shadow-lg rounded" />
+                 <img src={fileUrl} alt="Preview" className="max-w-full max-h-[70vh] object-contain shadow-2xl rounded border border-gray-200" />
                ) : fileType === 'pdf' ? (
-                 <iframe src={`${fileUrl}#toolbar=0`} className="w-full h-[600px] rounded shadow-sm" title="PDF Preview"></iframe>
+                 <iframe src={`${fileUrl}#toolbar=0`} className="w-full h-full min-h-[600px] rounded shadow-sm bg-white" title="PDF Preview"></iframe>
                ) : (
                  <div className="text-center">
                    <FileText size={48} className="mx-auto text-gray-300 mb-2" />
                    <p className="text-sm text-gray-500">Preview not available.</p>
+                   <a href={fileUrl} className="text-blue-600 underline text-sm">Download File</a>
                  </div>
                )}
              </div>
-          </div>
 
-          {/* 3. SPECS & FOLDING */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 tracking-wider flex items-center gap-2">
-                    <Clock size={14} /> Production Specs
-                </h3>
-                <div className="space-y-3 text-sm">
-                    <div className="flex justify-between py-2 border-b border-gray-50">
-                        <span className="text-gray-500">Quantity</span>
-                        <span className="font-bold text-gray-900">{job.quantity}</span>
-                    </div>
-                    <div className="flex justify-between py-2 border-b border-gray-50">
-                        <span className="text-gray-500">Stock</span>
-                        <span className="font-bold text-gray-900">{job.paper_stock || 'N/A'}</span>
-                    </div>
-                    <div className="flex justify-between py-2 border-b border-gray-50">
-                        <span className="text-gray-500">Date In</span>
-                        <span className="font-bold text-gray-900">{new Date(job.created_at).toLocaleDateString()}</span>
-                    </div>
-                </div>
-            </div>
-             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex flex-col items-center justify-center text-center">
-                <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 tracking-wider">Folding Preview</h3>
-                <div className="w-full h-32 bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg flex items-center justify-center">
-                    <span className="text-xs text-gray-400 font-bold">No folding data</span>
-                </div>
-            </div>
+             {/* Footer Note */}
+             <div className="p-4 bg-white border-t border-gray-100 text-xs text-gray-400 flex justify-between">
+                <span>File: {job.file_url?.split('/').pop()}</span>
+                <span>{job.notes ? `Note: ${job.notes}` : 'No notes provided'}</span>
+             </div>
           </div>
-
         </div>
 
-        {/* RIGHT COLUMN (Discussion) */}
+        {/* RIGHT: CHAT & ACTIVITY */}
         <div className="lg:col-span-1">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-[calc(100vh-140px)] sticky top-24">
-                <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col h-full max-h-[calc(100vh-220px)] sticky top-6">
+                <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
                     <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
-                        <MessageSquare size={16} className="text-gray-500" /> Discussion
+                        <MessageSquare size={16} className="text-gray-500" /> Team Discussion
                     </h3>
                 </div>
                 
@@ -249,7 +249,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     {messages.length === 0 && (
                         <div className="text-center text-gray-400 text-xs mt-10">No messages yet.<br/>Start the conversation below.</div>
                     )}
-                    
                     {messages.map((msg) => {
                         const isMe = msg.user_id === user?.id;
                         const senderName = msg.profiles?.first_name || msg.profiles?.email?.split('@')[0] || 'User';
@@ -261,9 +260,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                     {isAdmin && !isMe ? 'Staff' : senderName} • {new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                                 </span>
                                 <div className={`max-w-[85%] px-4 py-2 rounded-2xl text-sm ${
-                                    isMe 
-                                      ? 'bg-black text-white rounded-tr-none' 
-                                      : 'bg-gray-100 text-gray-800 rounded-tl-none'
+                                    isMe ? 'bg-black text-white rounded-tr-none' : 'bg-gray-100 text-gray-800 rounded-tl-none'
                                 }`}>
                                     {msg.content}
                                 </div>
