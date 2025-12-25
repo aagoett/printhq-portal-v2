@@ -5,12 +5,12 @@ import {
   ArrowLeft, Send, FileText, Download, DollarSign, 
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
-  History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle
+  History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
+  Activity, Save, Lock
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-// Fix: Correct path to actions (up 3 levels)
 import { sendProofNotification } from '../../../actions'; 
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
@@ -18,10 +18,14 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [job, setJob] = useState<any>(null);
   const [activeStep, setActiveStep] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
+  const [logs, setLogs] = useState<any[]>([]); // NEW: Activity Logs
   const [assets, setAssets] = useState<any[]>([]);
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
+  // UI State
+  const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat');
+
   // Resources
   const [serviceList, setServiceList] = useState<any[]>([]);
 
@@ -32,11 +36,13 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
   // Input State
   const [newMessage, setNewMessage] = useState('');
+  const [internalNotes, setInternalNotes] = useState(''); // NEW: Notes
   const [quoteAmount, setQuoteAmount] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const logsEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const supabase = createBrowserClient(
@@ -48,41 +54,30 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     fetchPageData();
 
-    // Realtime Chat Subscription
-    const chatChannel = supabase
-      .channel('job_chat')
-      .on('postgres_changes', { 
-        event: 'INSERT', 
-        schema: 'public', 
-        table: 'messages', 
-        filter: `job_id=eq.${params.id}` 
-      }, 
-      (payload) => {
-        fetchMessages(); 
-      })
+    // Realtime Subscriptions
+    const chatChannel = supabase.channel('job_chat')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, () => fetchMessages())
       .subscribe();
       
-    // Realtime File Asset Subscription
-    const assetChannel = supabase
-      .channel('job_assets')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'job_assets', 
-        filter: `job_id=eq.${params.id}` 
-      }, 
-      () => { fetchAssets(); })
+    const assetChannel = supabase.channel('job_assets')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'job_assets', filter: `job_id=eq.${params.id}` }, () => fetchAssets())
+      .subscribe();
+
+    const logChannel = supabase.channel('job_logs')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'job_logs', filter: `job_id=eq.${params.id}` }, () => fetchLogs())
       .subscribe();
 
     return () => { 
       supabase.removeChannel(chatChannel); 
       supabase.removeChannel(assetChannel);
+      supabase.removeChannel(logChannel);
     };
   }, [params.id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, logs, rightTab]);
 
   // --- DATA FETCHING ---
   const fetchPageData = async () => {
@@ -98,6 +93,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     
     setJob(jobData);
     if (jobData?.quote_price) setQuoteAmount(jobData.quote_price);
+    if (jobData?.internal_notes) setInternalNotes(jobData.internal_notes);
     if (jobData?.due_date) setDueDate(new Date(jobData.due_date).toISOString().split('T')[0]);
 
     // 2. Fetch Workflow Step
@@ -115,42 +111,45 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     const { data: services } = await supabase.from('finishing_services').select('*').order('name');
     if (services) setServiceList(services);
 
-    // 4. Fetch Assets & Messages
+    // 4. Fetch All Lists
     await fetchAssets();
     await fetchMessages();
+    await fetchLogs();
     setLoading(false);
   };
 
   const fetchAssets = async () => {
-    const { data } = await supabase
-      .from('job_assets')
-      .select('*, profiles(first_name, email)')
-      .eq('job_id', params.id)
-      .order('created_at', { ascending: false });
-
+    const { data } = await supabase.from('job_assets').select('*, profiles(first_name, email)').eq('job_id', params.id).order('created_at', { ascending: false });
     if (data && data.length > 0) {
         setAssets(data);
-        
-        // NORTH STAR LOGIC: Default to Approved, then latest Pending Proof, then Source
         const approved = data.find((a: any) => a.status === 'approved');
         const latestProof = data.find((a: any) => a.asset_type === 'proof' && a.status !== 'archived');
-        
-        if (!viewingAssetId) {
-            loadPreview(approved || latestProof || data[0]);
-        }
+        if (!viewingAssetId) loadPreview(approved || latestProof || data[0]);
     }
   };
 
   const fetchMessages = async () => {
-    const { data } = await supabase
-      .from('messages')
-      .select('*, profiles(email, first_name, role)') 
-      .eq('job_id', params.id)
-      .order('created_at', { ascending: true });
+    const { data } = await supabase.from('messages').select('*, profiles(email, first_name, role)').eq('job_id', params.id).order('created_at', { ascending: true });
     if (data) setMessages(data);
   };
 
+  const fetchLogs = async () => {
+    const { data } = await supabase.from('job_logs').select('*, profiles(first_name, role)').eq('job_id', params.id).order('created_at', { ascending: true });
+    if (data) setLogs(data);
+  };
+
   // --- ACTIONS ---
+  const logActivity = async (action: string, details: string) => {
+      if (!user) return;
+      await supabase.from('job_logs').insert({
+          job_id: params.id,
+          user_id: user.id,
+          action,
+          details
+      });
+      fetchLogs();
+  };
+
   const loadPreview = async (asset: any) => {
       setViewingAssetId(asset.id);
       const { data } = await supabase.storage.from('uploads').createSignedUrl(asset.file_url, 3600);
@@ -168,42 +167,31 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       const file = e.target.files[0];
       const fileName = `${params.id}-proof-${Math.random().toString(36).substring(7)}.${file.name.split('.').pop()}`;
       
-      // 1. Upload File
       const { data, error } = await supabase.storage.from('uploads').upload(fileName, file);
       if (error) return alert("Upload failed");
 
-      // 2. THE KILL SWITCH: Archive ALL existing pending proofs for this job
-      await supabase.from('job_assets')
-          .update({ status: 'archived' })
-          .eq('job_id', params.id)
-          .eq('asset_type', 'proof')
-          .eq('status', 'pending');
-
-      // 3. Create NEW Asset Record
+      await supabase.from('job_assets').update({ status: 'archived' }).eq('job_id', params.id).eq('asset_type', 'proof').eq('status', 'pending');
       await supabase.from('job_assets').insert({
           job_id: params.id,
           uploader_id: user.id,
           file_url: data?.path,
           file_name: file.name,
           asset_type: 'proof',
-          status: 'pending' // This becomes the ONLY pending proof
+          status: 'pending'
       });
 
-      // 4. Trigger Email Action
       await sendProofNotification(params.id, data?.path || '');
+      await logActivity('Proof Uploaded', `Uploaded ${file.name} for review.`);
 
       fetchAssets();
-      alert("New proof uploaded. Previous versions archived.");
+      alert("Proof uploaded. Previous versions archived.");
   };
 
   const handleApproveProof = async (assetId: string) => {
       if (!confirm("Mark this file as APPROVED for production?")) return;
-      
-      // 1. Mark this asset as Approved
       await supabase.from('job_assets').update({ status: 'approved' }).eq('id', assetId);
-      
-      // 2. Mark job as In Production
       await supabase.from('jobs').update({ status: 'In Production' }).eq('id', params.id);
+      await logActivity('Proof Approved', 'Moved job to Production status.');
       
       fetchPageData();
       alert("Job moved to Production!");
@@ -211,24 +199,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !user) return;
-    
-    // Optimistic Update
-    const tempMsg = {
-        id: Math.random(), 
-        content: newMessage, 
-        user_id: user.id, 
-        created_at: new Date().toISOString(),
-        profiles: { first_name: 'Me' }
-    };
-    setMessages([...messages, tempMsg]);
     const msgToSend = newMessage;
     setNewMessage('');
-
-    await supabase.from('messages').insert({
-      job_id: params.id,
-      user_id: user.id,
-      content: msgToSend
-    });
+    await supabase.from('messages').insert({ job_id: params.id, user_id: user.id, content: msgToSend });
     fetchMessages();
   };
 
@@ -237,19 +210,35 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     const updates: any = {};
     if (quoteAmount) updates.quote_price = parseFloat(quoteAmount); else updates.quote_price = null;
     if (dueDate) updates.due_date = dueDate; else updates.due_date = null;
+    
+    // Check if anything changed to log it
+    let changes = [];
+    if (job.quote_price != updates.quote_price) changes.push(`Quote: $${updates.quote_price}`);
+    if (job.due_date !== updates.due_date) changes.push(`Due: ${updates.due_date}`);
 
     const { error } = await supabase.from('jobs').update(updates).eq('id', params.id);
+    if (!error && changes.length > 0) await logActivity('Job Updated', changes.join(', '));
+    
     setIsSaving(false);
     if (!error) { fetchPageData(); alert('Saved!'); }
   };
 
+  const handleSaveNotes = async () => {
+      setIsSaving(true);
+      const { error } = await supabase.from('jobs').update({ internal_notes: internalNotes }).eq('id', params.id);
+      if (!error) await logActivity('Notes Updated', 'Updated internal production notes.');
+      setIsSaving(false);
+      alert('Notes saved.');
+  };
+
   const toggleFinishingOption = async (optionName: string) => {
       const currentOptions = job.finishing_options || [];
-      let newOptions = currentOptions.includes(optionName) 
-          ? currentOptions.filter((o: string) => o !== optionName)
-          : [...currentOptions, optionName];
+      let newOptions = currentOptions.includes(optionName) ? currentOptions.filter((o: string) => o !== optionName) : [...currentOptions, optionName];
       setJob({ ...job, finishing_options: newOptions }); 
       await supabase.from('jobs').update({ finishing_options: newOptions }).eq('id', params.id);
+      // Log the specific change
+      const action = currentOptions.includes(optionName) ? 'Removed' : 'Added';
+      await logActivity('Finishing Updated', `${action} service: ${optionName}`);
   };
 
   // --- HELPERS ---
@@ -280,7 +269,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const currentDepartment = activeStep ? activeStep.department : job.status;
   const statusColor = getStatusColor(currentDepartment);
   const stepNotes = activeStep?.notes;
-  
   const currentAsset = assets.find(a => a.id === viewingAssetId);
   const isApprovedAsset = currentAsset?.status === 'approved';
 
@@ -374,6 +362,20 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     })}
                 </div>
             </div>
+
+            {/* INTERNAL NOTES (NEW) */}
+            <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-4">
+                <h3 className="text-xs font-bold uppercase text-yellow-700 mb-2 flex items-center gap-2"><Lock size={14}/> Internal Notes</h3>
+                <textarea 
+                    value={internalNotes}
+                    onChange={(e) => setInternalNotes(e.target.value)}
+                    placeholder="Private production notes..."
+                    className="w-full h-24 bg-white border border-yellow-300 rounded p-2 text-sm focus:outline-none mb-2"
+                />
+                <button onClick={handleSaveNotes} disabled={isSaving} className="w-full bg-yellow-400 text-yellow-900 text-xs font-bold py-1.5 rounded hover:bg-yellow-500 flex items-center justify-center gap-2">
+                    <Save size={12}/> Save Notes
+                </button>
+            </div>
         </div>
 
         {/* MIDDLE COL: MAIN PROOF STAGE (Width 6) */}
@@ -417,7 +419,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
              </div>
         </div>
 
-        {/* RIGHT COL: FILE VAULT & CHAT (Width 3) */}
+        {/* RIGHT COL: FILE VAULT & CHAT/HISTORY (Width 3) */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
             
             {/* FILE VAULT */}
@@ -430,13 +432,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     {assets.map((asset) => {
                         const isCurrent = viewingAssetId === asset.id;
                         return (
-                        <div 
-                           key={asset.id} 
-                           onClick={() => loadPreview(asset)}
-                           className={`p-2 rounded border cursor-pointer transition-all flex flex-col gap-2 group
-                              ${isCurrent ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}
-                           `}
-                        >
+                        <div key={asset.id} onClick={() => loadPreview(asset)} className={`p-2 rounded border cursor-pointer transition-all flex flex-col gap-2 group ${isCurrent ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
                             <div className="flex items-center gap-2 overflow-hidden">
                                 {asset.asset_type === 'source' ? <FileText size={16} className="text-gray-400"/> : <FileImage size={16} className="text-purple-500"/>}
                                 <div>
@@ -444,8 +440,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                     <p className="text-[10px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</p>
                                 </div>
                             </div>
-
-                             {/* STATUS BADGE UPDATE */}
                             <div className="flex items-center justify-between">
                                 {asset.status === 'approved' ? (
                                     <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded flex items-center gap-1"><CheckCircle size={10}/> APPROVED</span>
@@ -453,9 +447,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                     <span className="text-[10px] font-bold bg-gray-100 text-gray-400 px-2 py-0.5 rounded flex items-center gap-1"><XCircle size={10}/> ARCHIVED</span>
                                 ) : asset.status === 'pending' && asset.asset_type === 'proof' ? (
                                     <span className="text-[10px] font-bold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded animate-pulse">PENDING APPROVAL</span>
-                                ) : (
-                                    <span></span>
-                                )}
+                                ) : (<span></span>)}
                                 {isCurrent && <Eye size={14} className="text-blue-400"/>}
                             </div>
                         </div>
@@ -464,32 +456,71 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* CHAT */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-2/3">
-                <div className="px-4 py-2 border-b border-gray-100 bg-gray-50">
-                    <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><MessageSquare size={14}/> Discussion</h3>
+            {/* TABBED WIDGET: CHAT & HISTORY */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-2/3 overflow-hidden">
+                <div className="flex border-b border-gray-200">
+                    <button 
+                        onClick={() => setRightTab('chat')}
+                        className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}
+                    >
+                        <MessageSquare size={14}/> Discussion
+                    </button>
+                    <button 
+                        onClick={() => setRightTab('activity')}
+                        className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}
+                    >
+                        <Activity size={14}/> Activity Log
+                    </button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                    {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
-                    {messages.map((msg) => {
-                        const isMe = msg.user_id === user?.id;
-                        return (
-                            <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                                <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${isMe ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>
-                                    {msg.content}
+                
+                {/* TAB CONTENT */}
+                <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
+                    
+                    {/* CHAT VIEW */}
+                    {rightTab === 'chat' && (
+                        <>
+                            {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
+                            {messages.map((msg) => {
+                                const isMe = msg.user_id === user?.id;
+                                return (
+                                    <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                                        <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${isMe ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
+                                        <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.first_name}</span>
+                                    </div>
+                                );
+                            })}
+                            <div ref={messagesEndRef} />
+                        </>
+                    )}
+
+                    {/* ACTIVITY LOG VIEW */}
+                    {rightTab === 'activity' && (
+                        <>
+                            {logs.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No activity recorded yet.</div>}
+                            {logs.map((log) => (
+                                <div key={log.id} className="flex gap-3 text-xs pb-3 border-b border-gray-50 last:border-0">
+                                    <div className="mt-0.5 min-w-[30px] text-gray-400 font-mono text-[9px]">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                                    <div>
+                                        <p className="font-bold text-gray-900">{log.action}</p>
+                                        <p className="text-gray-500">{log.details}</p>
+                                        <p className="text-[9px] text-blue-400 mt-0.5">{log.profiles?.first_name || 'System'}</p>
+                                    </div>
                                 </div>
-                                <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.first_name}</span>
-                            </div>
-                        );
-                    })}
-                    <div ref={messagesEndRef} />
+                            ))}
+                            <div ref={logsEndRef} />
+                        </>
+                    )}
                 </div>
-                <div className="p-2 border-t border-gray-100">
-                    <div className="flex gap-2">
-                        <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-200 text-xs focus:outline-none focus:border-black" placeholder="Type here..." />
-                        <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
+
+                {/* INPUT AREA (Only for Chat) */}
+                {rightTab === 'chat' && (
+                    <div className="p-2 border-t border-gray-100 bg-gray-50">
+                        <div className="flex gap-2">
+                            <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-200 text-xs focus:outline-none focus:border-black" placeholder="Type here..." />
+                            <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
+                        </div>
                     </div>
-                </div>
+                )}
             </div>
 
         </div>
