@@ -10,7 +10,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-import { sendProofNotification } from '../../actions'; // Import the new action
+import { sendProofNotification } from '../../../actions';
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
   // --- STATE ---
