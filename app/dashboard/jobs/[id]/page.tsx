@@ -4,7 +4,8 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, DollarSign, 
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
-  AlertTriangle, User, Scissors, CheckSquare
+  AlertTriangle, User, Scissors, CheckSquare, Megaphone,
+  AlertCircle
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -13,6 +14,7 @@ import Link from 'next/link';
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
   // Data State
   const [job, setJob] = useState<any>(null);
+  const [activeStep, setActiveStep] = useState<any>(null); // NEW: Tracks current department step
   const [messages, setMessages] = useState<any[]>([]);
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -68,11 +70,23 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     if (jobData?.quote_price) setQuoteAmount(jobData.quote_price);
     if (jobData?.due_date) setDueDate(new Date(jobData.due_date).toISOString().split('T')[0]);
 
-    // 2. Fetch Available Services
+    // 2. Fetch Current Workflow Step (To determine Department & Instructions)
+    const { data: stepData } = await supabase
+      .from('job_steps')
+      .select('*')
+      .eq('job_id', params.id)
+      .eq('status', 'Pending')
+      .order('step_order', { ascending: true })
+      .limit(1)
+      .single();
+    
+    if (stepData) setActiveStep(stepData);
+
+    // 3. Fetch Available Services
     const { data: services } = await supabase.from('finishing_services').select('*').order('name');
     if (services) setServiceList(services);
 
-    // 3. Generate File Preview URL
+    // 4. Generate File Preview URL
     if (jobData?.file_url) {
         const { data: urlData } = await supabase.storage.from('uploads').createSignedUrl(jobData.file_url, 3600);
         if (urlData?.signedUrl) {
@@ -124,7 +138,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   };
 
   const toggleFinishingOption = async (optionName: string) => {
-      // Optimistic Update
       const currentOptions = job.finishing_options || [];
       let newOptions;
       if (currentOptions.includes(optionName)) {
@@ -132,13 +145,11 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       } else {
           newOptions = [...currentOptions, optionName];
       }
-      
-      setJob({ ...job, finishing_options: newOptions }); // Update UI immediately
-
+      setJob({ ...job, finishing_options: newOptions }); 
       await supabase.from('jobs').update({ finishing_options: newOptions }).eq('id', params.id);
   };
 
-  // --- COUNTDOWN LOGIC ---
+  // --- HELPERS ---
   const getCountdown = () => {
       if (!job?.due_date) return { text: "NO DUE DATE SET", color: "bg-gray-800", textCol: "text-gray-500" };
       const due = new Date(job.due_date);
@@ -153,12 +164,23 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       return { text: `${diffDays} DAYS LEFT`, color: "bg-emerald-500", textCol: "text-white" };
   };
 
+  const getStatusColor = (status: string) => {
+      const s = status?.toLowerCase() || '';
+      if (s.includes('prepress') || s.includes('review')) return 'bg-blue-600';
+      if (s.includes('print') || s.includes('press')) return 'bg-purple-600';
+      if (s.includes('bindery') || s.includes('finish')) return 'bg-orange-600';
+      if (s.includes('ship') || s.includes('mail')) return 'bg-green-600';
+      return 'bg-gray-700';
+  };
+
   if (loading) return <div className="p-12 text-center">Loading...</div>;
   if (!job) return <div className="p-12 text-center">Job not found</div>;
 
   const countdown = getCountdown();
   const customerName = job.profiles ? `${job.profiles.first_name || ''} ${job.profiles.last_name || ''}` : 'Guest User';
-  const customerCompany = job.profiles?.company || job.guest_email || 'No Company';
+  const currentDepartment = activeStep ? activeStep.department : job.status;
+  const statusColor = getStatusColor(currentDepartment);
+  const stepNotes = activeStep?.notes; // Specific instructions for this step
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -171,19 +193,11 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                <ArrowLeft size={20} />
              </Link>
              <div>
-               <div className="flex items-center gap-3">
-                 <h1 className="text-xl font-bold text-gray-900">{job.title}</h1>
-                 <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${job.status === 'Completed' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
-                    {job.status}
-                 </span>
-               </div>
+               <h1 className="text-xl font-bold text-gray-900">{job.title}</h1>
                <p className="text-xs font-mono text-gray-400">#{job.id.substring(0,8).toUpperCase()} • {job.orders?.brand}</p>
              </div>
           </div>
           <div className="flex gap-2">
-             <button className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs font-bold hover:bg-gray-50 text-gray-700">
-                <Printer size={16} /> Print Ticket
-             </button>
              {fileUrl && (
                 <a href={fileUrl} target="_blank" className="flex items-center gap-2 px-3 py-2 bg-black text-white rounded-lg text-xs font-bold hover:bg-gray-800">
                   <Download size={16} /> Download Source
@@ -193,63 +207,65 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {/* 2. PRODUCTION BANNER */}
-      <div className="bg-gray-900 text-white border-b border-black shadow-xl relative overflow-hidden">
-        <div className="max-w-[1800px] mx-auto">
-            <div className="grid grid-cols-1 md:grid-cols-2 border-b border-gray-800">
-                <div className="p-6 flex items-center gap-5">
-                    <div className="h-12 w-12 rounded-full bg-blue-600 flex items-center justify-center text-lg font-bold">
-                        {customerName.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                        <div className="flex items-center gap-2 text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">
-                            <User size={12} /> Customer
-                        </div>
-                        <h2 className="text-2xl font-bold text-white leading-none">{customerName}</h2>
-                        <p className="text-sm text-gray-400 font-medium mt-1">{customerCompany}</p>
-                    </div>
-                </div>
-                <div className={`p-6 flex items-center justify-end gap-6 transition-colors duration-500 ${countdown.color}`}>
-                    <div className="text-right">
-                        <p className={`text-xs font-bold uppercase tracking-widest opacity-80 ${countdown.textCol}`}>Production Deadline</p>
-                        <h2 className={`text-3xl font-black ${countdown.textCol}`}>{countdown.text}</h2>
-                    </div>
-                    <Clock size={40} className={`opacity-80 ${countdown.textCol}`} />
+      {/* 2. THE STAGE COMMANDER (New Header) */}
+      <div className={`${statusColor} text-white shadow-xl`}>
+          <div className="max-w-[1800px] mx-auto flex flex-col md:flex-row">
+              
+              {/* BIG STATUS BLOCK */}
+              <div className="p-8 flex-1">
+                  <p className="text-xs font-bold uppercase opacity-75 tracking-widest mb-2">Current Department</p>
+                  <h1 className="text-6xl font-black uppercase tracking-tight leading-none">
+                      {currentDepartment}
+                  </h1>
+              </div>
+
+              {/* INSTRUCTIONS BLOCK (Only shows if notes exist) */}
+              <div className="p-8 md:w-1/3 bg-black/20 border-l border-white/10 backdrop-blur-sm flex flex-col justify-center">
+                  <div className="flex items-start gap-3">
+                      <Megaphone size={24} className="mt-1 opacity-80" />
+                      <div>
+                          <p className="text-xs font-bold uppercase opacity-75 tracking-widest mb-1">Department Instructions</p>
+                          <p className="text-lg font-bold leading-tight">
+                              {stepNotes || job.notes || "No specific instructions provided."}
+                          </p>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      </div>
+
+      {/* 3. PRODUCTION METRICS (Dark Strip) */}
+      <div className="bg-gray-900 text-white border-b border-black">
+        <div className="max-w-[1800px] mx-auto px-6 py-4 grid grid-cols-2 md:grid-cols-5 gap-8 text-sm">
+            <div className="flex flex-col justify-center border-r border-gray-800">
+                <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><User size={12}/> Customer</p>
+                <p className="text-base font-bold text-white">{customerName}</p>
+            </div>
+            <div className="flex flex-col justify-center border-r border-gray-800">
+                <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><Hash size={12}/> Quantity</p>
+                <p className="text-xl font-bold text-white">{job.quantity}</p>
+            </div>
+            <div className="flex flex-col justify-center border-r border-gray-800">
+                <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><Layers size={12}/> Material</p>
+                <p className="text-base font-bold text-white">{job.paper_stock || 'Standard'}</p>
+            </div>
+            <div className="flex flex-col justify-center border-r border-gray-800">
+                <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><AlertTriangle size={12}/> Due Date</p>
+                <div className="flex items-center gap-2">
+                    <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="bg-transparent text-white font-bold focus:outline-none w-full cursor-pointer uppercase"/>
+                    <button onClick={handleUpdateJob} disabled={isSaving} className="bg-blue-600 text-white px-2 py-1 rounded text-[10px] font-bold uppercase hover:bg-blue-500">{isSaving ? '...' : 'Set'}</button>
                 </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-gray-800 text-sm">
-                <div className="p-4 flex flex-col justify-center">
-                    <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><Hash size={12}/> Quantity</p>
-                    <p className="text-xl font-bold text-white">{job.quantity}</p>
-                </div>
-                <div className="p-4 flex flex-col justify-center">
-                    <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><Layers size={12}/> Material</p>
-                    <p className="text-base font-bold text-white">{job.paper_stock || 'Standard'}</p>
-                </div>
-                <div className="p-4 flex flex-col justify-center">
-                    <p className="text-[10px] font-bold uppercase text-gray-500 mb-1 flex items-center gap-1"><Calendar size={12}/> Date In</p>
-                    <p className="text-base font-bold text-white">{new Date(job.created_at).toLocaleDateString()}</p>
-                </div>
-                <div className="p-4 flex flex-col justify-center bg-gray-800/50 relative group">
-                    <p className="text-[10px] font-bold uppercase text-blue-400 mb-1 flex items-center gap-1"><AlertTriangle size={12}/> Target Due Date</p>
-                    <div className="flex items-center gap-2">
-                         <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="bg-transparent text-white font-bold focus:outline-none w-full cursor-pointer uppercase"/>
-                        <button onClick={handleUpdateJob} disabled={isSaving} className="bg-blue-600 text-white px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-blue-500 shadow-lg">{isSaving ? '...' : 'Set'}</button>
-                    </div>
-                </div>
-                <div className="p-4 flex flex-col justify-center bg-gray-800/50 relative group">
-                    <p className="text-[10px] font-bold uppercase text-yellow-400 mb-1 flex items-center gap-1"><DollarSign size={12}/> Quote Price</p>
-                    <div className="flex items-center gap-1">
-                        <span className="text-gray-400 font-bold">$</span>
-                        <input type="number" value={quoteAmount} onChange={(e) => setQuoteAmount(e.target.value)} placeholder="0.00" className="bg-transparent text-white font-bold focus:outline-none w-24 text-lg"/>
-                        <button onClick={handleUpdateJob} disabled={isSaving} className="ml-auto bg-white text-black px-2 py-1 rounded text-[10px] font-bold uppercase hover:bg-gray-200">{isSaving ? '...' : 'Save'}</button>
-                    </div>
-                </div>
+            <div className="flex items-center justify-end gap-3">
+                 <div className="text-right">
+                    <p className={`text-[10px] font-bold uppercase ${countdown.textCol}`}>{countdown.text}</p>
+                 </div>
+                 <div className={`w-3 h-3 rounded-full ${countdown.color.replace('bg-', 'bg-')} animate-pulse`}></div>
             </div>
         </div>
       </div>
 
-      {/* 3. MAIN CONTENT */}
+      {/* 4. MAIN WORKSPACE */}
       <div className="flex-1 max-w-[1800px] mx-auto w-full p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* LEFT COLUMN */}
@@ -275,17 +291,13 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     </div>
                 )}
                 </div>
-                 <div className="p-4 bg-white border-t border-gray-100 text-xs text-gray-400 flex justify-between">
-                    <span>File: {job.file_url?.split('/').pop()}</span>
-                    <span>{job.notes ? `Note: ${job.notes}` : 'No notes provided'}</span>
-                 </div>
             </div>
 
-            {/* FINISHING OPTIONS CARD (NEW) */}
+            {/* FINISHING OPTIONS */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div className="px-6 py-3 border-b border-gray-100 bg-gray-50">
                     <h3 className="font-bold text-gray-700 text-sm flex items-center gap-2">
-                        <Scissors size={16} /> Finishing & Bindery Requirements
+                        <Scissors size={16} /> Finishing Checklist
                     </h3>
                 </div>
                 <div className="p-6">
