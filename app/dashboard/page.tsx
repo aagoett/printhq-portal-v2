@@ -3,7 +3,7 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { 
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
-  Loader2, X, Scissors, User, Trash2, UserPlus, Filter, ArrowRightCircle, Briefcase, Plus, ShoppingCart
+  Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, Briefcase, Plus, ShoppingCart
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
@@ -112,7 +112,10 @@ export default function Dashboard() {
 
     // 2. Fetch Jobs
     let jobQuery = supabase.from('jobs').select('*').order('created_at', { ascending: false });
+    
+    // If NOT internal, ONLY show my own jobs
     if (!isInternal) jobQuery = jobQuery.eq('user_id', user.id);
+    
     const { data: jobsData } = await jobQuery;
 
     // 3. Fetch Steps
@@ -219,7 +222,7 @@ export default function Dashboard() {
     setCart(cart.filter(item => item.id !== id));
   };
 
-  // --- SUBMIT ORDER (FIXED FOR CUSTOMERS) ---
+  // --- SUBMIT ORDER (FIXED & WITH MESSAGE) ---
   const handleSubmitOrder = async () => {
     if (cart.length === 0) return alert("Cart is empty.");
     if (isNewCustomer && !newCustomerEmail.includes('@')) return alert("Invalid email.");
@@ -230,6 +233,8 @@ export default function Dashboard() {
       // DEFAULT: The user is ordering for themselves (Customer)
       let finalUserId = user?.id;
       let finalEmail = user?.email;
+
+      const isInternal = role === 'admin' || role === 'staff';
 
       // OVERRIDE: If I am Staff/Admin, did I select someone else?
       if (isInternal) {
@@ -301,9 +306,13 @@ export default function Dashboard() {
       if (finalEmail && newOrder) {
          await sendOrderConfirmation(finalEmail, newOrder.id, `${cart.length} Item(s) from ${orderBrand}`);
       }
+      
+      // --- SUCCESS MESSAGE ---
+      alert("✅ Success! Your order has been received.\n\nCheck your dashboard for updates.");
 
       setShowModal(false);
-      fetchDashboardData();
+      setCart([]); // Clear cart
+      fetchDashboardData(); // Refresh list immediately
 
     } catch (error) {
       console.error('Error:', error);
