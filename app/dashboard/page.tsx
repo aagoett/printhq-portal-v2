@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
   Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, 
-  Briefcase, Plus, ShoppingCart, Clock, Eye, ChevronRight
+  Briefcase, Plus, ShoppingCart, Clock, ChevronRight
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
@@ -50,6 +50,11 @@ type CartItem = {
   paper_stock: string;
 };
 
+type PaperStock = {
+    id: string;
+    name: string;
+};
+
 const MY_BRANDS = ['PrintHQ', 'SignWorld', 'PromoPro', 'DirectMail Co'];
 
 export default function Dashboard() {
@@ -63,6 +68,7 @@ export default function Dashboard() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [customers, setCustomers] = useState<Profile[]>([]);
   const [staff, setStaff] = useState<Profile[]>([]); 
+  const [stockLibrary, setStockLibrary] = useState<PaperStock[]>([]);
   
   const [departmentTabs, setDepartmentTabs] = useState<string[]>(['My Queue', 'All']);
   const [activeTab, setActiveTab] = useState('All'); 
@@ -78,7 +84,10 @@ export default function Dashboard() {
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
   const [jobNotes, setJobNotes] = useState('');
-  const [paperStock, setPaperStock] = useState('100lb Gloss Text');
+  
+  // PAPER STOCK LOGIC
+  const [selectedStockId, setSelectedStockId] = useState('');
+  const [customStockValue, setCustomStockValue] = useState('');
   
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [isNewCustomer, setIsNewCustomer] = useState(false);
@@ -124,6 +133,13 @@ export default function Dashboard() {
         };
       });
       setJobs(processedJobs);
+    }
+
+    // Load Paper Library
+    const { data: stockData } = await supabase.from('paper_stocks').select('*').order('name');
+    if (stockData) {
+        setStockLibrary(stockData);
+        if (stockData.length > 0) setSelectedStockId(stockData[0].name); // Default to first
     }
 
     if (isInternal) {
@@ -180,6 +196,8 @@ export default function Dashboard() {
     setJobTitle('');
     setJobQty('');
     setJobNotes('');
+    if (stockLibrary.length > 0) setSelectedStockId(stockLibrary[0].name);
+    setCustomStockValue('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -196,13 +214,20 @@ export default function Dashboard() {
     if (!currentFile) return alert("Please upload a file.");
     if (!jobQty) return alert("Please enter quantity.");
 
+    // Determine final paper stock name
+    let finalStock = selectedStockId;
+    if (selectedStockId === 'custom') {
+        if (!customStockValue.trim()) return alert("Please enter custom paper details.");
+        finalStock = customStockValue;
+    }
+
     const newItem: CartItem = {
       id: Math.random().toString(36),
       file: currentFile,
       title: jobTitle,
       quantity: parseInt(jobQty),
       notes: jobNotes,
-      paper_stock: paperStock
+      paper_stock: finalStock
     };
 
     setCart([...cart, newItem]);
@@ -429,7 +454,28 @@ export default function Dashboard() {
                       </div>
                     </div>
                     
-                    <select value={paperStock} onChange={(e) => setPaperStock(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"><option>100lb Gloss Text</option><option>14pt Cardstock</option><option>Vinyl Banner</option></select>
+                    {/* DYNAMIC PAPER STOCK SELECTOR */}
+                    <div className="space-y-2">
+                        <select 
+                            value={selectedStockId} 
+                            onChange={(e) => setSelectedStockId(e.target.value)} 
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:border-black"
+                        >
+                            {stockLibrary.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                            <option value="custom">-- Custom / Other --</option>
+                        </select>
+                        
+                        {/* CUSTOM STOCK INPUT (Only shows if 'custom' is selected) */}
+                        {selectedStockId === 'custom' && (
+                            <input 
+                                type="text" 
+                                placeholder="Enter custom paper details..." 
+                                value={customStockValue}
+                                onChange={(e) => setCustomStockValue(e.target.value)}
+                                className="w-full rounded-lg border border-blue-300 px-3 py-2 text-sm bg-blue-50 focus:bg-white transition-colors"
+                            />
+                        )}
+                    </div>
                     
                     <button type="button" onClick={handleAddToCart} disabled={!currentFile || !jobQty} className={`w-full py-3 rounded-lg font-bold text-sm transition-all flex items-center justify-center ${!currentFile || !jobQty ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800 shadow-md'}`}>
                       {!currentFile ? 'Select a File first...' : !jobQty ? 'Enter Quantity...' : '+ Add Item to List'}
