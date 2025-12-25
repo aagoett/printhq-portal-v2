@@ -3,7 +3,7 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { 
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
-  Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, Briefcase, Plus, ShoppingCart
+  Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, Briefcase, Plus, ShoppingCart, Clock
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
@@ -26,7 +26,7 @@ type Job = {
   assigned_to?: string; 
   csr_name?: string; 
   brand?: string;   
-  order_id?: string; // Link to Parent Order
+  order_id?: string; 
 };
 
 type Profile = {
@@ -37,9 +37,8 @@ type Profile = {
   department?: string;
 };
 
-// Cart Item Type (Temporary items before upload)
 type CartItem = {
-  id: string; // temp id
+  id: string; 
   file: File;
   title: string;
   quantity: number;
@@ -61,11 +60,9 @@ export default function Dashboard() {
   const [customers, setCustomers] = useState<Profile[]>([]);
   const [staff, setStaff] = useState<Profile[]>([]); 
   
-  // Dynamic Tabs State
   const [departmentTabs, setDepartmentTabs] = useState<string[]>(['My Queue', 'All']);
   const [activeTab, setActiveTab] = useState('All'); 
   
-  // Modal State
   const [showModal, setShowModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   
@@ -73,14 +70,12 @@ export default function Dashboard() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [orderBrand, setOrderBrand] = useState('PrintHQ');
   
-  // Current Form Inputs
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
   const [jobNotes, setJobNotes] = useState('');
   const [paperStock, setPaperStock] = useState('100lb Gloss Text');
   
-  // Customer Selection Logic (Internal Only)
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [isNewCustomer, setIsNewCustomer] = useState(false);
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
@@ -99,7 +94,6 @@ export default function Dashboard() {
     if (!user) return router.push('/login');
     setUser(user);
 
-    // 1. Get Profile
     const { data: profile } = await supabase
       .from('profiles')
       .select('role, department')
@@ -110,18 +104,12 @@ export default function Dashboard() {
     setRole(userRole);
     const isInternal = userRole === 'admin' || userRole === 'staff';
 
-    // 2. Fetch Jobs
     let jobQuery = supabase.from('jobs').select('*').order('created_at', { ascending: false });
-    
-    // If NOT internal, ONLY show my own jobs
     if (!isInternal) jobQuery = jobQuery.eq('user_id', user.id);
-    
     const { data: jobsData } = await jobQuery;
 
-    // 3. Fetch Steps
     const { data: stepsData } = await supabase.from('job_steps').select('*').eq('status', 'Pending');
 
-    // 4. Merge Job Data
     if (jobsData) {
       const processedJobs = jobsData.map(j => {
         const activeStep = stepsData?.find(s => s.job_id === j.id);
@@ -134,7 +122,6 @@ export default function Dashboard() {
       setJobs(processedJobs);
     }
 
-    // 5. Fetch Dynamic Data (Internal Only)
     if (isInternal) {
       const { data: dbDepts } = await supabase.from('departments').select('name').order('sort_order');
       const dynamicTabs = dbDepts ? dbDepts.map(d => d.name) : [];
@@ -177,7 +164,7 @@ export default function Dashboard() {
 
   // --- CART HANDLERS ---
   const handleOpenNewOrder = () => {
-    setCart([]); // Clear cart
+    setCart([]); 
     resetForm();
     setIsNewCustomer(false);
     setNewCustomerEmail('');
@@ -222,25 +209,19 @@ export default function Dashboard() {
     setCart(cart.filter(item => item.id !== id));
   };
 
-  // --- SUBMIT ORDER (FIXED & WITH MESSAGE) ---
   const handleSubmitOrder = async () => {
     if (cart.length === 0) return alert("Cart is empty.");
     if (isNewCustomer && !newCustomerEmail.includes('@')) return alert("Invalid email.");
 
     setIsUploading(true);
     try {
-      // 1. Determine User
-      // DEFAULT: The user is ordering for themselves (Customer)
       let finalUserId = user?.id;
       let finalEmail = user?.email;
-
       const isInternal = role === 'admin' || role === 'staff';
 
-      // OVERRIDE: If I am Staff/Admin, did I select someone else?
       if (isInternal) {
           if (isNewCustomer) {
             finalEmail = newCustomerEmail;
-            // Note: For new guests, finalUserId stays as the Creator (Staff) or null.
           } else if (selectedCustomerId) {
             finalUserId = selectedCustomerId;
             const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
@@ -248,33 +229,24 @@ export default function Dashboard() {
           }
       }
 
-      // 2. Create Parent Order
       const { data: newOrder, error: orderError } = await supabase
         .from('orders')
-        .insert({
-          user_id: finalUserId,
-          status: 'New',
-          brand: orderBrand
-        })
-        .select()
-        .single();
+        .insert({ user_id: finalUserId, status: 'New', brand: orderBrand })
+        .select().single();
 
       if (orderError) throw orderError;
 
-      // 3. Process Cart Items (Upload & Create Jobs)
       for (const item of cart) {
-        // A. Upload File
         const fileExt = item.file.name.split('.').pop();
         const fileName = `${newOrder.id}-${Math.random().toString(36).substring(7)}.${fileExt}`;
         const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, item.file);
         
         if (uploadError) console.error("File upload failed for " + item.title, uploadError);
 
-        // B. Create Job linked to Order
         const { data: newJob, error: jobError } = await supabase
           .from('jobs')
           .insert({
-            order_id: newOrder.id, // LINK TO PARENT
+            order_id: newOrder.id,
             user_id: finalUserId, 
             guest_email: isNewCustomer ? finalEmail : null,
             title: item.title,
@@ -287,11 +259,9 @@ export default function Dashboard() {
             csr_name: null,
             brand: orderBrand 
           })
-          .select()
-          .single();
+          .select().single();
 
         if (!jobError && newJob) {
-            // C. Create Workflow Step
             await supabase.from('job_steps').insert({
                 job_id: newJob.id,
                 department: 'Prepress',
@@ -302,17 +272,15 @@ export default function Dashboard() {
         }
       }
 
-      // 4. Send One Confirmation Email
       if (finalEmail && newOrder) {
          await sendOrderConfirmation(finalEmail, newOrder.id, `${cart.length} Item(s) from ${orderBrand}`);
       }
       
-      // --- SUCCESS MESSAGE ---
       alert("✅ Success! Your order has been received.\n\nCheck your dashboard for updates.");
 
       setShowModal(false);
-      setCart([]); // Clear cart
-      fetchDashboardData(); // Refresh list immediately
+      setCart([]);
+      fetchDashboardData(); 
 
     } catch (error) {
       console.error('Error:', error);
@@ -320,6 +288,13 @@ export default function Dashboard() {
     } finally {
       setIsUploading(false);
     }
+  };
+
+  // --- DATE FORMATTER ---
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+    });
   };
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
@@ -340,8 +315,6 @@ export default function Dashboard() {
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
           <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 my-8 flex flex-col max-h-[90vh]">
-             
-             {/* HEADER */}
              <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 flex-shrink-0">
               <div>
                 <h3 className="font-bold text-lg text-gray-900">New Production Order</h3>
@@ -351,8 +324,6 @@ export default function Dashboard() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              
-              {/* CUSTOMER & BRAND SECTION */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {isInternal && (
                   <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
@@ -374,20 +345,14 @@ export default function Dashboard() {
                   </div>
                 )}
                 
-                {/* BRAND SELECTOR */}
                 <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
                   <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Company / Brand</label>
-                  <select 
-                    value={orderBrand} 
-                    onChange={(e) => setOrderBrand(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 bg-white text-sm outline-none font-bold"
-                  >
+                  <select value={orderBrand} onChange={(e) => setOrderBrand(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 bg-white text-sm outline-none font-bold">
                     {MY_BRANDS.map(b => <option key={b}>{b}</option>)}
                   </select>
                 </div>
               </div>
 
-              {/* CART ITEMS LIST */}
               {cart.length > 0 && (
                 <div className="border border-gray-200 rounded-xl overflow-hidden">
                    <div className="bg-gray-100 px-4 py-2 text-xs font-bold uppercase text-gray-500 flex justify-between">
@@ -414,11 +379,9 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {/* ADD ITEM FORM */}
               <div className="border-t border-gray-100 pt-6">
                  <h4 className="font-bold text-gray-900 mb-4 flex items-center text-sm">
-                   <Plus size={16} className="mr-2 bg-black text-white rounded-full p-0.5" /> 
-                   Add Item to Order
+                   <Plus size={16} className="mr-2 bg-black text-white rounded-full p-0.5" /> Add Item to Order
                  </h4>
                  
                  <div className="space-y-4">
@@ -448,35 +411,19 @@ export default function Dashboard() {
                     
                     <select value={paperStock} onChange={(e) => setPaperStock(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white"><option>100lb Gloss Text</option><option>14pt Cardstock</option><option>Vinyl Banner</option></select>
                     
-                    {/* SMART ADD BUTTON */}
-                    <button 
-                      type="button" 
-                      onClick={handleAddToCart}
-                      disabled={!currentFile || !jobQty}
-                      className={`w-full py-3 rounded-lg font-bold text-sm transition-all flex items-center justify-center
-                        ${!currentFile || !jobQty 
-                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
-                          : 'bg-black text-white hover:bg-gray-800 shadow-md'}`}
-                    >
+                    <button type="button" onClick={handleAddToCart} disabled={!currentFile || !jobQty} className={`w-full py-3 rounded-lg font-bold text-sm transition-all flex items-center justify-center ${!currentFile || !jobQty ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800 shadow-md'}`}>
                       {!currentFile ? 'Select a File first...' : !jobQty ? 'Enter Quantity...' : '+ Add Item to List'}
                     </button>
                  </div>
               </div>
-
             </div>
 
-            {/* FOOTER ACTIONS */}
             <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end">
-              <button 
-                onClick={handleSubmitOrder} 
-                disabled={isUploading || cart.length === 0} 
-                className="px-8 py-3 bg-black text-white rounded-xl font-bold hover:bg-gray-800 disabled:opacity-50 flex items-center shadow-lg"
-              >
+              <button onClick={handleSubmitOrder} disabled={isUploading || cart.length === 0} className="px-8 py-3 bg-black text-white rounded-xl font-bold hover:bg-gray-800 disabled:opacity-50 flex items-center shadow-lg">
                 {isUploading ? <Loader2 className="animate-spin mr-2" /> : <ShoppingCart className="mr-2" size={18} />} 
                 Submit Order ({cart.length} Items)
               </button>
             </div>
-
           </div>
         </div>
       )}
@@ -503,7 +450,6 @@ export default function Dashboard() {
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-8 py-12">
           
-          {/* GREETING HEADER */}
           <div className="mb-8 flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">
@@ -519,7 +465,6 @@ export default function Dashboard() {
             <button onClick={handleOpenNewOrder} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">+ New Order</button>
           </div>
 
-          {/* DYNAMIC TABS */}
           {isInternal && (
             <div className="mb-6 flex gap-2 overflow-x-auto pb-2">
               {departmentTabs.map((dept) => (
@@ -527,9 +472,7 @@ export default function Dashboard() {
                   key={dept}
                   onClick={() => setActiveTab(dept)}
                   className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors flex items-center
-                    ${activeTab === dept 
-                       ? 'bg-black text-white' 
-                       : 'bg-white text-gray-500 border border-gray-200 hover:border-black hover:text-black'}`}
+                    ${activeTab === dept ? 'bg-black text-white' : 'bg-white text-gray-500 border border-gray-200 hover:border-black hover:text-black'}`}
                 >
                   {dept === 'My Queue' && <Briefcase size={14} className="mr-2" />}
                   {dept}
@@ -558,6 +501,7 @@ export default function Dashboard() {
                   <thead className="bg-gray-50 text-gray-500 uppercase font-medium">
                     <tr>
                       <th className="px-6 py-3">Job ID</th>
+                      <th className="px-6 py-3">Date In</th>
                       <th className="px-6 py-3">Title</th>
                       <th className="px-6 py-3">Current Station</th>
                       <th className="px-6 py-3">Assign CSR</th>
@@ -569,14 +513,12 @@ export default function Dashboard() {
                     {filteredJobs.map((job: any) => (
                       <tr key={job.id} className="hover:bg-gray-50 transition-colors group">
                         <td className="px-6 py-4 font-mono text-gray-500">#{job.id.substring(0,6).toUpperCase()}</td>
+                        <td className="px-6 py-4 font-medium text-gray-500 whitespace-nowrap">
+                            {formatDate(job.created_at)}
+                        </td>
                         <td className="px-6 py-4 font-medium text-gray-900">
                           {job.title}
-                          {/* BRAND BADGE */}
-                          {job.brand && (
-                            <span className="ml-2 inline-flex items-center rounded-md bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">
-                              {job.brand}
-                            </span>
-                          )}
+                          {job.brand && <span className="ml-2 inline-flex items-center rounded-md bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">{job.brand}</span>}
                           {job.guest_email && <div className="text-yellow-600 font-bold mt-1 text-[10px]">Guest: {job.guest_email}</div>}
                         </td>
                         <td className="px-6 py-4">
@@ -585,15 +527,9 @@ export default function Dashboard() {
                            </span>
                         </td>
                         <td className="px-6 py-4">
-                           <select 
-                             value={job.assigned_to || ''} 
-                             onChange={(e) => handleAssignJob(job.id, e.target.value)}
-                             className="bg-transparent border-none text-xs font-bold text-gray-600 focus:ring-0 cursor-pointer hover:text-black"
-                           >
+                           <select value={job.assigned_to || ''} onChange={(e) => handleAssignJob(job.id, e.target.value)} className="bg-transparent border-none text-xs font-bold text-gray-600 focus:ring-0 cursor-pointer hover:text-black">
                              <option value="">-- Unassigned --</option>
-                             {staff.map(s => (
-                               <option key={s.id} value={s.id}>{s.first_name || s.email}</option>
-                             ))}
+                             {staff.map(s => <option key={s.id} value={s.id}>{s.first_name || s.email}</option>)}
                            </select>
                         </td>
                         <td className="px-6 py-4">
@@ -612,7 +548,7 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-               {jobs.map((job) => (<StatusCard key={job.id} job={job} />))}
+               {jobs.map((job) => (<StatusCard key={job.id} job={job} formatDate={formatDate} />))}
             </div>
           )}
         </div>
@@ -630,7 +566,7 @@ function NavItem({ icon, label, active = false, href = '#' }: { icon: any, label
   );
 }
 
-function StatusCard({ job }: { job: Job }) {
+function StatusCard({ job, formatDate }: { job: Job, formatDate: (d: string) => string }) {
   const styles: any = { 'Pending Review': 'bg-amber-100 text-amber-700', 'In Production': 'bg-emerald-100 text-emerald-700' };
   return (
     <Link href={`/dashboard/jobs/${job.id}`}>
@@ -640,7 +576,10 @@ function StatusCard({ job }: { job: Job }) {
           <span className="text-xs font-mono text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span>
         </div>
         <h4 className="mt-4 text-lg font-bold text-gray-900 truncate">{job.title}</h4>
-        <div className="mt-1 flex items-center text-sm text-gray-500">{job.quantity} units</div>
+        <div className="mt-1 flex items-center justify-between">
+             <span className="text-sm text-gray-500">{job.quantity} units</span>
+             <span className="text-xs text-gray-400 flex items-center"><Clock size={12} className="mr-1" /> {formatDate(job.created_at)}</span>
+        </div>
       </div>
     </Link>
   );
