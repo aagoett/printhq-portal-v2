@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
   Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, 
-  Briefcase, Plus, ShoppingCart, Clock, Calendar, AlertTriangle
+  Briefcase, Plus, ShoppingCart, Clock, Eye, ChevronRight
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
@@ -100,7 +100,7 @@ export default function Dashboard() {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('*') // Get all fields including company/names
+      .select('*') 
       .eq('id', user.id)
       .single();
       
@@ -297,12 +297,12 @@ export default function Dashboard() {
   // --- HELPERS ---
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+      month: 'short', day: 'numeric'
     });
   };
 
   const getDueStatus = (dueString?: string) => {
-    if (!dueString) return { color: 'text-gray-400', label: '--' };
+    if (!dueString) return { color: 'text-gray-300', label: '--' };
     const due = new Date(dueString);
     const now = new Date();
     due.setHours(23, 59, 59);
@@ -310,11 +310,11 @@ export default function Dashboard() {
     
     const diff = (due.getTime() - now.getTime()) / (1000 * 3600 * 24);
 
-    if (diff < 0) return { color: 'text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded', label: 'OVERDUE' };
-    if (diff < 1) return { color: 'text-red-600 font-bold bg-red-50 px-2 py-0.5 rounded', label: 'TODAY' };
+    if (diff < 0) return { color: 'text-red-600 font-bold', label: 'Overdue' };
+    if (diff < 1) return { color: 'text-red-600 font-bold', label: 'Today' };
     if (diff <= 3) return { color: 'text-orange-600 font-bold', label: due.toLocaleDateString('en-US', {month:'short', day:'numeric'}) };
     
-    return { color: 'text-gray-900 font-medium', label: due.toLocaleDateString('en-US', {month:'short', day:'numeric'}) };
+    return { color: 'text-black font-medium', label: due.toLocaleDateString('en-US', {month:'short', day:'numeric'}) };
   };
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
@@ -520,15 +520,12 @@ export default function Dashboard() {
                 <table className="w-full text-left text-sm">
                   <thead className="bg-gray-50 text-gray-500 uppercase font-medium">
                     <tr>
-                      <th className="px-6 py-3">Job ID</th>
-                      <th className="px-6 py-3">Date In</th>
-                      <th className="px-6 py-3 text-center">Due Date</th>
-                      <th className="px-6 py-3">Customer</th> 
-                      <th className="px-6 py-3">Title</th>
-                      <th className="px-6 py-3">Current Station</th>
-                      <th className="px-6 py-3">Assign CSR</th>
-                      <th className="px-6 py-3">Quick Action</th>
-                      <th className="px-6 py-3"></th>
+                      <th className="px-6 py-3 w-32">Timeline</th>
+                      <th className="px-6 py-3 w-48">Customer</th> 
+                      <th className="px-6 py-3">Job Details</th>
+                      <th className="px-6 py-3 w-32">Station</th>
+                      <th className="px-6 py-3 w-40">Team</th>
+                      <th className="px-6 py-3 w-32 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -542,49 +539,80 @@ export default function Dashboard() {
                       
                       return (
                       <tr key={job.id} className="hover:bg-gray-50 transition-colors group">
-                        <td className="px-6 py-4 font-mono text-gray-500">#{job.id.substring(0,6).toUpperCase()}</td>
-                        <td className="px-6 py-4 font-medium text-gray-500 whitespace-nowrap text-xs">
-                            {formatDate(job.created_at)}
+                        
+                        {/* 1. TIMELINE */}
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex flex-col gap-1">
+                             <div className="text-[10px] text-gray-400 font-bold uppercase">In: {formatDate(job.created_at)}</div>
+                             <div className={`text-xs ${dueStatus.color}`}>Due: {dueStatus.label}</div>
+                          </div>
                         </td>
-                         <td className="px-6 py-4 whitespace-nowrap text-center">
-                             <span className={`text-xs ${dueStatus.color}`}>
-                                {dueStatus.label}
-                             </span>
-                        </td>
+
+                        {/* 2. CUSTOMER */}
                         <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
-                                <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold text-gray-600">
+                                <div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">
                                     {typeof customerName === 'string' ? customerName.charAt(0).toUpperCase() : '?'}
                                 </div>
-                                <div>
-                                    <p className="text-sm font-bold text-gray-900">{customerName}</p>
-                                    <p className="text-[10px] text-gray-400 uppercase tracking-wider">{companyName}</p>
+                                <div className="overflow-hidden">
+                                    <p className="text-sm font-bold text-gray-900 truncate max-w-[120px]">{customerName}</p>
+                                    <p className="text-[10px] text-gray-400 uppercase tracking-wider truncate max-w-[120px]">{companyName}</p>
                                 </div>
                             </div>
                         </td>
-                        <td className="px-6 py-4 font-medium text-gray-900">
-                          {job.title}
-                          {job.brand && <span className="ml-2 inline-flex items-center rounded-md bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">{job.brand}</span>}
-                        </td>
+
+                        {/* 3. JOB DETAILS */}
                         <td className="px-6 py-4">
-                           <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${job.current_step === 'Complete' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
-                             {job.current_step || 'Processing...'}
+                          <Link href={`/dashboard/jobs/${job.id}`} className="block group-hover:text-blue-600 transition-colors">
+                              <div className="font-bold text-gray-900 text-base">{job.title}</div>
+                          </Link>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="font-mono text-[10px] text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span>
+                            {job.brand && <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-500 font-bold uppercase">{job.brand}</span>}
+                          </div>
+                        </td>
+
+                        {/* 4. STATION */}
+                        <td className="px-6 py-4">
+                           <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide ${job.current_step === 'Complete' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
+                             {job.current_step || 'Processing'}
                            </span>
                         </td>
+
+                        {/* 5. TEAM */}
                         <td className="px-6 py-4">
-                           <select value={job.assigned_to || ''} onChange={(e) => handleAssignJob(job.id, e.target.value)} className="bg-transparent border-none text-xs font-bold text-gray-600 focus:ring-0 cursor-pointer hover:text-black">
+                           <select 
+                             value={job.assigned_to || ''} 
+                             onChange={(e) => handleAssignJob(job.id, e.target.value)} 
+                             className="bg-transparent border-none text-xs font-bold text-gray-500 focus:ring-0 cursor-pointer hover:text-black w-full truncate"
+                           >
                              <option value="">-- Unassigned --</option>
-                             {staff.map(s => <option key={s.id} value={s.id}>{s.first_name || s.email}</option>)}
+                             {staff.map(s => (
+                               <option key={s.id} value={s.id}>
+                                 {s.first_name || s.email?.split('@')[0]}
+                               </option>
+                             ))}
                            </select>
                         </td>
-                        <td className="px-6 py-4">
-                          {job.next_step_id && (
-                             <button onClick={() => handleQuickAdvance(job)} className="flex items-center text-xs font-bold text-gray-400 hover:text-green-600 transition-colors border border-transparent hover:border-green-200 px-2 py-1 rounded">
-                               <ArrowRightCircle size={14} className="mr-1" /> Finish {job.current_step}
-                             </button>
-                          )}
+
+                        {/* 6. ACTIONS */}
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            {job.next_step_id && (
+                               <button 
+                                 onClick={() => handleQuickAdvance(job)} 
+                                 title={`Finish ${job.current_step}`}
+                                 className="text-gray-400 hover:text-green-600 transition-colors p-2 hover:bg-green-50 rounded-full"
+                               >
+                                 <ArrowRightCircle size={18} />
+                               </button>
+                            )}
+                            <Link href={`/dashboard/jobs/${job.id}`} className="text-gray-400 hover:text-black transition-colors p-2 hover:bg-gray-100 rounded-full">
+                               <ChevronRight size={20} />
+                            </Link>
+                          </div>
                         </td>
-                        <td className="px-6 py-4"><Link href={`/dashboard/jobs/${job.id}`} className="text-black font-bold hover:underline">View Ticket</Link></td>
+
                       </tr>
                       );
                     })}
