@@ -12,11 +12,10 @@ import {
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-// Ensure this path matches your project structure
 import { sendProofNotification } from '../../../actions'; 
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
-  const router = useRouter(); // Initialize router for redirecting
+  const router = useRouter(); 
   
   // --- STATE ---
   const [job, setJob] = useState<any>(null);
@@ -29,29 +28,24 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [currentUserName, setCurrentUserName] = useState('');
   const [loading, setLoading] = useState(true);
   
-  // UI State
   const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat');
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [isEditingWorkflow, setIsEditingWorkflow] = useState(false); // Toggle Edit Mode
+  const [isEditingWorkflow, setIsEditingWorkflow] = useState(false); 
 
   // Workflow Edit State
   const [newStepName, setNewStepName] = useState('');
   const [newStepDept, setNewStepDept] = useState('Production');
 
-  // Upload State
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadMessage, setUploadMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
 
-  // Resources
   const [serviceList, setServiceList] = useState<any[]>([]);
 
-  // Active Preview State
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<string>('unknown');
   const [viewingAssetId, setViewingAssetId] = useState<string>('');
 
-  // Input State
   const [newMessage, setNewMessage] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -65,11 +59,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  // --- INITIAL LOAD ---
   useEffect(() => {
     fetchPageData();
 
-    // Realtime subscriptions
     const chatChannel = supabase.channel('job_chat')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, () => fetchMessages())
       .subscribe();
@@ -99,7 +91,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, logs, rightTab]);
 
-  // --- DATA FETCHING ---
   const fetchPageData = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     setUser(user);
@@ -156,7 +147,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     if (data) setLogs(data);
   };
 
-  // --- HELPER: COUNTDOWN ---
   const getCountdown = () => {
       if (!job?.due_date) return { text: "NO DATE", color: "bg-gray-700", textCol: "text-gray-400" };
       const due = new Date(job.due_date);
@@ -169,14 +159,12 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       return { text: `${diffDays} DAYS LEFT`, color: "bg-emerald-500", textCol: "text-white" };
   };
 
-  // --- ACTIONS ---
   const logActivity = async (action: string, details: string) => {
       if (!user) return;
       await supabase.from('job_logs').insert({ job_id: params.id, user_id: user.id, action, details });
       fetchLogs();
   };
 
-  // NEW: Sign Out Handler
   const handleSignOut = async () => {
       await supabase.auth.signOut();
       router.push('/login');
@@ -195,7 +183,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       }
   };
 
-  // --- WORKFLOW MANAGEMENT ---
   const handleGenerateWorkflow = async () => {
       const defaultSteps = [
           { name: 'Prepress Check', department: 'Prepress' },
@@ -217,10 +204,13 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       await fetchWorkflow();
   };
 
+  // --- FIXED: ROBUST COMPLETE STEP ---
   const handleCompleteStep = async (step: any) => {
       await supabase.from('job_steps').update({ status: 'Completed', completed_at: new Date().toISOString() }).eq('id', step.id);
       
-      const nextStep = workflowSteps.find(s => s.step_order === step.step_order + 1);
+      // FIX: Find first step with order > current, instead of blindly adding 1
+      const nextStep = workflowSteps.find(s => s.step_order > step.step_order);
+      
       if (nextStep) {
           await supabase.from('job_steps').update({ status: 'Pending' }).eq('id', nextStep.id);
           await supabase.from('jobs').update({ status: nextStep.department }).eq('id', params.id);
@@ -233,7 +223,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       fetchPageData(); 
   };
 
-  // NEW: Add a step manually
   const handleAddStep = async () => {
       if (!newStepName.trim()) return;
       const maxOrder = workflowSteps.length > 0 ? Math.max(...workflowSteps.map(s => s.step_order)) : 0;
@@ -242,7 +231,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           job_id: params.id,
           name: newStepName,
           department: newStepDept,
-          status: 'Waiting', // Default to waiting
+          status: 'Waiting', 
           step_order: maxOrder + 1
       });
 
@@ -251,7 +240,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       fetchWorkflow();
   };
 
-  // NEW: Delete a step
   const handleDeleteStep = async (stepId: string) => {
       if (!confirm("Remove this step?")) return;
       await supabase.from('job_steps').delete().eq('id', stepId);
@@ -259,7 +247,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       fetchWorkflow();
   };
 
-  // --- UPLOAD (ADMIN) ---
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) setUploadFile(e.target.files[0]);
   };
@@ -300,7 +287,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       } catch (error: any) { alert("Error: " + error.message); } finally { setIsUploading(false); }
   };
 
-  // --- APPROVAL ---
   const handleApproveProof = async (assetId: string) => {
       if (!confirm("Confirm Approval? This will send the job to production.")) return;
       await supabase.from('job_assets').update({ status: 'approved' }).eq('id', assetId);
@@ -316,7 +302,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       alert("Job moved to Production!");
   };
 
-  // --- CHAT ---
   const handleSendMessage = async () => {
     if (!user) { alert("Error: Logged out."); return; }
     if (!newMessage.trim()) return;
@@ -338,7 +323,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     else { fetchMessages(); }
   };
 
-  // --- NOTES ---
   const handleSaveNotes = async () => {
       setIsSaving(true);
       const { error } = await supabase.from('jobs').update({ internal_notes: internalNotes }).eq('id', params.id);
@@ -375,7 +359,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
       
-      {/* --- UPLOAD MODAL --- */}
       {showUploadModal && isAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -401,7 +384,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      {/* 1. HEADER (Navigation) */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
         <div className="max-w-[1920px] mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -418,7 +400,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                </div>
              )}
              
-             {/* SIGN OUT BUTTON */}
              <button onClick={handleSignOut} className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors ml-2 border border-gray-200 hover:border-red-200">
                 <LogOut size={16} />
                 Sign Out
@@ -427,7 +408,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-       {/* 2. ADMIN COMMAND CENTER */}
        {isAdmin && (
            <div className="bg-gray-900 text-white shadow-xl border-b-4 border-blue-500">
               <div className="max-w-[1920px] mx-auto flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-gray-700">
@@ -465,17 +445,13 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           </div>
        )}
 
-      {/* 3. MAIN LAYOUT */}
       <div className="flex-1 max-w-[1920px] mx-auto w-full p-4 grid grid-cols-12 gap-4">
         
-        {/* --- LEFT COL (ADMIN ONLY) --- */}
         <div className={`${isAdmin ? 'col-span-12 lg:col-span-3' : 'hidden'} space-y-4`}>
             
-            {/* WORKFLOW LADDER (EDITABLE) */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <div className="flex justify-between items-center mb-4">
                      <h3 className="text-xs font-bold uppercase text-gray-400 flex items-center gap-2"><ArrowDown size={14}/> Production Workflow</h3>
-                     {/* TOGGLE EDIT MODE */}
                      <button onClick={() => setIsEditingWorkflow(!isEditingWorkflow)} className={`p-1 rounded hover:bg-gray-100 ${isEditingWorkflow ? 'text-blue-600' : 'text-gray-400'}`}>
                         <Edit2 size={12}/>
                      </button>
@@ -495,12 +471,10 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                             return (
                                 <div key={step.id} className="relative z-10 flex gap-3 pb-4 last:pb-0 group items-center">
                                     {isEditingWorkflow ? (
-                                        // EDIT MODE: Trash Icon
                                         <button onClick={() => handleDeleteStep(step.id)} className="text-red-400 hover:text-red-600 p-1">
                                             <Trash2 size={14}/>
                                         </button>
                                     ) : (
-                                        // VIEW MODE: Status Icon
                                         <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center bg-white ${isCompleted ? 'border-green-500 text-green-500' : isPending ? 'border-blue-500 text-blue-500 shadow-md ring-2 ring-blue-100' : 'border-gray-200 text-gray-200'}`}>
                                             {isCompleted ? <Check size={12} strokeWidth={4}/> : <div className={`w-2 h-2 rounded-full ${isPending ? 'bg-blue-500' : 'bg-gray-200'}`}></div>}
                                         </div>
@@ -513,7 +487,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                             );
                         })}
 
-                        {/* ADD STEP FORM */}
                         {isEditingWorkflow && (
                             <div className="mt-4 pt-4 border-t border-gray-100">
                                 <p className="text-[10px] font-bold uppercase text-gray-400 mb-2">Add Custom Step</p>
@@ -536,7 +509,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 )}
             </div>
 
-            {/* SHIPPING CARD */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-gray-400 mb-3 flex items-center gap-2"><Truck size={14}/> Ship To</h3>
                 <div className="bg-gray-50 p-3 rounded border border-gray-100 text-sm">
@@ -547,7 +519,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* SPECS (UPDATED WITH SIZE) */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 flex items-center gap-2"><Layers size={14}/> Job Specs</h3>
                 <div className="space-y-3 text-sm">
@@ -557,7 +528,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* FINISHING */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-gray-400 mb-3 flex items-center gap-2"><Scissors size={14}/> Finishing</h3>
                 <div className="flex flex-wrap gap-2">
@@ -568,14 +538,12 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* INTERNAL NOTES */}
             <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-yellow-700 mb-2 flex items-center gap-2"><Lock size={14}/> Internal Notes</h3>
                 <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} className="w-full h-20 bg-white border border-yellow-300 rounded p-2 text-xs mb-2" />
                 <button onClick={handleSaveNotes} disabled={isSaving} className="w-full bg-yellow-400 text-yellow-900 text-xs font-bold py-1 rounded">Save Notes</button>
             </div>
 
-            {/* ORIGINAL FILE */}
             <div className="bg-blue-50 rounded-lg border border-blue-100 p-4">
                 <h3 className="text-xs font-bold uppercase text-blue-800 mb-2 flex items-center gap-2"><FileText size={14}/> Original Asset</h3>
                 {originalAsset ? (
@@ -592,10 +560,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
             </div>
         </div>
 
-        {/* --- MIDDLE COL --- */}
         <div className={`col-span-12 ${isAdmin ? 'lg:col-span-6' : 'lg:col-span-9'} flex flex-col gap-4`}>
              
-             {/* CUSTOMER ACTION BAR */}
              {!isAdmin && isPendingProof && (
                  <div className="bg-blue-600 rounded-xl shadow-lg p-6 flex flex-col md:flex-row items-center justify-between gap-4 text-white">
                      <div>
@@ -611,7 +577,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                  </div>
              )}
 
-             {/* PREVIEW WINDOW */}
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden relative ${isApprovedAsset ? 'border-green-400 ring-4 ring-green-50' : 'border-gray-200'}`} style={{minHeight: '70vh'}}>
                 <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
                     <span className="text-xs font-bold text-gray-500 uppercase">{currentAsset?.file_name || 'No File Selected'}</span>
@@ -637,7 +602,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
              </div>
         </div>
 
-        {/* --- RIGHT COL: CHAT & HISTORY --- */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/4">
                 <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
