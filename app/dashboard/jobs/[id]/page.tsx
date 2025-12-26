@@ -6,7 +6,7 @@ import {
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, ShieldAlert
+  Activity, Save, Lock, X, UploadCloud
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -21,7 +21,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [logs, setLogs] = useState<any[]>([]); 
   const [assets, setAssets] = useState<any[]>([]);
   const [user, setUser] = useState<any>(null);
-  const [isAdmin, setIsAdmin] = useState(false); // NEW: Database-controlled Role
+  const [isAdmin, setIsAdmin] = useState(false); // ROLE STATE
   const [loading, setLoading] = useState(true);
   
   // UI State
@@ -49,8 +49,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [isSaving, setIsSaving] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const logsEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const logsEndRef = useRef<HTMLDivElement>(null);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -91,15 +91,13 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     const { data: { user } } = await supabase.auth.getUser();
     setUser(user);
 
-    // 2. CHECK ROLE (The "Dictator" Check)
+    // 2. CHECK ROLE (Database Check)
     if (user) {
         const { data: profile } = await supabase
             .from('profiles')
             .select('role')
             .eq('id', user.id)
             .single();
-        
-        // If the database says 'admin', you are admin. Otherwise, you are customer.
         setIsAdmin(profile?.role === 'admin');
     }
 
@@ -183,7 +181,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       }
   };
 
-  // --- NEW UPLOAD LOGIC ---
+  // --- UPLOAD LOGIC ---
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setUploadFile(e.target.files[0]);
@@ -317,7 +315,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const stepNotes = activeStep?.notes;
   const currentAsset = assets.find(a => a.id === viewingAssetId);
   const isApprovedAsset = currentAsset?.status === 'approved';
-  const originalAsset = [...assets].reverse().find(a => a.asset_type === 'source');
+  // Check if assets exist before spreading to avoid error
+  const originalAsset = assets.length > 0 ? [...assets].reverse().find(a => a.asset_type === 'source') : null;
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
@@ -549,4 +548,87 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                 {asset.status === 'approved' ? (
                                     <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded flex items-center gap-1"><CheckCircle size={10}/> APPROVED</span>
                                 ) : asset.status === 'archived' ? (
-                                    <span className="text-[10px] font-bold bg-gray-
+                                    <span className="text-[10px] font-bold bg-gray-100 text-gray-400 px-2 py-0.5 rounded flex items-center gap-1"><XCircle size={10}/> ARCHIVED</span>
+                                ) : asset.status === 'pending' && asset.asset_type === 'proof' ? (
+                                    <span className="text-[10px] font-bold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded animate-pulse">PENDING APPROVAL</span>
+                                ) : (<span></span>)}
+                                {isCurrent && <Eye size={14} className="text-blue-400"/>}
+                            </div>
+                        </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {/* TABBED WIDGET: CHAT & HISTORY */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-2/3 overflow-hidden">
+                <div className="flex border-b border-gray-200">
+                    <button 
+                        onClick={() => setRightTab('chat')}
+                        className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}
+                    >
+                        <MessageSquare size={14}/> Discussion
+                    </button>
+                    {/* CUSTOMERS CAN SEE ACTIVITY LOG TOO, OR HIDE IF PREFERRED */}
+                    <button 
+                        onClick={() => setRightTab('activity')}
+                        className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}
+                    >
+                        <Activity size={14}/> Activity Log
+                    </button>
+                </div>
+                
+                {/* TAB CONTENT */}
+                <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
+                    {/* CHAT VIEW */}
+                    {rightTab === 'chat' && (
+                        <>
+                            {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
+                            {messages.map((msg) => {
+                                const isMe = msg.user_id === user?.id;
+                                return (
+                                    <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                                        <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${isMe ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
+                                        <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.first_name}</span>
+                                    </div>
+                                );
+                            })}
+                            <div ref={messagesEndRef} />
+                        </>
+                    )}
+
+                    {/* ACTIVITY LOG VIEW */}
+                    {rightTab === 'activity' && (
+                        <>
+                            {logs.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No activity recorded yet.</div>}
+                            {logs.map((log) => (
+                                <div key={log.id} className="flex gap-3 text-xs pb-3 border-b border-gray-50 last:border-0">
+                                    <div className="mt-0.5 min-w-[30px] text-gray-400 font-mono text-[9px]">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                                    <div>
+                                        <p className="font-bold text-gray-900">{log.action}</p>
+                                        <p className="text-gray-500">{log.details}</p>
+                                        <p className="text-[9px] text-blue-400 mt-0.5">{log.profiles?.first_name || 'System'}</p>
+                                    </div>
+                                </div>
+                            ))}
+                            <div ref={logsEndRef} />
+                        </>
+                    )}
+                </div>
+
+                {/* INPUT AREA (Only for Chat) */}
+                {rightTab === 'chat' && (
+                    <div className="p-2 border-t border-gray-100 bg-gray-50">
+                        <div className="flex gap-2">
+                            <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-200 text-xs focus:outline-none focus:border-black" placeholder="Type here..." />
+                            <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}
