@@ -22,10 +22,11 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [logs, setLogs] = useState<any[]>([]); 
   const [assets, setAssets] = useState<any[]>([]);
   const [user, setUser] = useState<any>(null);
-  const [isAdmin, setIsAdmin] = useState(false); 
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [currentUserName, setCurrentUserName] = useState(''); // NEW: Store User Name
   const [loading, setLoading] = useState(true);
   
-  // UI State: Restored the Tab Switcher
+  // UI State
   const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat');
   const [showUploadModal, setShowUploadModal] = useState(false);
 
@@ -48,8 +49,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [isSaving, setIsSaving] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const logsEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const logsEndRef = useRef<HTMLDivElement>(null);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -90,9 +91,17 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     const { data: { user } } = await supabase.auth.getUser();
     setUser(user);
 
+    // Fetch Role AND Name to fix the chat error
     if (user) {
-        const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('role, first_name')
+            .eq('id', user.id)
+            .single();
+        
         setIsAdmin(profile?.role === 'admin');
+        // Store name for chat messages
+        setCurrentUserName(profile?.first_name || user.email || 'User'); 
     }
 
     const { data: jobData } = await supabase
@@ -179,7 +188,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
           if (error) throw new Error("Storage Upload failed");
 
-          // KILL SWITCH: Archive all old pending proofs
           await supabase.from('job_assets')
             .update({ status: 'archived' })
             .eq('job_id', params.id)
@@ -190,7 +198,14 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
               job_id: params.id, uploader_id: user.id, file_url: data?.path, file_name: uploadFile.name, asset_type: 'proof', status: 'pending'
           }).select().single();
 
-          if (uploadMessage.trim()) await supabase.from('messages').insert({ job_id: params.id, user_id: user.id, content: `PROOF SENT: ${uploadMessage}` });
+          if (uploadMessage.trim()) {
+              await supabase.from('messages').insert({ 
+                  job_id: params.id, 
+                  user_id: user.id, 
+                  content: `PROOF SENT: ${uploadMessage}`,
+                  sender_name: currentUserName // Fix for chat error
+              });
+          }
           await sendProofNotification(params.id, data?.path || '', uploadMessage);
           await logActivity('Proof Uploaded', `New version sent.`);
 
@@ -212,48 +227,48 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       
       const msg = isAdmin ? 'Admin overrode approval.' : 'Customer approved proof.';
       await logActivity('Proof Approved', msg);
-      await supabase.from('messages').insert({ job_id: params.id, user_id: user.id, content: "✅ APPROVED FOR PRODUCTION" });
+      await supabase.from('messages').insert({ 
+          job_id: params.id, 
+          user_id: user.id, 
+          content: "✅ APPROVED FOR PRODUCTION",
+          sender_name: currentUserName // Fix for chat error
+      });
       
       fetchPageData();
       alert("Job moved to Production!");
   };
 
-  // --- SEND MESSAGE (LOUD DEBUGGING MODE) ---
+  // --- SEND MESSAGE (FIXED) ---
   const handleSendMessage = async () => {
-    // 1. Debug Check
     if (!user) { alert("Error: You seem to be logged out. Refresh the page."); return; }
     if (!newMessage.trim()) return;
 
-    // 2. Snapshot
     const msgContent = newMessage;
     setNewMessage(''); // Clear input instantly
 
-    // 3. Optimistic Update (Instant Show)
+    // Optimistic Update
     const optimisticMsg = {
-        id: Math.random().toString(), // Temp ID
+        id: Math.random().toString(), 
         user_id: user.id,
         content: msgContent,
         created_at: new Date().toISOString(),
-        profiles: { first_name: 'Me', role: isAdmin ? 'admin' : 'customer' }
+        profiles: { first_name: currentUserName, role: isAdmin ? 'admin' : 'customer' }
     };
     setMessages((prev) => [...prev, optimisticMsg]); 
 
-    // 4. Database Send (Verbose Error Check)
-    console.log("Sending chat to DB...", { job_id: params.id, user_id: user.id, content: msgContent });
-
+    // Database Send with sender_name included
     const { data, error } = await supabase.from('messages').insert({ 
         job_id: params.id, 
         user_id: user.id, 
-        content: msgContent 
+        content: msgContent,
+        sender_name: currentUserName // <--- This fixes the 23502 error
     }).select();
 
     if (error) {
         console.error("Chat Error:", error);
-        alert(`CHAT FAILED: ${error.message}\nCode: ${error.code}`);
-        // If it failed, refresh messages to remove the fake one we added
+        alert(`CHAT FAILED: ${error.message}`);
         fetchMessages();
     } else {
-        // Success: sync with real data
         fetchMessages();
     }
   };
@@ -383,10 +398,10 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
             </div>
         </div>
 
-        {/* --- MIDDLE COL (THE PROOF) --- */}
+        {/* --- MIDDLE COL --- */}
         <div className={`col-span-12 ${isAdmin ? 'lg:col-span-6' : 'lg:col-span-9'} flex flex-col gap-4`}>
              
-             {/* CUSTOMER ONLY: GIANT ACTION BAR */}
+             {/* CUSTOMER ACTION BAR */}
              {!isAdmin && isPendingProof && (
                  <div className="bg-blue-600 rounded-xl shadow-lg p-6 flex flex-col md:flex-row items-center justify-between gap-4 text-white">
                      <div>
@@ -404,12 +419,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
              {/* PREVIEW WINDOW */}
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden relative ${isApprovedAsset ? 'border-green-400 ring-4 ring-green-50' : 'border-gray-200'}`} style={{minHeight: '70vh'}}>
-                
-                {/* HEADER BAR */}
                 <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
                     <span className="text-xs font-bold text-gray-500 uppercase">{currentAsset?.file_name || 'No File Selected'}</span>
                     <div className="flex items-center gap-2">
-                         {/* ADMIN ONLY: Small Approve Button */}
                          {isAdmin && isPendingProof && (
                              <button onClick={() => handleApproveProof(currentAsset.id)} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-green-500 shadow-sm flex items-center gap-1">
                                  <ThumbsUp size={12}/> Approve
@@ -419,8 +431,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                          {previewUrl && <a href={previewUrl} download className="text-xs font-bold flex items-center gap-1 text-gray-600 hover:text-black bg-white border px-2 py-1 rounded"><Download size={12}/> Download</a>}
                     </div>
                 </div>
-                
-                {/* PREVIEW CONTENT */}
                 <div className="flex-1 bg-gray-200 flex items-center justify-center p-4 overflow-auto">
                     {!previewUrl ? (
                         <div className="text-gray-400">Select a file to preview</div>
@@ -433,7 +443,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
              </div>
         </div>
 
-        {/* --- RIGHT COL: CHAT & HISTORY (RESTORED TABS) --- */}
+        {/* --- RIGHT COL: CHAT & HISTORY --- */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
             
             {/* FILE LIST */}
@@ -444,9 +454,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
                     {assets.map((asset) => {
-                        // Customer: Hide archived/source. Admin: Show all.
                         if (!isAdmin && (asset.status === 'archived' || asset.asset_type === 'source')) return null;
-                        
                         const isCurrent = viewingAssetId === asset.id;
                         return (
                         <div key={asset.id} onClick={() => loadPreview(asset)} className={`p-2 rounded border cursor-pointer flex justify-between items-center ${isCurrent ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
@@ -461,25 +469,14 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* TABS: CHAT vs ACTIVITY */}
+            {/* TABS */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-3/4 overflow-hidden">
                 <div className="flex border-b border-gray-200">
-                    <button 
-                        onClick={() => setRightTab('chat')}
-                        className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}
-                    >
-                        <MessageSquare size={14}/> Discussion
-                    </button>
-                    <button 
-                        onClick={() => setRightTab('activity')}
-                        className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}
-                    >
-                        <Activity size={14}/> Activity
-                    </button>
+                    <button onClick={() => setRightTab('chat')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><MessageSquare size={14}/> Discussion</button>
+                    <button onClick={() => setRightTab('activity')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><Activity size={14}/> Activity</button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
-                    {/* CHAT TAB */}
                     {rightTab === 'chat' && (
                         <>
                              {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
@@ -488,15 +485,13 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                 return (
                                     <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                                         <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${isMe ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
-                                        <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.first_name}</span>
+                                        <span className="text-[9px] text-gray-400 mt-0.5">{msg.sender_name || msg.profiles?.first_name || 'User'}</span>
                                     </div>
                                 );
                             })}
                             <div ref={messagesEndRef} />
                         </>
                     )}
-
-                    {/* ACTIVITY TAB */}
                     {rightTab === 'activity' && (
                         <>
                             {logs.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No activity yet.</div>}
@@ -515,7 +510,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     )}
                 </div>
 
-                {/* CHAT INPUT (Only shows on chat tab) */}
                 {rightTab === 'chat' && (
                     <div className="p-2 border-t border-gray-100 bg-gray-50 flex gap-2">
                         <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-300 text-xs focus:outline-none focus:border-black" placeholder="Type message..." />
