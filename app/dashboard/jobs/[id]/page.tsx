@@ -6,7 +6,7 @@ import {
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, Maximize2, PlayCircle, ArrowDown, MapPin, Truck, Check, Ruler
+  Activity, Save, Lock, X, UploadCloud, Maximize2, PlayCircle, ArrowDown, MapPin, Truck, Check, Ruler, Edit2, Plus, Trash2
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -29,6 +29,11 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   // UI State
   const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat');
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [isEditingWorkflow, setIsEditingWorkflow] = useState(false); // NEW: Toggle Edit Mode
+
+  // Workflow Edit State
+  const [newStepName, setNewStepName] = useState('');
+  const [newStepDept, setNewStepDept] = useState('Production');
 
   // Upload State
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -102,7 +107,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         setCurrentUserName(profile?.first_name || user.email || 'User'); 
     }
 
-    // UPDATED: Fetches 'size' along with other fields
     const { data: jobData } = await supabase
       .from('jobs')
       .select('*, orders(brands(name)), profiles:user_id(first_name, last_name, email, company, phone)')
@@ -182,7 +186,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       }
   };
 
-  // --- WORKFLOW ACTIONS ---
+  // --- WORKFLOW MANAGEMENT ---
   const handleGenerateWorkflow = async () => {
       const defaultSteps = [
           { name: 'Prepress Check', department: 'Prepress' },
@@ -202,7 +206,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           });
       }
       await fetchWorkflow();
-      alert("Workflow generated!");
   };
 
   const handleCompleteStep = async (step: any) => {
@@ -219,6 +222,32 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       await logActivity('Step Completed', `Completed: ${step.name}`);
       fetchWorkflow();
       fetchPageData(); 
+  };
+
+  // NEW: Add a step manually
+  const handleAddStep = async () => {
+      if (!newStepName.trim()) return;
+      const maxOrder = workflowSteps.length > 0 ? Math.max(...workflowSteps.map(s => s.step_order)) : 0;
+      
+      await supabase.from('job_steps').insert({
+          job_id: params.id,
+          name: newStepName,
+          department: newStepDept,
+          status: 'Waiting', // Default to waiting
+          step_order: maxOrder + 1
+      });
+
+      setNewStepName('');
+      await logActivity('Workflow Updated', `Added step: ${newStepName}`);
+      fetchWorkflow();
+  };
+
+  // NEW: Delete a step
+  const handleDeleteStep = async (stepId: string) => {
+      if (!confirm("Remove this step?")) return;
+      await supabase.from('job_steps').delete().eq('id', stepId);
+      await logActivity('Workflow Updated', `Removed a step`);
+      fetchWorkflow();
   };
 
   // --- UPLOAD (ADMIN) ---
@@ -427,31 +456,67 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         {/* --- LEFT COL (ADMIN ONLY) --- */}
         <div className={`${isAdmin ? 'col-span-12 lg:col-span-3' : 'hidden'} space-y-4`}>
             
-            {/* WORKFLOW LADDER */}
+            {/* WORKFLOW LADDER (EDITABLE) */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 flex items-center gap-2"><ArrowDown size={14}/> Production Workflow</h3>
+                <div className="flex justify-between items-center mb-4">
+                     <h3 className="text-xs font-bold uppercase text-gray-400 flex items-center gap-2"><ArrowDown size={14}/> Production Workflow</h3>
+                     {/* TOGGLE EDIT MODE */}
+                     <button onClick={() => setIsEditingWorkflow(!isEditingWorkflow)} className={`p-1 rounded hover:bg-gray-100 ${isEditingWorkflow ? 'text-blue-600' : 'text-gray-400'}`}>
+                        <Edit2 size={12}/>
+                     </button>
+                </div>
+                
                 {workflowSteps.length === 0 ? (
                     <button onClick={handleGenerateWorkflow} className="w-full py-3 bg-gray-100 border border-dashed border-gray-300 rounded text-xs font-bold text-gray-500 hover:bg-gray-200 flex items-center justify-center gap-2">
                         <PlayCircle size={14}/> Start Workflow
                     </button>
                 ) : (
                     <div className="space-y-0 relative pl-2">
-                        <div className="absolute left-5 top-2 bottom-2 w-0.5 bg-gray-100 z-0"></div>
+                        {!isEditingWorkflow && <div className="absolute left-5 top-2 bottom-2 w-0.5 bg-gray-100 z-0"></div>}
+                        
                         {workflowSteps.map((step) => {
                             const isPending = step.status === 'Pending';
                             const isCompleted = step.status === 'Completed';
                             return (
-                                <div key={step.id} className="relative z-10 flex gap-3 pb-4 last:pb-0 group">
-                                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center bg-white ${isCompleted ? 'border-green-500 text-green-500' : isPending ? 'border-blue-500 text-blue-500 shadow-md ring-2 ring-blue-100' : 'border-gray-200 text-gray-200'}`}>
-                                        {isCompleted ? <Check size={12} strokeWidth={4}/> : <div className={`w-2 h-2 rounded-full ${isPending ? 'bg-blue-500' : 'bg-gray-200'}`}></div>}
-                                    </div>
+                                <div key={step.id} className="relative z-10 flex gap-3 pb-4 last:pb-0 group items-center">
+                                    {isEditingWorkflow ? (
+                                        // EDIT MODE: Trash Icon
+                                        <button onClick={() => handleDeleteStep(step.id)} className="text-red-400 hover:text-red-600 p-1">
+                                            <Trash2 size={14}/>
+                                        </button>
+                                    ) : (
+                                        // VIEW MODE: Status Icon
+                                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center bg-white ${isCompleted ? 'border-green-500 text-green-500' : isPending ? 'border-blue-500 text-blue-500 shadow-md ring-2 ring-blue-100' : 'border-gray-200 text-gray-200'}`}>
+                                            {isCompleted ? <Check size={12} strokeWidth={4}/> : <div className={`w-2 h-2 rounded-full ${isPending ? 'bg-blue-500' : 'bg-gray-200'}`}></div>}
+                                        </div>
+                                    )}
                                     <div className="flex-1 pt-0.5">
-                                        <p className={`text-xs font-bold ${isCompleted ? 'text-gray-400 line-through' : isPending ? 'text-gray-900' : 'text-gray-300'}`}>{step.name}</p>
+                                        <p className={`text-xs font-bold ${!isEditingWorkflow && isCompleted ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{step.name}</p>
                                         <p className="text-[9px] text-gray-400 uppercase">{step.department}</p>
                                     </div>
                                 </div>
                             );
                         })}
+
+                        {/* ADD STEP FORM */}
+                        {isEditingWorkflow && (
+                            <div className="mt-4 pt-4 border-t border-gray-100">
+                                <p className="text-[10px] font-bold uppercase text-gray-400 mb-2">Add Custom Step</p>
+                                <div className="flex flex-col gap-2">
+                                    <input type="text" value={newStepName} onChange={(e) => setNewStepName(e.target.value)} placeholder="e.g. Mailing" className="border rounded px-2 py-1 text-xs w-full"/>
+                                    <select value={newStepDept} onChange={(e) => setNewStepDept(e.target.value)} className="border rounded px-2 py-1 text-xs w-full bg-white">
+                                        <option value="Prepress">Prepress</option>
+                                        <option value="Production">Production</option>
+                                        <option value="Finishing">Finishing</option>
+                                        <option value="Shipping">Shipping</option>
+                                        <option value="Mailing">Mailing</option>
+                                    </select>
+                                    <button onClick={handleAddStep} className="bg-black text-white text-xs font-bold py-1 rounded flex items-center justify-center gap-1">
+                                        <Plus size={12}/> Add
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
