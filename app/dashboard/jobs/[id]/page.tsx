@@ -6,7 +6,7 @@ import {
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, Maximize2, MoreHorizontal
+  Activity, Save, Lock, X, UploadCloud, Maximize2
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -177,14 +177,24 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       setIsUploading(true);
       try {
           const fileName = `${params.id}-proof-${Math.random().toString(36).substring(7)}.${uploadFile.name.split('.').pop()}`;
+          
+          // 1. Upload
           const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
           if (error) throw new Error("Storage Upload failed");
 
-          await supabase.from('job_assets').update({ status: 'archived' }).eq('job_id', params.id).eq('asset_type', 'proof').neq('status', 'archived');
+          // 2. Strong Archive (Kill Switch)
+          await supabase.from('job_assets')
+            .update({ status: 'archived' })
+            .eq('job_id', params.id)
+            .eq('asset_type', 'proof')
+            .neq('status', 'archived');
+
+          // 3. Insert New
           const { data: newAsset } = await supabase.from('job_assets').insert({
               job_id: params.id, uploader_id: user.id, file_url: data?.path, file_name: uploadFile.name, asset_type: 'proof', status: 'pending'
           }).select().single();
 
+          // 4. Notify
           if (uploadMessage.trim()) await supabase.from('messages').insert({ job_id: params.id, user_id: user.id, content: `PROOF SENT: ${uploadMessage}` });
           await sendProofNotification(params.id, data?.path || '', uploadMessage);
           await logActivity('Proof Uploaded', `New version sent.`);
@@ -352,7 +362,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                  </div>
              )}
 
-             {/* 2. ADMIN: SUBTLE HEADER */}
+             {/* 2. ADMIN/CUSTOMER SHARED: PREVIEW WINDOW */}
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden relative ${isApprovedAsset ? 'border-green-400 ring-4 ring-green-50' : 'border-gray-200'}`} style={{minHeight: '70vh'}}>
                 
                 {/* ADMIN HEADER BAR */}
