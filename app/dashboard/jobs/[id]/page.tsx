@@ -1,17 +1,13 @@
 'use client';
 
-import { 
-  // ... existing imports ...
-  LogOut 
-} from 'lucide-react';
-
 import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, DollarSign, 
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, Maximize2, PlayCircle, ArrowDown, MapPin, Truck, Check, Ruler, Edit2, Plus, Trash2
+  Activity, Save, Lock, X, UploadCloud, Maximize2, PlayCircle, 
+  ArrowDown, MapPin, Truck, Check, Ruler, Edit2, Plus, Trash2, LogOut
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -20,6 +16,8 @@ import Link from 'next/link';
 import { sendProofNotification } from '../../../actions'; 
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
+  const router = useRouter(); // Initialize router for redirecting
+  
   // --- STATE ---
   const [job, setJob] = useState<any>(null);
   const [workflowSteps, setWorkflowSteps] = useState<any[]>([]); 
@@ -34,7 +32,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   // UI State
   const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat');
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [isEditingWorkflow, setIsEditingWorkflow] = useState(false); // NEW: Toggle Edit Mode
+  const [isEditingWorkflow, setIsEditingWorkflow] = useState(false); // Toggle Edit Mode
 
   // Workflow Edit State
   const [newStepName, setNewStepName] = useState('');
@@ -176,6 +174,12 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       if (!user) return;
       await supabase.from('job_logs').insert({ job_id: params.id, user_id: user.id, action, details });
       fetchLogs();
+  };
+
+  // NEW: Sign Out Handler
+  const handleSignOut = async () => {
+      await supabase.auth.signOut();
+      router.push('/login');
   };
 
   const loadPreview = async (asset: any) => {
@@ -413,6 +417,12 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                   {isApprovedAsset ? 'In Production' : 'Action Required'}
                </div>
              )}
+             
+             {/* SIGN OUT BUTTON */}
+             <button onClick={handleSignOut} className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors ml-2 border border-gray-200 hover:border-red-200">
+                <LogOut size={16} />
+                Sign Out
+             </button>
           </div>
         </div>
       </div>
