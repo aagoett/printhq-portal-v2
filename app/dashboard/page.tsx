@@ -19,7 +19,7 @@ type Job = {
   created_at: string;
   due_date?: string; 
   quantity: number;
-  size?: string; // NEW: Added Size
+  size?: string;
   notes: string;
   user_id: string;
   paper_stock?: string;
@@ -28,8 +28,8 @@ type Job = {
   next_step_id?: string;
   assigned_to?: string; 
   csr_name?: string; 
-  brand?: string; // Legacy fallback
-  orders?: { brands?: { name: string } }; // NEW: Relation
+  brand?: string; 
+  orders?: { brands?: { name: string } }; 
   order_id?: string; 
 };
 
@@ -53,7 +53,7 @@ type CartItem = {
   file: File;
   title: string;
   quantity: number;
-  size: string; // NEW: Added Size
+  size: string;
   notes: string;
   paper_stock: string;
 };
@@ -75,7 +75,7 @@ export default function Dashboard() {
   const [customers, setCustomers] = useState<Profile[]>([]);
   const [staff, setStaff] = useState<Profile[]>([]); 
   const [stockLibrary, setStockLibrary] = useState<PaperStock[]>([]);
-  const [brandList, setBrandList] = useState<Brand[]>([]); // NEW: Dynamic Brands
+  const [brandList, setBrandList] = useState<Brand[]>([]);
    
   const [departmentTabs, setDepartmentTabs] = useState<string[]>(['My Queue', 'All']);
   const [activeTab, setActiveTab] = useState('All'); 
@@ -85,12 +85,12 @@ export default function Dashboard() {
    
   // --- CART STATE ---
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [selectedBrandId, setSelectedBrandId] = useState(''); // NEW: Using ID now
+  const [selectedBrandId, setSelectedBrandId] = useState('');
    
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
-  const [jobSize, setJobSize] = useState(''); // NEW: Size State
+  const [jobSize, setJobSize] = useState('');
   const [jobNotes, setJobNotes] = useState('');
    
   // PAPER STOCK LOGIC
@@ -125,10 +125,9 @@ export default function Dashboard() {
     setRole(userRole);
     const isInternal = userRole === 'admin' || userRole === 'staff';
 
-    // NEW: Fetch jobs AND join the brand name
     let jobQuery = supabase
         .from('jobs')
-        .select('*, orders(brands(name))') // Deep fetch
+        .select('*, orders(brands(name))') 
         .order('created_at', { ascending: false });
 
     if (!isInternal) jobQuery = jobQuery.eq('user_id', user.id);
@@ -148,14 +147,12 @@ export default function Dashboard() {
       setJobs(processedJobs);
     }
 
-    // Load Paper Library
     const { data: stockData } = await supabase.from('paper_stocks').select('*').order('name');
     if (stockData) {
         setStockLibrary(stockData);
         if (stockData.length > 0) setSelectedStockId(stockData[0].name);
     }
 
-    // NEW: Load Brands from DB
     const { data: brandsData } = await supabase.from('brands').select('*');
     if (brandsData) {
         setBrandList(brandsData);
@@ -196,9 +193,36 @@ export default function Dashboard() {
     await supabase.from('jobs').update({ assigned_to: staffId, csr_name: staffName }).eq('id', jobId);
   };
 
+  // --- FIXED: ROBUST STEP ADVANCEMENT ---
   const handleQuickAdvance = async (job: Job) => {
     if (!job.next_step_id) return;
+
+    // 1. Get info about the current step
+    const { data: currentStep } = await supabase.from('job_steps').select('step_order').eq('id', job.next_step_id).single();
+    if (!currentStep) return;
+
+    // 2. Mark current step complete
     await supabase.from('job_steps').update({ status: 'Completed' }).eq('id', job.next_step_id);
+
+    // 3. Find the NEXT step (next highest order)
+    const { data: nextStep } = await supabase
+        .from('job_steps')
+        .select('*')
+        .eq('job_id', job.id)
+        .gt('step_order', currentStep.step_order)
+        .order('step_order', { ascending: true })
+        .limit(1)
+        .single();
+
+    if (nextStep) {
+        // 4a. Activate next step
+        await supabase.from('job_steps').update({ status: 'Pending' }).eq('id', nextStep.id);
+        await supabase.from('jobs').update({ status: nextStep.department }).eq('id', job.id);
+    } else {
+        // 4b. Job Done
+        await supabase.from('jobs').update({ status: 'Completed' }).eq('id', job.id);
+    }
+
     fetchDashboardData();
   };
 
@@ -215,7 +239,7 @@ export default function Dashboard() {
     setCurrentFile(null);
     setJobTitle('');
     setJobQty('');
-    setJobSize(''); // Reset Size
+    setJobSize('');
     setJobNotes('');
     if (stockLibrary.length > 0) setSelectedStockId(stockLibrary[0].name);
     setCustomStockValue('');
@@ -246,7 +270,7 @@ export default function Dashboard() {
       file: currentFile,
       title: jobTitle,
       quantity: parseInt(jobQty),
-      size: jobSize || 'N/A', // Save Size
+      size: jobSize || 'N/A', 
       notes: jobNotes,
       paper_stock: finalStock
     };
@@ -279,13 +303,12 @@ export default function Dashboard() {
           }
       }
 
-      // NEW: Use brand_id logic
       const { data: newOrder, error: orderError } = await supabase
         .from('orders')
         .insert({ 
             user_id: finalUserId, 
             status: 'New', 
-            brand_id: selectedBrandId // Using relation now
+            brand_id: selectedBrandId 
         })
         .select().single();
 
@@ -298,7 +321,6 @@ export default function Dashboard() {
         
         if (uploadError) console.error("File upload failed for " + item.title, uploadError);
 
-        // NEW: Insert Size column
         const { data: newJob, error: jobError } = await supabase
           .from('jobs')
           .insert({
@@ -307,7 +329,7 @@ export default function Dashboard() {
             guest_email: isNewCustomer ? finalEmail : null,
             title: item.title,
             quantity: item.quantity,
-            size: item.size, // Saving Size to DB
+            size: item.size, 
             notes: item.notes,
             file_url: fileData?.path,
             status: 'Pending Review',
@@ -348,7 +370,6 @@ export default function Dashboard() {
     }
   };
 
-  // --- HELPERS ---
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       month: 'short', day: 'numeric'
@@ -385,7 +406,6 @@ export default function Dashboard() {
     <div className="flex h-screen bg-gray-50 relative">
       <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
 
-      {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
           <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 my-8 flex flex-col max-h-[90vh]">
@@ -419,7 +439,6 @@ export default function Dashboard() {
                   </div>
                 )}
                  
-                {/* BRAND SELECTOR (Now Dynamic) */}
                 <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
                   <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Company / Brand</label>
                   <select value={selectedBrandId} onChange={(e) => setSelectedBrandId(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 bg-white text-sm outline-none font-bold">
@@ -487,7 +506,6 @@ export default function Dashboard() {
                         <input type="number" placeholder="Qty" value={jobQty} onChange={(e) => setJobQty(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
                       </div>
                       <div className="col-span-2">
-                        {/* NEW: Size Input */}
                         <input type="text" placeholder="Size (e.g. 8.5x11)" value={jobSize} onChange={(e) => setJobSize(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
                       </div>
                     </div>
@@ -614,17 +632,14 @@ export default function Dashboard() {
                     {filteredJobs.map((job: any) => {
                       const dueStatus = getDueStatus(job.due_date);
                       
-                      // Resolve Customer Info
                       const customerProfile = customers.find(c => c.id === job.user_id);
                       const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
                       
-                      // NEW: Use dynamic brand name if available
                       const brandName = job.orders?.brands?.name || 'PrintHQ';
                       
                       return (
                       <tr key={job.id} className="hover:bg-gray-50 transition-colors group">
                         
-                        {/* 1. TIMELINE */}
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex flex-col gap-1">
                              <div className="text-[10px] text-gray-400 font-bold uppercase">In: {formatDate(job.created_at)}</div>
@@ -632,7 +647,6 @@ export default function Dashboard() {
                           </div>
                         </td>
 
-                        {/* 2. CUSTOMER */}
                         <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
                                 <div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">
@@ -645,26 +659,22 @@ export default function Dashboard() {
                             </div>
                         </td>
 
-                        {/* 3. JOB DETAILS */}
                         <td className="px-6 py-4">
                           <Link href={`/dashboard/jobs/${job.id}`} className="block group-hover:text-blue-600 transition-colors">
                               <div className="font-bold text-gray-900 text-base">{job.title}</div>
                           </Link>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="font-mono text-[10px] text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span>
-                            {/* NEW: Show Size */}
                             {job.size && <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-500 font-bold flex items-center gap-1"><Ruler size={8}/> {job.size}</span>}
                           </div>
                         </td>
 
-                        {/* 4. STATION */}
                         <td className="px-6 py-4">
                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide ${job.current_step === 'Complete' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
                              {job.current_step || 'Processing'}
                            </span>
                         </td>
 
-                        {/* 5. TEAM */}
                         <td className="px-6 py-4">
                            <select 
                              value={job.assigned_to || ''} 
@@ -680,7 +690,6 @@ export default function Dashboard() {
                            </select>
                         </td>
 
-                        {/* 6. ACTIONS */}
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
                             {job.next_step_id && (
@@ -746,7 +755,6 @@ function StatusCard({ job, formatDate, dueStatus }: { job: Job, formatDate: (d: 
              <span className="text-xs text-gray-400 flex items-center"><Clock size={12} className="mr-1" /> {formatDate(job.created_at)}</span>
         </div>
         
-        {/* DUE DATE BADGE ON CARD */}
         <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
             <span className="text-[10px] font-bold uppercase text-gray-400">{brandName}</span>
             <span className={`text-xs ${dueStatus.color}`}>{dueStatus.label}</span>
