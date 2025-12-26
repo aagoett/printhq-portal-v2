@@ -218,12 +218,44 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       alert("Job moved to Production!");
   };
 
+  // --- SEND MESSAGE (LOUD DEBUGGING MODE) ---
   const handleSendMessage = async () => {
-    if (!newMessage.trim() || !user) return;
-    const msgToSend = newMessage;
-    setNewMessage('');
-    await supabase.from('messages').insert({ job_id: params.id, user_id: user.id, content: msgToSend });
-    fetchMessages();
+    // 1. Debug Check
+    if (!user) { alert("Error: You seem to be logged out. Refresh the page."); return; }
+    if (!newMessage.trim()) return;
+
+    // 2. Snapshot
+    const msgContent = newMessage;
+    setNewMessage(''); // Clear input instantly
+
+    // 3. Optimistic Update (Instant Show)
+    const optimisticMsg = {
+        id: Math.random().toString(), // Temp ID
+        user_id: user.id,
+        content: msgContent,
+        created_at: new Date().toISOString(),
+        profiles: { first_name: 'Me', role: isAdmin ? 'admin' : 'customer' }
+    };
+    setMessages((prev) => [...prev, optimisticMsg]); 
+
+    // 4. Database Send (Verbose Error Check)
+    console.log("Sending chat to DB...", { job_id: params.id, user_id: user.id, content: msgContent });
+
+    const { data, error } = await supabase.from('messages').insert({ 
+        job_id: params.id, 
+        user_id: user.id, 
+        content: msgContent 
+    }).select();
+
+    if (error) {
+        console.error("Chat Error:", error);
+        alert(`CHAT FAILED: ${error.message}\nCode: ${error.code}`);
+        // If it failed, refresh messages to remove the fake one we added
+        fetchMessages();
+    } else {
+        // Success: sync with real data
+        fetchMessages();
+    }
   };
 
   const handleSaveNotes = async () => {
