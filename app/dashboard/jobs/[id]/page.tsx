@@ -11,12 +11,13 @@ import {
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
+// Ensure this path matches your project structure
 import { sendProofNotification } from '../../../actions'; 
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
   // --- STATE ---
   const [job, setJob] = useState<any>(null);
-  const [workflowSteps, setWorkflowSteps] = useState<any[]>([]); // NEW: Full Ladder
+  const [workflowSteps, setWorkflowSteps] = useState<any[]>([]); 
   const [messages, setMessages] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]); 
   const [assets, setAssets] = useState<any[]>([]);
@@ -170,7 +171,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
   // --- WORKFLOW ACTIONS ---
   const handleGenerateWorkflow = async () => {
-      // Default Ladder
       const defaultSteps = [
           { name: 'Prepress Check', department: 'Prepress' },
           { name: 'RIP & Print', department: 'Production' },
@@ -184,7 +184,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
               job_id: params.id,
               name: defaultSteps[i].name,
               department: defaultSteps[i].department,
-              status: i === 0 ? 'Pending' : 'Waiting', // First one is Pending
+              status: i === 0 ? 'Pending' : 'Waiting',
               step_order: i + 1
           });
       }
@@ -193,23 +193,19 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   };
 
   const handleCompleteStep = async (step: any) => {
-      // 1. Mark current as Completed
       await supabase.from('job_steps').update({ status: 'Completed', completed_at: new Date().toISOString() }).eq('id', step.id);
       
-      // 2. Find next step and mark Pending
       const nextStep = workflowSteps.find(s => s.step_order === step.step_order + 1);
       if (nextStep) {
           await supabase.from('job_steps').update({ status: 'Pending' }).eq('id', nextStep.id);
-          // Update parent Job Status
           await supabase.from('jobs').update({ status: nextStep.department }).eq('id', params.id);
       } else {
-          // No next step? Job is Done.
           await supabase.from('jobs').update({ status: 'Completed' }).eq('id', params.id);
       }
 
       await logActivity('Step Completed', `Completed: ${step.name}`);
       fetchWorkflow();
-      fetchPageData(); // Refresh header
+      fetchPageData(); 
   };
 
   // --- UPLOAD (ADMIN) ---
@@ -291,11 +287,26 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     else { fetchMessages(); }
   };
 
+  // --- NOTES (FIXED ERROR HANDLING) ---
   const handleSaveNotes = async () => {
       setIsSaving(true);
-      await supabase.from('jobs').update({ internal_notes: internalNotes }).eq('id', params.id);
-      await logActivity('Notes Updated', 'Updated internal notes.');
-      setIsSaving(false); alert('Notes saved.');
+      
+      // 1. Try to update
+      const { error } = await supabase
+        .from('jobs')
+        .update({ internal_notes: internalNotes })
+        .eq('id', params.id);
+
+      // 2. Alert if it failed
+      if (error) {
+          console.error("Save Note Error:", error);
+          alert(`FAILED TO SAVE: ${error.message}\n(Make sure 'internal_notes' column exists in database!)`);
+      } else {
+          await logActivity('Notes Updated', 'Updated internal notes.');
+          alert('Notes saved successfully.');
+      }
+      
+      setIsSaving(false);
   };
 
   const toggleFinishingOption = async (optionName: string) => {
@@ -309,7 +320,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   if (loading) return <div className="p-12 text-center">Loading...</div>;
   if (!job) return <div className="p-12 text-center">Job not found</div>;
 
-  const currentDepartment = activeStep ? activeStep.department : job.status;
+  const currentDepartment = job.status; // Using simple job status for header
   const currentAsset = assets.find(a => a.id === viewingAssetId);
   const isApprovedAsset = currentAsset?.status === 'approved';
   const isPendingProof = currentAsset?.asset_type === 'proof' && currentAsset?.status === 'pending';
@@ -380,7 +391,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         {/* --- LEFT COL (ADMIN ONLY) --- */}
         <div className={`${isAdmin ? 'col-span-12 lg:col-span-3' : 'hidden'} space-y-4`}>
             
-            {/* WORKFLOW LADDER (NEW) */}
+            {/* WORKFLOW LADDER */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 flex items-center gap-2"><ArrowDown size={14}/> Production Workflow</h3>
                 
@@ -390,7 +401,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     </button>
                 ) : (
                     <div className="space-y-0 relative">
-                        {/* Vertical Line */}
                         <div className="absolute left-3 top-2 bottom-2 w-0.5 bg-gray-100 z-0"></div>
                         
                         {workflowSteps.map((step) => {
