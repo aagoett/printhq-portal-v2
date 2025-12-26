@@ -287,23 +287,23 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     else { fetchMessages(); }
   };
 
-  // --- NOTES (FIXED ERROR HANDLING) ---
+  // --- NOTES (FIXED: LOGS TO ACTIVITY) ---
   const handleSaveNotes = async () => {
       setIsSaving(true);
       
-      // 1. Try to update
+      // 1. Update the scratchpad
       const { error } = await supabase
         .from('jobs')
         .update({ internal_notes: internalNotes })
         .eq('id', params.id);
 
-      // 2. Alert if it failed
       if (error) {
           console.error("Save Note Error:", error);
-          alert(`FAILED TO SAVE: ${error.message}\n(Make sure 'internal_notes' column exists in database!)`);
+          alert(`FAILED TO SAVE: ${error.message}`);
       } else {
-          await logActivity('Notes Updated', 'Updated internal notes.');
-          alert('Notes saved successfully.');
+          // 2. Add to Activity Log so it is "Displayed"
+          await logActivity('Note Added', `"${internalNotes}"`);
+          alert('Note saved and logged to Activity.');
       }
       
       setIsSaving(false);
