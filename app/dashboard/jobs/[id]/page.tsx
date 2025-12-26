@@ -11,6 +11,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
+// Ensure this path matches your project structure
 import { sendProofNotification } from '../../../actions'; 
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
@@ -24,7 +25,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [isAdmin, setIsAdmin] = useState(false); 
   const [loading, setLoading] = useState(true);
   
-  // UI State
+  // UI State: Restored the Tab Switcher
   const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat');
   const [showUploadModal, setShowUploadModal] = useState(false);
 
@@ -44,13 +45,11 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   // Input State
   const [newMessage, setNewMessage] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
-  const [quoteAmount, setQuoteAmount] = useState('');
-  const [dueDate, setDueDate] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -61,6 +60,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     fetchPageData();
 
+    // Realtime subscriptions
     const chatChannel = supabase.channel('job_chat')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, () => fetchMessages())
       .subscribe();
@@ -102,9 +102,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       .single();
     
     setJob(jobData);
-    if (jobData?.quote_price) setQuoteAmount(jobData.quote_price);
     if (jobData?.internal_notes) setInternalNotes(jobData.internal_notes);
-    if (jobData?.due_date) setDueDate(new Date(jobData.due_date).toISOString().split('T')[0]);
 
     const { data: stepData } = await supabase
       .from('job_steps')
@@ -156,6 +154,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   };
 
   const loadPreview = async (asset: any) => {
+      if (!asset) return;
       setViewingAssetId(asset.id);
       const { data } = await supabase.storage.from('uploads').createSignedUrl(asset.file_url, 3600);
       if (data?.signedUrl) {
@@ -177,24 +176,20 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       setIsUploading(true);
       try {
           const fileName = `${params.id}-proof-${Math.random().toString(36).substring(7)}.${uploadFile.name.split('.').pop()}`;
-          
-          // 1. Upload
           const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
           if (error) throw new Error("Storage Upload failed");
 
-          // 2. Strong Archive (Kill Switch)
+          // KILL SWITCH: Archive all old pending proofs
           await supabase.from('job_assets')
             .update({ status: 'archived' })
             .eq('job_id', params.id)
             .eq('asset_type', 'proof')
             .neq('status', 'archived');
 
-          // 3. Insert New
           const { data: newAsset } = await supabase.from('job_assets').insert({
               job_id: params.id, uploader_id: user.id, file_url: data?.path, file_name: uploadFile.name, asset_type: 'proof', status: 'pending'
           }).select().single();
 
-          // 4. Notify
           if (uploadMessage.trim()) await supabase.from('messages').insert({ job_id: params.id, user_id: user.id, content: `PROOF SENT: ${uploadMessage}` });
           await sendProofNotification(params.id, data?.path || '', uploadMessage);
           await logActivity('Proof Uploaded', `New version sent.`);
@@ -253,6 +248,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const currentAsset = assets.find(a => a.id === viewingAssetId);
   const isApprovedAsset = currentAsset?.status === 'approved';
   const isPendingProof = currentAsset?.asset_type === 'proof' && currentAsset?.status === 'pending';
+  const originalAsset = assets.length > 0 ? [...assets].reverse().find(a => a.asset_type === 'source') : null;
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
@@ -301,7 +297,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-       {/* 2. ADMIN: PRODUCTION STATUS BAR / CUSTOMER: HIDDEN */}
+       {/* 2. ADMIN HERO (Black Bar) */}
        {isAdmin && (
            <div className="bg-gray-800 text-white shadow-xl">
               <div className="max-w-[1920px] mx-auto flex flex-col md:flex-row">
@@ -317,8 +313,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       <div className="flex-1 max-w-[1920px] mx-auto w-full p-4 grid grid-cols-12 gap-4">
         
         {/* --- LEFT COL (ADMIN ONLY) --- */}
-        {isAdmin && (
-        <div className="col-span-12 lg:col-span-3 space-y-4">
+        <div className={`${isAdmin ? 'col-span-12 lg:col-span-3' : 'hidden'} space-y-4`}>
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 flex items-center gap-2"><Layers size={14}/> Job Specs</h3>
                 <div className="space-y-3 text-sm">
@@ -340,13 +335,26 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} className="w-full h-20 bg-white border border-yellow-300 rounded p-2 text-xs mb-2" />
                 <button onClick={handleSaveNotes} disabled={isSaving} className="w-full bg-yellow-400 text-yellow-900 text-xs font-bold py-1 rounded">Save Notes</button>
             </div>
+            <div className="bg-blue-50 rounded-lg border border-blue-100 p-4">
+                <h3 className="text-xs font-bold uppercase text-blue-800 mb-2 flex items-center gap-2"><FileText size={14}/> Original Asset</h3>
+                {originalAsset ? (
+                    <div onClick={() => loadPreview(originalAsset)} className="flex items-center gap-3 p-2 bg-white rounded border border-blue-200 cursor-pointer hover:border-blue-400 transition-all">
+                        <div className="bg-blue-100 p-2 rounded text-blue-600"><FileImage size={20}/></div>
+                        <div className="overflow-hidden">
+                            <p className="text-xs font-bold text-gray-900 truncate w-32">{originalAsset.file_name}</p>
+                            <p className="text-[10px] text-gray-500">Click to view</p>
+                        </div>
+                    </div>
+                ) : (
+                    <p className="text-xs text-blue-400 italic">No source file found.</p>
+                )}
+            </div>
         </div>
-        )}
 
         {/* --- MIDDLE COL (THE PROOF) --- */}
         <div className={`col-span-12 ${isAdmin ? 'lg:col-span-6' : 'lg:col-span-9'} flex flex-col gap-4`}>
              
-             {/* 1. CUSTOMER: GIANT ACTION BAR */}
+             {/* CUSTOMER ONLY: GIANT ACTION BAR */}
              {!isAdmin && isPendingProof && (
                  <div className="bg-blue-600 rounded-xl shadow-lg p-6 flex flex-col md:flex-row items-center justify-between gap-4 text-white">
                      <div>
@@ -362,14 +370,14 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                  </div>
              )}
 
-             {/* 2. ADMIN/CUSTOMER SHARED: PREVIEW WINDOW */}
+             {/* PREVIEW WINDOW */}
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden relative ${isApprovedAsset ? 'border-green-400 ring-4 ring-green-50' : 'border-gray-200'}`} style={{minHeight: '70vh'}}>
                 
-                {/* ADMIN HEADER BAR */}
+                {/* HEADER BAR */}
                 <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
                     <span className="text-xs font-bold text-gray-500 uppercase">{currentAsset?.file_name || 'No File Selected'}</span>
                     <div className="flex items-center gap-2">
-                         {/* ADMIN APPROVE BUTTON (Small) */}
+                         {/* ADMIN ONLY: Small Approve Button */}
                          {isAdmin && isPendingProof && (
                              <button onClick={() => handleApproveProof(currentAsset.id)} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-green-500 shadow-sm flex items-center gap-1">
                                  <ThumbsUp size={12}/> Approve
@@ -380,7 +388,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     </div>
                 </div>
                 
-                {/* PREVIEW */}
+                {/* PREVIEW CONTENT */}
                 <div className="flex-1 bg-gray-200 flex items-center justify-center p-4 overflow-auto">
                     {!previewUrl ? (
                         <div className="text-gray-400">Select a file to preview</div>
@@ -393,53 +401,95 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
              </div>
         </div>
 
-        {/* --- RIGHT COL: CHAT & HISTORY --- */}
+        {/* --- RIGHT COL: CHAT & HISTORY (RESTORED TABS) --- */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
             
             {/* FILE LIST */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/3">
-                <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/4">
+                <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                      <h3 className="text-xs font-bold uppercase text-gray-500">Versions</h3>
                      {isAdmin && <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold">+ Proof</button>}
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
                     {assets.map((asset) => {
+                        // Customer: Hide archived/source. Admin: Show all.
                         if (!isAdmin && (asset.status === 'archived' || asset.asset_type === 'source')) return null;
+                        
                         const isCurrent = viewingAssetId === asset.id;
                         return (
-                        <div key={asset.id} onClick={() => loadPreview(asset)} className={`p-3 rounded border cursor-pointer ${isCurrent ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
-                            <div className="flex justify-between items-center">
-                                <span className="text-xs font-bold text-gray-700 truncate">{asset.file_name}</span>
-                                {asset.status === 'approved' && <CheckCircle size={14} className="text-green-500"/>}
+                        <div key={asset.id} onClick={() => loadPreview(asset)} className={`p-2 rounded border cursor-pointer flex justify-between items-center ${isCurrent ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
+                            <div>
+                                <p className="text-xs font-bold text-gray-700 truncate w-32">{asset.file_name}</p>
+                                <p className="text-[9px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</p>
                             </div>
-                            <p className="text-[10px] text-gray-400 mt-1">{new Date(asset.created_at).toLocaleDateString()}</p>
+                            {asset.status === 'approved' && <CheckCircle size={14} className="text-green-500"/>}
                         </div>
                         );
                     })}
                 </div>
             </div>
 
-            {/* CHAT */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-2/3 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-                    <h3 className="text-xs font-bold uppercase text-gray-500">Messages</h3>
+            {/* TABS: CHAT vs ACTIVITY */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-3/4 overflow-hidden">
+                <div className="flex border-b border-gray-200">
+                    <button 
+                        onClick={() => setRightTab('chat')}
+                        className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}
+                    >
+                        <MessageSquare size={14}/> Discussion
+                    </button>
+                    <button 
+                        onClick={() => setRightTab('activity')}
+                        className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}
+                    >
+                        <Activity size={14}/> Activity
+                    </button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                    {messages.map((msg) => {
-                        const isMe = msg.user_id === user?.id;
-                        return (
-                            <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                                <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${isMe ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
-                                <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.first_name}</span>
-                            </div>
-                        );
-                    })}
-                    <div ref={messagesEndRef} />
+
+                <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
+                    {/* CHAT TAB */}
+                    {rightTab === 'chat' && (
+                        <>
+                             {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
+                             {messages.map((msg) => {
+                                const isMe = msg.user_id === user?.id;
+                                return (
+                                    <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                                        <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${isMe ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
+                                        <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.first_name}</span>
+                                    </div>
+                                );
+                            })}
+                            <div ref={messagesEndRef} />
+                        </>
+                    )}
+
+                    {/* ACTIVITY TAB */}
+                    {rightTab === 'activity' && (
+                        <>
+                            {logs.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No activity yet.</div>}
+                            {logs.map((log) => (
+                                <div key={log.id} className="flex gap-3 text-xs pb-3 border-b border-gray-50 last:border-0">
+                                    <div className="mt-0.5 min-w-[30px] text-gray-400 font-mono text-[9px]">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                                    <div>
+                                        <p className="font-bold text-gray-900">{log.action}</p>
+                                        <p className="text-gray-500">{log.details}</p>
+                                        <p className="text-[9px] text-blue-400 mt-0.5">{log.profiles?.first_name || 'System'}</p>
+                                    </div>
+                                </div>
+                            ))}
+                            <div ref={logsEndRef} />
+                        </>
+                    )}
                 </div>
-                <div className="p-2 border-t border-gray-100 bg-gray-50 flex gap-2">
-                    <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-300 text-xs focus:outline-none focus:border-black" placeholder="Ask a question..." />
-                    <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
-                </div>
+
+                {/* CHAT INPUT (Only shows on chat tab) */}
+                {rightTab === 'chat' && (
+                    <div className="p-2 border-t border-gray-100 bg-gray-50 flex gap-2">
+                        <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-300 text-xs focus:outline-none focus:border-black" placeholder="Type message..." />
+                        <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
+                    </div>
+                )}
             </div>
 
         </div>
