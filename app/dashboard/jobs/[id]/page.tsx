@@ -6,7 +6,7 @@ import {
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, Maximize2
+  Activity, Save, Lock, X, UploadCloud, Maximize2, MoreHorizontal
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -132,7 +132,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         const approved = data.find((a: any) => a.status === 'approved');
         const latestProof = data.find((a: any) => a.asset_type === 'proof' && a.status !== 'archived');
         
-        // Always prefer the latest proof for customers
         if (!viewingAssetId) {
              loadPreview(approved || latestProof || data[0]);
         }
@@ -181,7 +180,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
           if (error) throw new Error("Storage Upload failed");
 
-          await supabase.from('job_assets').update({ status: 'archived' }).eq('job_id', params.id).eq('asset_type', 'proof').eq('status', 'pending');
+          await supabase.from('job_assets').update({ status: 'archived' }).eq('job_id', params.id).eq('asset_type', 'proof').neq('status', 'archived');
           const { data: newAsset } = await supabase.from('job_assets').insert({
               job_id: params.id, uploader_id: user.id, file_url: data?.path, file_name: uploadFile.name, asset_type: 'proof', status: 'pending'
           }).select().single();
@@ -190,13 +189,17 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           await sendProofNotification(params.id, data?.path || '', uploadMessage);
           await logActivity('Proof Uploaded', `New version sent.`);
 
-          if (newAsset) { await fetchAssets(); loadPreview(newAsset); }
+          if (newAsset) { 
+              const { data: refreshed } = await supabase.from('job_assets').select('*, profiles(first_name, email)').eq('job_id', params.id).order('created_at', { ascending: false });
+              if (refreshed) setAssets(refreshed);
+              loadPreview(newAsset); 
+          }
           setShowUploadModal(false); setUploadFile(null); setUploadMessage('');
-          alert("Proof sent!");
+          alert("Proof sent! Previous versions archived.");
       } catch (error: any) { alert("Error: " + error.message); } finally { setIsUploading(false); }
   };
 
-  // --- APPROVAL (CUSTOMER) ---
+  // --- APPROVAL ---
   const handleApproveProof = async (assetId: string) => {
       if (!confirm("Confirm Approval? This will send the job to production.")) return;
       await supabase.from('job_assets').update({ status: 'approved' }).eq('id', assetId);
@@ -207,7 +210,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       await supabase.from('messages').insert({ job_id: params.id, user_id: user.id, content: "✅ APPROVED FOR PRODUCTION" });
       
       fetchPageData();
-      alert("Artwork Approved! We are starting production.");
+      alert("Job moved to Production!");
   };
 
   const handleSendMessage = async () => {
@@ -218,7 +221,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     fetchMessages();
   };
 
-  // --- ADMIN TOOLS ---
   const handleSaveNotes = async () => {
       setIsSaving(true);
       await supabase.from('jobs').update({ internal_notes: internalNotes }).eq('id', params.id);
@@ -282,7 +284,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
              </div>
           </div>
           <div className="flex gap-2">
-             {/* Only Admin needs to see "Prepress" etc. Customer sees simple status. */}
              <div className={`px-4 py-1 rounded-md text-white font-bold uppercase text-xs flex items-center ${isAdmin ? 'bg-black' : (isApprovedAsset ? 'bg-green-600' : 'bg-yellow-500')}`}>
                 {isAdmin ? currentDepartment : (isApprovedAsset ? 'In Production' : 'Action Required')}
              </div>
@@ -332,15 +333,15 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
         )}
 
-        {/* --- MIDDLE COL (THE PROOF) - EXPANDS FOR CUSTOMER --- */}
+        {/* --- MIDDLE COL (THE PROOF) --- */}
         <div className={`col-span-12 ${isAdmin ? 'lg:col-span-6' : 'lg:col-span-9'} flex flex-col gap-4`}>
              
-             {/* CUSTOMER ACTION BAR (THE GIANT BUTTON) */}
-             {isPendingProof && (
+             {/* 1. CUSTOMER: GIANT ACTION BAR */}
+             {!isAdmin && isPendingProof && (
                  <div className="bg-blue-600 rounded-xl shadow-lg p-6 flex flex-col md:flex-row items-center justify-between gap-4 text-white">
                      <div>
                          <h2 className="text-2xl font-black uppercase">Proof Ready for Approval</h2>
-                         <p className="opacity-90">Please review the artwork below carefully. Check for spelling and layout.</p>
+                         <p className="opacity-90">Please review the artwork below carefully.</p>
                      </div>
                      <div className="flex gap-3 w-full md:w-auto">
                         <button onClick={() => setRightTab('chat')} className="flex-1 md:flex-none px-6 py-4 rounded-lg bg-blue-700 hover:bg-blue-800 font-bold border border-blue-500 text-sm">Request Changes</button>
@@ -351,25 +352,25 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                  </div>
              )}
 
-             {isApprovedAsset && (
-                 <div className="bg-green-100 rounded-xl border border-green-300 p-6 flex items-center gap-4 text-green-800">
-                     <CheckCircle size={32} className="text-green-600"/>
-                     <div>
-                         <h2 className="text-xl font-black uppercase">Production Approved</h2>
-                         <p className="text-sm">We are working on your order. No further action is required.</p>
-                     </div>
-                 </div>
-             )}
-
-             {/* PREVIEW WINDOW */}
+             {/* 2. ADMIN: SUBTLE HEADER */}
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden relative ${isApprovedAsset ? 'border-green-400 ring-4 ring-green-50' : 'border-gray-200'}`} style={{minHeight: '70vh'}}>
+                
+                {/* ADMIN HEADER BAR */}
                 <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
                     <span className="text-xs font-bold text-gray-500 uppercase">{currentAsset?.file_name || 'No File Selected'}</span>
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-2">
+                         {/* ADMIN APPROVE BUTTON (Small) */}
+                         {isAdmin && isPendingProof && (
+                             <button onClick={() => handleApproveProof(currentAsset.id)} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-green-500 shadow-sm flex items-center gap-1">
+                                 <ThumbsUp size={12}/> Approve
+                             </button>
+                         )}
                          {previewUrl && <a href={previewUrl} target="_blank" className="text-xs font-bold flex items-center gap-1 text-gray-600 hover:text-black bg-white border px-2 py-1 rounded"><Maximize2 size={12}/> Fullscreen</a>}
                          {previewUrl && <a href={previewUrl} download className="text-xs font-bold flex items-center gap-1 text-gray-600 hover:text-black bg-white border px-2 py-1 rounded"><Download size={12}/> Download</a>}
                     </div>
                 </div>
+                
+                {/* PREVIEW */}
                 <div className="flex-1 bg-gray-200 flex items-center justify-center p-4 overflow-auto">
                     {!previewUrl ? (
                         <div className="text-gray-400">Select a file to preview</div>
@@ -385,7 +386,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         {/* --- RIGHT COL: CHAT & HISTORY --- */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
             
-            {/* FILE LIST (SIMPLIFIED FOR CUSTOMER) */}
+            {/* FILE LIST */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/3">
                 <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                      <h3 className="text-xs font-bold uppercase text-gray-500">Versions</h3>
