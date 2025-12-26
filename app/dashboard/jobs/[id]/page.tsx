@@ -1,5 +1,10 @@
 'use client';
 
+import { 
+  // ... existing imports ...
+  LogOut 
+} from 'lucide-react';
+
 import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, DollarSign, 
