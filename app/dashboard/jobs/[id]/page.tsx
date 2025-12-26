@@ -6,24 +6,23 @@ import {
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, Maximize2
+  Activity, Save, Lock, X, UploadCloud, Maximize2, PlayCircle, ArrowDown
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-// Ensure this path matches your project structure
 import { sendProofNotification } from '../../../actions'; 
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
   // --- STATE ---
   const [job, setJob] = useState<any>(null);
-  const [activeStep, setActiveStep] = useState<any>(null);
+  const [workflowSteps, setWorkflowSteps] = useState<any[]>([]); // NEW: Full Ladder
   const [messages, setMessages] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]); 
   const [assets, setAssets] = useState<any[]>([]);
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [currentUserName, setCurrentUserName] = useState(''); // NEW: Store User Name
+  const [currentUserName, setCurrentUserName] = useState('');
   const [loading, setLoading] = useState(true);
   
   // UI State
@@ -73,11 +72,17 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     const logChannel = supabase.channel('job_logs')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'job_logs', filter: `job_id=eq.${params.id}` }, () => fetchLogs())
       .subscribe();
+      
+    // Listen for step updates to refresh the ladder
+    const stepChannel = supabase.channel('job_steps')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'job_steps', filter: `job_id=eq.${params.id}` }, () => fetchWorkflow())
+      .subscribe();
 
     return () => { 
       supabase.removeChannel(chatChannel); 
       supabase.removeChannel(assetChannel);
       supabase.removeChannel(logChannel);
+      supabase.removeChannel(stepChannel);
     };
   }, [params.id]);
 
@@ -91,16 +96,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     const { data: { user } } = await supabase.auth.getUser();
     setUser(user);
 
-    // Fetch Role AND Name to fix the chat error
     if (user) {
-        const { data: profile } = await supabase
-            .from('profiles')
-            .select('role, first_name')
-            .eq('id', user.id)
-            .single();
-        
+        const { data: profile } = await supabase.from('profiles').select('role, first_name').eq('id', user.id).single();
         setIsAdmin(profile?.role === 'admin');
-        // Store name for chat messages
         setCurrentUserName(profile?.first_name || user.email || 'User'); 
     }
 
@@ -113,15 +111,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     setJob(jobData);
     if (jobData?.internal_notes) setInternalNotes(jobData.internal_notes);
 
-    const { data: stepData } = await supabase
-      .from('job_steps')
-      .select('*')
-      .eq('job_id', params.id)
-      .eq('status', 'Pending')
-      .order('step_order', { ascending: true })
-      .limit(1)
-      .single();
-    if (stepData) setActiveStep(stepData);
+    await fetchWorkflow();
 
     const { data: services } = await supabase.from('finishing_services').select('*').order('name');
     if (services) setServiceList(services);
@@ -132,15 +122,18 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     setLoading(false);
   };
 
+  const fetchWorkflow = async () => {
+      const { data } = await supabase.from('job_steps').select('*').eq('job_id', params.id).order('step_order', { ascending: true });
+      if (data) setWorkflowSteps(data);
+  };
+
   const fetchAssets = async () => {
     const { data } = await supabase.from('job_assets').select('*, profiles(first_name, email)').eq('job_id', params.id).order('created_at', { ascending: false });
     if (data && data.length > 0) {
         setAssets(data);
-        const approved = data.find((a: any) => a.status === 'approved');
-        const latestProof = data.find((a: any) => a.asset_type === 'proof' && a.status !== 'archived');
-        
         if (!viewingAssetId) {
-             loadPreview(approved || latestProof || data[0]);
+             const approved = data.find((a: any) => a.status === 'approved');
+             loadPreview(approved || data[0]);
         }
     }
   };
@@ -175,6 +168,50 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       }
   };
 
+  // --- WORKFLOW ACTIONS ---
+  const handleGenerateWorkflow = async () => {
+      // Default Ladder
+      const defaultSteps = [
+          { name: 'Prepress Check', department: 'Prepress' },
+          { name: 'RIP & Print', department: 'Production' },
+          { name: 'Finishing / Cutting', department: 'Finishing' },
+          { name: 'Quality Control', department: 'QC' },
+          { name: 'Pack & Ship', department: 'Shipping' }
+      ];
+
+      for (let i = 0; i < defaultSteps.length; i++) {
+          await supabase.from('job_steps').insert({
+              job_id: params.id,
+              name: defaultSteps[i].name,
+              department: defaultSteps[i].department,
+              status: i === 0 ? 'Pending' : 'Waiting', // First one is Pending
+              step_order: i + 1
+          });
+      }
+      await fetchWorkflow();
+      alert("Workflow generated!");
+  };
+
+  const handleCompleteStep = async (step: any) => {
+      // 1. Mark current as Completed
+      await supabase.from('job_steps').update({ status: 'Completed', completed_at: new Date().toISOString() }).eq('id', step.id);
+      
+      // 2. Find next step and mark Pending
+      const nextStep = workflowSteps.find(s => s.step_order === step.step_order + 1);
+      if (nextStep) {
+          await supabase.from('job_steps').update({ status: 'Pending' }).eq('id', nextStep.id);
+          // Update parent Job Status
+          await supabase.from('jobs').update({ status: nextStep.department }).eq('id', params.id);
+      } else {
+          // No next step? Job is Done.
+          await supabase.from('jobs').update({ status: 'Completed' }).eq('id', params.id);
+      }
+
+      await logActivity('Step Completed', `Completed: ${step.name}`);
+      fetchWorkflow();
+      fetchPageData(); // Refresh header
+  };
+
   // --- UPLOAD (ADMIN) ---
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) setUploadFile(e.target.files[0]);
@@ -200,10 +237,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
           if (uploadMessage.trim()) {
               await supabase.from('messages').insert({ 
-                  job_id: params.id, 
-                  user_id: user.id, 
-                  content: `PROOF SENT: ${uploadMessage}`,
-                  sender_name: currentUserName // Fix for chat error
+                  job_id: params.id, user_id: user.id, content: `PROOF SENT: ${uploadMessage}`, sender_name: currentUserName
               });
           }
           await sendProofNotification(params.id, data?.path || '', uploadMessage);
@@ -228,49 +262,33 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       const msg = isAdmin ? 'Admin overrode approval.' : 'Customer approved proof.';
       await logActivity('Proof Approved', msg);
       await supabase.from('messages').insert({ 
-          job_id: params.id, 
-          user_id: user.id, 
-          content: "✅ APPROVED FOR PRODUCTION",
-          sender_name: currentUserName // Fix for chat error
+          job_id: params.id, user_id: user.id, content: "✅ APPROVED FOR PRODUCTION", sender_name: currentUserName
       });
       
       fetchPageData();
       alert("Job moved to Production!");
   };
 
-  // --- SEND MESSAGE (FIXED) ---
+  // --- CHAT ---
   const handleSendMessage = async () => {
-    if (!user) { alert("Error: You seem to be logged out. Refresh the page."); return; }
+    if (!user) { alert("Error: Logged out."); return; }
     if (!newMessage.trim()) return;
 
     const msgContent = newMessage;
-    setNewMessage(''); // Clear input instantly
+    setNewMessage(''); 
 
-    // Optimistic Update
     const optimisticMsg = {
-        id: Math.random().toString(), 
-        user_id: user.id,
-        content: msgContent,
-        created_at: new Date().toISOString(),
+        id: Math.random().toString(), user_id: user.id, content: msgContent, created_at: new Date().toISOString(),
         profiles: { first_name: currentUserName, role: isAdmin ? 'admin' : 'customer' }
     };
     setMessages((prev) => [...prev, optimisticMsg]); 
 
-    // Database Send with sender_name included
-    const { data, error } = await supabase.from('messages').insert({ 
-        job_id: params.id, 
-        user_id: user.id, 
-        content: msgContent,
-        sender_name: currentUserName // <--- This fixes the 23502 error
-    }).select();
+    const { error } = await supabase.from('messages').insert({ 
+        job_id: params.id, user_id: user.id, content: msgContent, sender_name: currentUserName
+    });
 
-    if (error) {
-        console.error("Chat Error:", error);
-        alert(`CHAT FAILED: ${error.message}`);
-        fetchMessages();
-    } else {
-        fetchMessages();
-    }
+    if (error) { console.error("Chat Error:", error); alert(`CHAT FAILED: ${error.message}`); fetchMessages(); } 
+    else { fetchMessages(); }
   };
 
   const handleSaveNotes = async () => {
@@ -300,7 +318,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
       
-      {/* --- UPLOAD MODAL (ADMIN ONLY) --- */}
+      {/* --- UPLOAD MODAL --- */}
       {showUploadModal && isAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -344,7 +362,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-       {/* 2. ADMIN HERO (Black Bar) */}
+       {/* 2. ADMIN HERO */}
        {isAdmin && (
            <div className="bg-gray-800 text-white shadow-xl">
               <div className="max-w-[1920px] mx-auto flex flex-col md:flex-row">
@@ -361,6 +379,44 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         
         {/* --- LEFT COL (ADMIN ONLY) --- */}
         <div className={`${isAdmin ? 'col-span-12 lg:col-span-3' : 'hidden'} space-y-4`}>
+            
+            {/* WORKFLOW LADDER (NEW) */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 flex items-center gap-2"><ArrowDown size={14}/> Production Workflow</h3>
+                
+                {workflowSteps.length === 0 ? (
+                    <button onClick={handleGenerateWorkflow} className="w-full py-3 bg-gray-100 border border-dashed border-gray-300 rounded text-xs font-bold text-gray-500 hover:bg-gray-200 flex items-center justify-center gap-2">
+                        <PlayCircle size={14}/> Start Workflow
+                    </button>
+                ) : (
+                    <div className="space-y-0 relative">
+                        {/* Vertical Line */}
+                        <div className="absolute left-3 top-2 bottom-2 w-0.5 bg-gray-100 z-0"></div>
+                        
+                        {workflowSteps.map((step) => {
+                            const isPending = step.status === 'Pending';
+                            const isCompleted = step.status === 'Completed';
+                            return (
+                                <div key={step.id} className="relative z-10 flex gap-3 pb-4 last:pb-0 group">
+                                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center bg-white ${isCompleted ? 'border-green-500 text-green-500' : isPending ? 'border-blue-500 text-blue-500 shadow-md' : 'border-gray-200 text-gray-200'}`}>
+                                        {isCompleted ? <CheckCircle size={14} className="fill-green-500 text-white"/> : <div className={`w-2 h-2 rounded-full ${isPending ? 'bg-blue-500 animate-pulse' : 'bg-gray-200'}`}></div>}
+                                    </div>
+                                    <div className="flex-1 pt-0.5">
+                                        <p className={`text-xs font-bold ${isCompleted ? 'text-gray-400 line-through' : isPending ? 'text-gray-900' : 'text-gray-300'}`}>{step.name}</p>
+                                        <p className="text-[9px] text-gray-400 uppercase">{step.department}</p>
+                                        {isPending && (
+                                            <button onClick={() => handleCompleteStep(step)} className="mt-2 text-[10px] bg-blue-600 text-white px-3 py-1 rounded font-bold hover:bg-blue-500 shadow-sm flex items-center gap-1">
+                                                Complete Step
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 flex items-center gap-2"><Layers size={14}/> Job Specs</h3>
                 <div className="space-y-3 text-sm">
@@ -401,7 +457,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         {/* --- MIDDLE COL --- */}
         <div className={`col-span-12 ${isAdmin ? 'lg:col-span-6' : 'lg:col-span-9'} flex flex-col gap-4`}>
              
-             {/* CUSTOMER ACTION BAR */}
+             {/* CUSTOMER ONLY: ACTION BAR */}
              {!isAdmin && isPendingProof && (
                  <div className="bg-blue-600 rounded-xl shadow-lg p-6 flex flex-col md:flex-row items-center justify-between gap-4 text-white">
                      <div>
@@ -443,10 +499,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
              </div>
         </div>
 
-        {/* --- RIGHT COL: CHAT & HISTORY --- */}
+        {/* --- RIGHT COL --- */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
-            
-            {/* FILE LIST */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/4">
                 <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                      <h3 className="text-xs font-bold uppercase text-gray-500">Versions</h3>
@@ -469,7 +523,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* TABS */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-3/4 overflow-hidden">
                 <div className="flex border-b border-gray-200">
                     <button onClick={() => setRightTab('chat')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><MessageSquare size={14}/> Discussion</button>
@@ -517,7 +570,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     </div>
                 )}
             </div>
-
         </div>
       </div>
     </div>
