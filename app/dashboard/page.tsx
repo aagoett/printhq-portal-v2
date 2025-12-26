@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
   Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, 
-  Briefcase, Plus, ShoppingCart, Clock, ChevronRight
+  Briefcase, Plus, ShoppingCart, Clock, ChevronRight, Layers, Ruler
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
@@ -19,6 +19,7 @@ type Job = {
   created_at: string;
   due_date?: string; 
   quantity: number;
+  size?: string; // NEW: Added Size
   notes: string;
   user_id: string;
   paper_stock?: string;
@@ -27,7 +28,8 @@ type Job = {
   next_step_id?: string;
   assigned_to?: string; 
   csr_name?: string; 
-  brand?: string;   
+  brand?: string; // Legacy fallback
+  orders?: { brands?: { name: string } }; // NEW: Relation
   order_id?: string; 
 };
 
@@ -41,11 +43,17 @@ type Profile = {
   department?: string;
 };
 
+type Brand = {
+    id: string;
+    name: string;
+};
+
 type CartItem = {
   id: string; 
   file: File;
   title: string;
   quantity: number;
+  size: string; // NEW: Added Size
   notes: string;
   paper_stock: string;
 };
@@ -55,12 +63,10 @@ type PaperStock = {
     name: string;
 };
 
-const MY_BRANDS = ['PrintHQ', 'SignWorld', 'PromoPro', 'DirectMail Co'];
-
 export default function Dashboard() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+   
   // --- STATE ---
   const [user, setUser] = useState<any>(null);
   const [role, setRole] = useState('customer');
@@ -69,30 +75,32 @@ export default function Dashboard() {
   const [customers, setCustomers] = useState<Profile[]>([]);
   const [staff, setStaff] = useState<Profile[]>([]); 
   const [stockLibrary, setStockLibrary] = useState<PaperStock[]>([]);
-  
+  const [brandList, setBrandList] = useState<Brand[]>([]); // NEW: Dynamic Brands
+   
   const [departmentTabs, setDepartmentTabs] = useState<string[]>(['My Queue', 'All']);
   const [activeTab, setActiveTab] = useState('All'); 
-  
+   
   const [showModal, setShowModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  
+   
   // --- CART STATE ---
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [orderBrand, setOrderBrand] = useState('PrintHQ');
-  
+  const [selectedBrandId, setSelectedBrandId] = useState(''); // NEW: Using ID now
+   
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
+  const [jobSize, setJobSize] = useState(''); // NEW: Size State
   const [jobNotes, setJobNotes] = useState('');
-  
+   
   // PAPER STOCK LOGIC
   const [selectedStockId, setSelectedStockId] = useState('');
   const [customStockValue, setCustomStockValue] = useState('');
-  
+   
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [isNewCustomer, setIsNewCustomer] = useState(false);
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
-  
+   
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -117,7 +125,12 @@ export default function Dashboard() {
     setRole(userRole);
     const isInternal = userRole === 'admin' || userRole === 'staff';
 
-    let jobQuery = supabase.from('jobs').select('*').order('created_at', { ascending: false });
+    // NEW: Fetch jobs AND join the brand name
+    let jobQuery = supabase
+        .from('jobs')
+        .select('*, orders(brands(name))') // Deep fetch
+        .order('created_at', { ascending: false });
+
     if (!isInternal) jobQuery = jobQuery.eq('user_id', user.id);
     const { data: jobsData } = await jobQuery;
 
@@ -139,7 +152,14 @@ export default function Dashboard() {
     const { data: stockData } = await supabase.from('paper_stocks').select('*').order('name');
     if (stockData) {
         setStockLibrary(stockData);
-        if (stockData.length > 0) setSelectedStockId(stockData[0].name); // Default to first
+        if (stockData.length > 0) setSelectedStockId(stockData[0].name);
+    }
+
+    // NEW: Load Brands from DB
+    const { data: brandsData } = await supabase.from('brands').select('*');
+    if (brandsData) {
+        setBrandList(brandsData);
+        if (brandsData.length > 0) setSelectedBrandId(brandsData[0].id);
     }
 
     if (isInternal) {
@@ -195,6 +215,7 @@ export default function Dashboard() {
     setCurrentFile(null);
     setJobTitle('');
     setJobQty('');
+    setJobSize(''); // Reset Size
     setJobNotes('');
     if (stockLibrary.length > 0) setSelectedStockId(stockLibrary[0].name);
     setCustomStockValue('');
@@ -214,7 +235,6 @@ export default function Dashboard() {
     if (!currentFile) return alert("Please upload a file.");
     if (!jobQty) return alert("Please enter quantity.");
 
-    // Determine final paper stock name
     let finalStock = selectedStockId;
     if (selectedStockId === 'custom') {
         if (!customStockValue.trim()) return alert("Please enter custom paper details.");
@@ -226,6 +246,7 @@ export default function Dashboard() {
       file: currentFile,
       title: jobTitle,
       quantity: parseInt(jobQty),
+      size: jobSize || 'N/A', // Save Size
       notes: jobNotes,
       paper_stock: finalStock
     };
@@ -258,9 +279,14 @@ export default function Dashboard() {
           }
       }
 
+      // NEW: Use brand_id logic
       const { data: newOrder, error: orderError } = await supabase
         .from('orders')
-        .insert({ user_id: finalUserId, status: 'New', brand: orderBrand })
+        .insert({ 
+            user_id: finalUserId, 
+            status: 'New', 
+            brand_id: selectedBrandId // Using relation now
+        })
         .select().single();
 
       if (orderError) throw orderError;
@@ -272,6 +298,7 @@ export default function Dashboard() {
         
         if (uploadError) console.error("File upload failed for " + item.title, uploadError);
 
+        // NEW: Insert Size column
         const { data: newJob, error: jobError } = await supabase
           .from('jobs')
           .insert({
@@ -280,13 +307,13 @@ export default function Dashboard() {
             guest_email: isNewCustomer ? finalEmail : null,
             title: item.title,
             quantity: item.quantity,
+            size: item.size, // Saving Size to DB
             notes: item.notes,
             file_url: fileData?.path,
             status: 'Pending Review',
             paper_stock: item.paper_stock,
             assigned_to: null, 
             csr_name: null,
-            brand: orderBrand 
           })
           .select().single();
 
@@ -301,11 +328,13 @@ export default function Dashboard() {
         }
       }
 
+      const brandName = brandList.find(b => b.id === selectedBrandId)?.name || 'PrintHQ';
+
       if (finalEmail && newOrder) {
-         await sendOrderConfirmation(finalEmail, newOrder.id, `${cart.length} Item(s) from ${orderBrand}`);
+         await sendOrderConfirmation(finalEmail, newOrder.id, `${cart.length} Item(s) from ${brandName}`);
       }
       
-      alert("✅ Success! Your order has been received.\n\nCheck your dashboard for updates.");
+      alert("✅ Success! Your order has been received.");
 
       setShowModal(false);
       setCart([]);
@@ -332,13 +361,13 @@ export default function Dashboard() {
     const now = new Date();
     due.setHours(23, 59, 59);
     now.setHours(0, 0, 0);
-    
+     
     const diff = (due.getTime() - now.getTime()) / (1000 * 3600 * 24);
 
     if (diff < 0) return { color: 'text-red-600 font-bold', label: 'Overdue' };
     if (diff < 1) return { color: 'text-red-600 font-bold', label: 'Today' };
     if (diff <= 3) return { color: 'text-orange-600 font-bold', label: due.toLocaleDateString('en-US', {month:'short', day:'numeric'}) };
-    
+     
     return { color: 'text-black font-medium', label: due.toLocaleDateString('en-US', {month:'short', day:'numeric'}) };
   };
 
@@ -389,11 +418,16 @@ export default function Dashboard() {
                     )}
                   </div>
                 )}
-                
+                 
+                {/* BRAND SELECTOR (Now Dynamic) */}
                 <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
                   <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Company / Brand</label>
-                  <select value={orderBrand} onChange={(e) => setOrderBrand(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 bg-white text-sm outline-none font-bold">
-                    {MY_BRANDS.map(b => <option key={b}>{b}</option>)}
+                  <select value={selectedBrandId} onChange={(e) => setSelectedBrandId(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 bg-white text-sm outline-none font-bold">
+                    {brandList.length > 0 ? (
+                        brandList.map(b => <option key={b.id} value={b.id}>{b.name}</option>)
+                    ) : (
+                        <option>No Brands Found</option>
+                    )}
                   </select>
                 </div>
               </div>
@@ -411,7 +445,7 @@ export default function Dashboard() {
                            <FileText size={16} className="text-blue-500 mr-3 flex-shrink-0" />
                            <div className="truncate">
                              <p className="text-sm font-bold text-gray-900 truncate">{item.title}</p>
-                             <p className="text-xs text-gray-400">{item.paper_stock} • {item.file.name}</p>
+                             <p className="text-xs text-gray-400">{item.size} • {item.paper_stock}</p>
                            </div>
                          </div>
                          <div className="flex items-center gap-4">
@@ -446,15 +480,18 @@ export default function Dashboard() {
                     )}
 
                     <div className="grid grid-cols-3 gap-3">
-                      <div className="col-span-2">
+                      <div className="col-span-3">
                         <input type="text" placeholder="Item Title (e.g. Business Cards)" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
                       </div>
                       <div>
                         <input type="number" placeholder="Qty" value={jobQty} onChange={(e) => setJobQty(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
                       </div>
+                      <div className="col-span-2">
+                        {/* NEW: Size Input */}
+                        <input type="text" placeholder="Size (e.g. 8.5x11)" value={jobSize} onChange={(e) => setJobSize(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
+                      </div>
                     </div>
                     
-                    {/* DYNAMIC PAPER STOCK SELECTOR */}
                     <div className="space-y-2">
                         <select 
                             value={selectedStockId} 
@@ -465,7 +502,6 @@ export default function Dashboard() {
                             <option value="custom">-- Custom / Other --</option>
                         </select>
                         
-                        {/* CUSTOM STOCK INPUT (Only shows if 'custom' is selected) */}
                         {selectedStockId === 'custom' && (
                             <input 
                                 type="text" 
@@ -515,7 +551,7 @@ export default function Dashboard() {
       {/* MAIN CONTENT */}
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-8 py-12">
-          
+           
           <div className="mb-8 flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">
@@ -581,7 +617,9 @@ export default function Dashboard() {
                       // Resolve Customer Info
                       const customerProfile = customers.find(c => c.id === job.user_id);
                       const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
-                      const companyName = customerProfile?.company || job.brand || 'No Company';
+                      
+                      // NEW: Use dynamic brand name if available
+                      const brandName = job.orders?.brands?.name || 'PrintHQ';
                       
                       return (
                       <tr key={job.id} className="hover:bg-gray-50 transition-colors group">
@@ -602,7 +640,7 @@ export default function Dashboard() {
                                 </div>
                                 <div className="overflow-hidden">
                                     <p className="text-sm font-bold text-gray-900 truncate max-w-[120px]">{customerName}</p>
-                                    <p className="text-[10px] text-gray-400 uppercase tracking-wider truncate max-w-[120px]">{companyName}</p>
+                                    <p className="text-[10px] text-gray-400 uppercase tracking-wider truncate max-w-[120px]">{brandName}</p>
                                 </div>
                             </div>
                         </td>
@@ -614,7 +652,8 @@ export default function Dashboard() {
                           </Link>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="font-mono text-[10px] text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span>
-                            {job.brand && <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-500 font-bold uppercase">{job.brand}</span>}
+                            {/* NEW: Show Size */}
+                            {job.size && <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-500 font-bold flex items-center gap-1"><Ruler size={8}/> {job.size}</span>}
                           </div>
                         </td>
 
@@ -693,6 +732,7 @@ function NavItem({ icon, label, active = false, href = '#' }: { icon: any, label
 
 function StatusCard({ job, formatDate, dueStatus }: { job: Job, formatDate: (d: string) => string, dueStatus: any }) {
   const styles: any = { 'Pending Review': 'bg-amber-100 text-amber-700', 'In Production': 'bg-emerald-100 text-emerald-700' };
+  const brandName = job.orders?.brands?.name || 'PrintHQ';
   return (
     <Link href={`/dashboard/jobs/${job.id}`}>
       <div className="group cursor-pointer rounded-xl border border-gray-200 bg-white p-6 shadow-sm transition-all hover:border-black hover:shadow-md">
@@ -708,7 +748,7 @@ function StatusCard({ job, formatDate, dueStatus }: { job: Job, formatDate: (d: 
         
         {/* DUE DATE BADGE ON CARD */}
         <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
-            <span className="text-[10px] font-bold uppercase text-gray-400">Due Date</span>
+            <span className="text-[10px] font-bold uppercase text-gray-400">{brandName}</span>
             <span className={`text-xs ${dueStatus.color}`}>{dueStatus.label}</span>
         </div>
       </div>
