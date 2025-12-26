@@ -6,12 +6,11 @@ import {
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud
+  Activity, Save, Lock, X, UploadCloud, ShieldAlert
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-// Import server action (ensure path is correct based on your folder structure)
 import { sendProofNotification } from '../../../actions'; 
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
@@ -22,6 +21,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [logs, setLogs] = useState<any[]>([]); 
   const [assets, setAssets] = useState<any[]>([]);
   const [user, setUser] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState(false); // NEW: Database-controlled Role
   const [loading, setLoading] = useState(true);
   
   // UI State
@@ -61,7 +61,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     fetchPageData();
 
-    // Realtime Subscriptions
     const chatChannel = supabase.channel('job_chat')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, () => fetchMessages())
       .subscribe();
@@ -88,9 +87,23 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
   // --- DATA FETCHING ---
   const fetchPageData = async () => {
+    // 1. Get User
     const { data: { user } } = await supabase.auth.getUser();
     setUser(user);
 
+    // 2. CHECK ROLE (The "Dictator" Check)
+    if (user) {
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single();
+        
+        // If the database says 'admin', you are admin. Otherwise, you are customer.
+        setIsAdmin(profile?.role === 'admin');
+    }
+
+    // 3. Fetch Job
     const { data: jobData } = await supabase
       .from('jobs')
       .select('*, orders(brand), profiles:user_id(first_name, last_name, email, company, phone)')
@@ -102,6 +115,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     if (jobData?.internal_notes) setInternalNotes(jobData.internal_notes);
     if (jobData?.due_date) setDueDate(new Date(jobData.due_date).toISOString().split('T')[0]);
 
+    // 4. Fetch Workflow Step
     const { data: stepData } = await supabase
       .from('job_steps')
       .select('*')
@@ -112,6 +126,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       .single();
     if (stepData) setActiveStep(stepData);
 
+    // 5. Fetch Services
     const { data: services } = await supabase.from('finishing_services').select('*').order('name');
     if (services) setServiceList(services);
 
@@ -168,7 +183,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       }
   };
 
-  // --- NEW UPLOAD LOGIC (Safety Net Added) ---
+  // --- NEW UPLOAD LOGIC ---
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setUploadFile(e.target.files[0]);
@@ -180,14 +195,10 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       setIsUploading(true);
 
       try {
-          // 1. Prepare File Name
           const fileName = `${params.id}-proof-${Math.random().toString(36).substring(7)}.${uploadFile.name.split('.').pop()}`;
-          
-          // 2. Upload to Storage
           const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
           if (error) throw new Error("Storage Upload failed: " + error.message);
 
-          // 3. Archive Old Proofs
           const { error: archiveError } = await supabase.from('job_assets')
               .update({ status: 'archived' })
               .eq('job_id', params.id)
@@ -196,7 +207,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           
           if (archiveError) console.error("Archive warning:", archiveError);
 
-          // 4. Insert New Asset Record
           const { data: newAsset, error: dbError } = await supabase.from('job_assets').insert({
               job_id: params.id,
               uploader_id: user.id,
@@ -208,7 +218,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
           if (dbError) throw new Error("Database Save failed: " + dbError.message);
 
-          // 5. Post Message to Chat
           if (uploadMessage.trim()) {
               await supabase.from('messages').insert({
                   job_id: params.id,
@@ -218,14 +227,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
               fetchMessages();
           }
 
-          // 6. Send Email (Server Action)
-          // We await this, but if it fails, we catch the error below so the UI doesn't freeze
           await sendProofNotification(params.id, data?.path || '', uploadMessage);
-          
-          // 7. Log Activity
           await logActivity('Proof Uploaded', `New version sent. Note: ${uploadMessage || 'None'}`);
 
-          // 8. Success Cleanup
           if (newAsset) {
               await fetchAssets();
               loadPreview(newAsset); 
@@ -240,16 +244,19 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           console.error("Submission Error:", error);
           alert("Error sending proof: " + (error.message || "Unknown error"));
       } finally {
-          // THIS IS THE KEY: Always turn off the loading spinner, success or fail.
           setIsUploading(false);
       }
   };
 
   const handleApproveProof = async (assetId: string) => {
-      if (!confirm("Mark this file as APPROVED for production?")) return;
+      if (!confirm("Are you sure you want to approve this for production?")) return;
       await supabase.from('job_assets').update({ status: 'approved' }).eq('id', assetId);
       await supabase.from('jobs').update({ status: 'In Production' }).eq('id', params.id);
-      await logActivity('Proof Approved', 'Moved job to Production status.');
+      
+      const msg = isAdmin ? 'Admin overrode approval.' : 'Customer approved proof.';
+      await logActivity('Proof Approved', msg);
+      await supabase.from('messages').insert({ job_id: params.id, user_id: user.id, content: "✅ APPROVED FOR PRODUCTION" });
+      
       fetchPageData();
       alert("Job moved to Production!");
   };
@@ -262,22 +269,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     fetchMessages();
   };
 
-  const handleUpdateJob = async () => {
-    setIsSaving(true);
-    const updates: any = {};
-    if (quoteAmount) updates.quote_price = parseFloat(quoteAmount); else updates.quote_price = null;
-    if (dueDate) updates.due_date = dueDate; else updates.due_date = null;
-    
-    let changes = [];
-    if (job.quote_price != updates.quote_price) changes.push(`Quote: $${updates.quote_price}`);
-    if (job.due_date !== updates.due_date) changes.push(`Due: ${updates.due_date}`);
-
-    const { error } = await supabase.from('jobs').update(updates).eq('id', params.id);
-    if (!error && changes.length > 0) await logActivity('Job Updated', changes.join(', '));
-    setIsSaving(false);
-    if (!error) { fetchPageData(); alert('Saved!'); }
-  };
-
   const handleSaveNotes = async () => {
       setIsSaving(true);
       const { error } = await supabase.from('jobs').update({ internal_notes: internalNotes }).eq('id', params.id);
@@ -287,11 +278,11 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   };
 
   const toggleFinishingOption = async (optionName: string) => {
+      if (!isAdmin) return; // LOCK FOR CUSTOMERS
       const currentOptions = job.finishing_options || [];
       let newOptions = currentOptions.includes(optionName) ? currentOptions.filter((o: string) => o !== optionName) : [...currentOptions, optionName];
       setJob({ ...job, finishing_options: newOptions }); 
       await supabase.from('jobs').update({ finishing_options: newOptions }).eq('id', params.id);
-      
       const action = currentOptions.includes(optionName) ? 'Removed' : 'Added';
       await logActivity('Finishing Updated', `${action} service: ${optionName}`);
   };
@@ -331,8 +322,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
       
-      {/* --- UPLOAD MODAL --- */}
-      {showUploadModal && (
+      {/* --- UPLOAD MODAL (ADMIN ONLY) --- */}
+      {showUploadModal && isAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
                 <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
@@ -340,33 +331,16 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     <button onClick={() => setShowUploadModal(false)} className="text-gray-400 hover:text-black"><X size={20}/></button>
                 </div>
                 <div className="p-6 space-y-4">
-                    {/* File Input */}
                     <div onClick={() => fileInputRef.current?.click()} className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${uploadFile ? 'border-green-400 bg-green-50' : 'border-gray-300 hover:border-black hover:bg-gray-50'}`}>
                         <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
                         <UploadCloud className={`mx-auto h-10 w-10 mb-2 ${uploadFile ? 'text-green-600' : 'text-gray-400'}`} />
-                        {uploadFile ? (
-                            <p className="font-bold text-green-700 text-sm truncate">{uploadFile.name}</p>
-                        ) : (
-                            <p className="text-sm font-bold text-gray-600">Click to Select File</p>
-                        )}
+                        {uploadFile ? (<p className="font-bold text-green-700 text-sm truncate">{uploadFile.name}</p>) : (<p className="text-sm font-bold text-gray-600">Click to Select File</p>)}
                     </div>
-                    
-                    {/* Message Input */}
                     <div>
                         <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Message to Customer</label>
-                        <textarea 
-                            value={uploadMessage}
-                            onChange={(e) => setUploadMessage(e.target.value)}
-                            placeholder="e.g. Please check the spelling on the back..."
-                            className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:outline-none focus:border-black h-24 resize-none"
-                        />
+                        <textarea value={uploadMessage} onChange={(e) => setUploadMessage(e.target.value)} placeholder="e.g. Please check the spelling..." className="w-full border border-gray-300 rounded-lg p-3 text-sm focus:outline-none focus:border-black h-24 resize-none" />
                     </div>
-
-                    <button 
-                        onClick={handleSubmitProof} 
-                        disabled={!uploadFile || isUploading}
-                        className={`w-full py-3 rounded-xl font-bold text-white transition-all ${!uploadFile || isUploading ? 'bg-gray-300 cursor-not-allowed' : 'bg-black hover:bg-gray-800 shadow-lg'}`}
-                    >
+                    <button onClick={handleSubmitProof} disabled={!uploadFile || isUploading} className={`w-full py-3 rounded-xl font-bold text-white transition-all ${!uploadFile || isUploading ? 'bg-gray-300 cursor-not-allowed' : 'bg-black hover:bg-gray-800 shadow-lg'}`}>
                         {isUploading ? 'Sending...' : 'Send Proof'}
                     </button>
                 </div>
@@ -392,26 +366,29 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-       {/* 2. THE STAGE COMMANDER */}
+       {/* 2. THE STAGE COMMANDER (ADMIN ONLY VIEW OF NOTES) */}
        <div className={`${statusColor} text-white shadow-xl`}>
           <div className="max-w-[1920px] mx-auto flex flex-col md:flex-row">
               <div className="p-8 flex-1">
-                  <p className="text-xs font-bold uppercase opacity-75 tracking-widest mb-2">Current Department</p>
+                  <p className="text-xs font-bold uppercase opacity-75 tracking-widest mb-2">Current Status</p>
                   <h1 className="text-6xl font-black uppercase tracking-tight leading-none">
                       {currentDepartment}
                   </h1>
               </div>
-              <div className="p-8 md:w-1/3 bg-black/20 border-l border-white/10 backdrop-blur-sm flex flex-col justify-center">
-                  <div className="flex items-start gap-3">
-                      <Megaphone size={24} className="mt-1 opacity-80" />
-                      <div>
-                          <p className="text-xs font-bold uppercase opacity-75 tracking-widest mb-1">Instructions</p>
-                          <p className="text-lg font-bold leading-tight">
-                              {stepNotes || job.notes || "No specific instructions provided."}
-                          </p>
+              {/* Only show technical instructions to Admin */}
+              {isAdmin && (
+                  <div className="p-8 md:w-1/3 bg-black/20 border-l border-white/10 backdrop-blur-sm flex flex-col justify-center">
+                      <div className="flex items-start gap-3">
+                          <Megaphone size={24} className="mt-1 opacity-80" />
+                          <div>
+                              <p className="text-xs font-bold uppercase opacity-75 tracking-widest mb-1">Production Instructions</p>
+                              <p className="text-lg font-bold leading-tight">
+                                  {stepNotes || job.notes || "No specific instructions provided."}
+                              </p>
+                          </div>
                       </div>
                   </div>
-              </div>
+              )}
           </div>
       </div>
 
@@ -446,14 +423,18 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* FINISHING CHECKLIST */}
+            {/* FINISHING CHECKLIST (READ ONLY FOR CUSTOMER) */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-gray-400 mb-3 flex items-center gap-2"><Scissors size={14}/> Finishing</h3>
                 <div className="flex flex-wrap gap-2">
                     {serviceList.map((service) => {
                         const isSelected = job.finishing_options?.includes(service.name);
                         return (
-                            <button key={service.id} onClick={() => toggleFinishingOption(service.name)} className={`px-3 py-1.5 rounded text-xs font-bold border transition-all flex items-center gap-2 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
+                            <button key={service.id} 
+                                onClick={() => toggleFinishingOption(service.name)} 
+                                disabled={!isAdmin} // DISABLE FOR CUSTOMER
+                                className={`px-3 py-1.5 rounded text-xs font-bold border transition-all flex items-center gap-2 ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-500 border-gray-200'} ${!isAdmin && 'cursor-default opacity-80'}`}
+                            >
                                 {isSelected && <CheckSquare size={12} />} {service.name}
                             </button>
                         );
@@ -461,35 +442,39 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* INTERNAL NOTES */}
-            <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-4">
-                <h3 className="text-xs font-bold uppercase text-yellow-700 mb-2 flex items-center gap-2"><Lock size={14}/> Internal Notes</h3>
-                <textarea 
-                    value={internalNotes}
-                    onChange={(e) => setInternalNotes(e.target.value)}
-                    placeholder="Private production notes..."
-                    className="w-full h-24 bg-white border border-yellow-300 rounded p-2 text-sm focus:outline-none mb-2"
-                />
-                <button onClick={handleSaveNotes} disabled={isSaving} className="w-full bg-yellow-400 text-yellow-900 text-xs font-bold py-1.5 rounded hover:bg-yellow-500 flex items-center justify-center gap-2">
-                    <Save size={12}/> Save Notes
-                </button>
-            </div>
+            {/* INTERNAL NOTES (ADMIN ONLY) */}
+            {isAdmin && (
+                <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-4">
+                    <h3 className="text-xs font-bold uppercase text-yellow-700 mb-2 flex items-center gap-2"><Lock size={14}/> Internal Notes</h3>
+                    <textarea 
+                        value={internalNotes}
+                        onChange={(e) => setInternalNotes(e.target.value)}
+                        placeholder="Private production notes..."
+                        className="w-full h-24 bg-white border border-yellow-300 rounded p-2 text-sm focus:outline-none mb-2"
+                    />
+                    <button onClick={handleSaveNotes} disabled={isSaving} className="w-full bg-yellow-400 text-yellow-900 text-xs font-bold py-1.5 rounded hover:bg-yellow-500 flex items-center justify-center gap-2">
+                        <Save size={12}/> Save Notes
+                    </button>
+                </div>
+            )}
 
-             {/* ORIGINAL FILE (REFERENCE) */}
-             <div className="bg-blue-50 rounded-lg border border-blue-100 p-4">
-                <h3 className="text-xs font-bold uppercase text-blue-800 mb-2 flex items-center gap-2"><FileText size={14}/> Original Asset</h3>
-                {originalAsset ? (
-                    <div onClick={() => loadPreview(originalAsset)} className="flex items-center gap-3 p-2 bg-white rounded border border-blue-200 cursor-pointer hover:border-blue-400 transition-all">
-                        <div className="bg-blue-100 p-2 rounded text-blue-600"><FileImage size={20}/></div>
-                        <div className="overflow-hidden">
-                            <p className="text-xs font-bold text-gray-900 truncate w-32">{originalAsset.file_name}</p>
-                            <p className="text-[10px] text-gray-500">Click to view</p>
+             {/* ORIGINAL FILE (ADMIN ONLY) */}
+             {isAdmin && (
+                 <div className="bg-blue-50 rounded-lg border border-blue-100 p-4">
+                    <h3 className="text-xs font-bold uppercase text-blue-800 mb-2 flex items-center gap-2"><FileText size={14}/> Original Asset</h3>
+                    {originalAsset ? (
+                        <div onClick={() => loadPreview(originalAsset)} className="flex items-center gap-3 p-2 bg-white rounded border border-blue-200 cursor-pointer hover:border-blue-400 transition-all">
+                            <div className="bg-blue-100 p-2 rounded text-blue-600"><FileImage size={20}/></div>
+                            <div className="overflow-hidden">
+                                <p className="text-xs font-bold text-gray-900 truncate w-32">{originalAsset.file_name}</p>
+                                <p className="text-[10px] text-gray-500">Click to view</p>
+                            </div>
                         </div>
-                    </div>
-                ) : (
-                    <p className="text-xs text-blue-400 italic">No source file found.</p>
-                )}
-            </div>
+                    ) : (
+                        <p className="text-xs text-blue-400 italic">No source file found.</p>
+                    )}
+                </div>
+             )}
         </div>
 
         {/* MIDDLE COL: MAIN PROOF STAGE (Width 6) */}
@@ -509,7 +494,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     
                     <div className="flex items-center gap-2">
                         {currentAsset?.asset_type === 'proof' && currentAsset.status === 'pending' && (
-                             <button onClick={() => handleApproveProof(currentAsset.id)} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-green-500 shadow-sm flex items-center gap-1">
+                             <button onClick={() => handleApproveProof(currentAsset.id)} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-green-500 shadow-sm flex items-center gap-1 animate-pulse">
                                  <ThumbsUp size={12}/> Approve for Production
                              </button>
                         )}
@@ -539,12 +524,18 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
             {/* FILE VAULT */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/3">
                 <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                     <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File Vault</h3>
-                     <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
+                     <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File History</h3>
+                     {/* ONLY ADMIN CAN UPLOAD */}
+                     {isAdmin && (
+                         <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
+                     )}
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
                     {assets.map((asset) => {
                         const isCurrent = viewingAssetId === asset.id;
+                        // Optional: Hide archived/source files from customer to reduce clutter
+                        if (!isAdmin && (asset.status === 'archived' || asset.asset_type === 'source')) return null;
+
                         return (
                         <div key={asset.id} onClick={() => loadPreview(asset)} className={`p-2 rounded border cursor-pointer transition-all flex flex-col gap-2 group ${isCurrent ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
                             <div className="flex items-center gap-2 overflow-hidden">
@@ -558,86 +549,4 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                 {asset.status === 'approved' ? (
                                     <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded flex items-center gap-1"><CheckCircle size={10}/> APPROVED</span>
                                 ) : asset.status === 'archived' ? (
-                                    <span className="text-[10px] font-bold bg-gray-100 text-gray-400 px-2 py-0.5 rounded flex items-center gap-1"><XCircle size={10}/> ARCHIVED</span>
-                                ) : asset.status === 'pending' && asset.asset_type === 'proof' ? (
-                                    <span className="text-[10px] font-bold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded animate-pulse">PENDING APPROVAL</span>
-                                ) : (<span></span>)}
-                                {isCurrent && <Eye size={14} className="text-blue-400"/>}
-                            </div>
-                        </div>
-                        );
-                    })}
-                </div>
-            </div>
-
-            {/* TABBED WIDGET: CHAT & HISTORY */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-2/3 overflow-hidden">
-                <div className="flex border-b border-gray-200">
-                    <button 
-                        onClick={() => setRightTab('chat')}
-                        className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}
-                    >
-                        <MessageSquare size={14}/> Discussion
-                    </button>
-                    <button 
-                        onClick={() => setRightTab('activity')}
-                        className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}
-                    >
-                        <Activity size={14}/> Activity Log
-                    </button>
-                </div>
-                
-                {/* TAB CONTENT */}
-                <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
-                    {/* CHAT VIEW */}
-                    {rightTab === 'chat' && (
-                        <>
-                            {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
-                            {messages.map((msg) => {
-                                const isMe = msg.user_id === user?.id;
-                                return (
-                                    <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                                        <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${isMe ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
-                                        <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.first_name}</span>
-                                    </div>
-                                );
-                            })}
-                            <div ref={messagesEndRef} />
-                        </>
-                    )}
-
-                    {/* ACTIVITY LOG VIEW */}
-                    {rightTab === 'activity' && (
-                        <>
-                            {logs.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No activity recorded yet.</div>}
-                            {logs.map((log) => (
-                                <div key={log.id} className="flex gap-3 text-xs pb-3 border-b border-gray-50 last:border-0">
-                                    <div className="mt-0.5 min-w-[30px] text-gray-400 font-mono text-[9px]">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
-                                    <div>
-                                        <p className="font-bold text-gray-900">{log.action}</p>
-                                        <p className="text-gray-500">{log.details}</p>
-                                        <p className="text-[9px] text-blue-400 mt-0.5">{log.profiles?.first_name || 'System'}</p>
-                                    </div>
-                                </div>
-                            ))}
-                            <div ref={logsEndRef} />
-                        </>
-                    )}
-                </div>
-
-                {/* INPUT AREA (Only for Chat) */}
-                {rightTab === 'chat' && (
-                    <div className="p-2 border-t border-gray-100 bg-gray-50">
-                        <div className="flex gap-2">
-                            <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-200 text-xs focus:outline-none focus:border-black" placeholder="Type here..." />
-                            <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-        </div>
-      </div>
-    </div>
-  );
-}
+                                    <span className="text-[10px] font-bold bg-gray-
