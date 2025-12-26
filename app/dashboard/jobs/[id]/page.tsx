@@ -6,7 +6,7 @@ import {
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, Maximize2, PlayCircle, ArrowDown, MapPin, Truck, Check
+  Activity, Save, Lock, X, UploadCloud, Maximize2, PlayCircle, ArrowDown, MapPin, Truck, Check, Ruler
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -102,7 +102,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         setCurrentUserName(profile?.first_name || user.email || 'User'); 
     }
 
-    // UPDATED FETCH: We now fetch orders -> brands -> name
+    // UPDATED: Fetches 'size' along with other fields
     const { data: jobData } = await supabase
       .from('jobs')
       .select('*, orders(brands(name)), profiles:user_id(first_name, last_name, email, company, phone)')
@@ -332,9 +332,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const originalAsset = assets.length > 0 ? [...assets].reverse().find(a => a.asset_type === 'source') : null;
   const countdown = getCountdown();
   const activeStepItem = workflowSteps.find(s => s.status === 'Pending');
-
-  // DYNAMIC BRAND DISPLAY
-  // If brands relation exists, use name. Fallback to 'Pacific Printing'.
   const brandName = job.orders?.brands?.name || 'Pacific Printing';
 
   return (
@@ -373,7 +370,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
              <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={20} /></Link>
              <div>
                <h1 className="text-xl font-bold text-gray-900 leading-none">{job.title}</h1>
-               {/* DYNAMIC BRAND NAME HERE */}
                <p className="text-xs font-mono text-gray-400 mt-1">#{job.id.substring(0,8).toUpperCase()} • {brandName}</p>
              </div>
           </div>
@@ -387,18 +383,14 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-       {/* 2. ADMIN COMMAND CENTER (Expanded Header) */}
+       {/* 2. ADMIN COMMAND CENTER */}
        {isAdmin && (
            <div className="bg-gray-900 text-white shadow-xl border-b-4 border-blue-500">
               <div className="max-w-[1920px] mx-auto flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-gray-700">
-                  
-                  {/* BLOCK 1: Current Status */}
                   <div className="p-6 md:w-1/4">
                       <p className="text-[10px] font-bold uppercase opacity-50 tracking-widest mb-1">Current Department</p>
                       <h1 className="text-3xl font-black uppercase tracking-tight leading-none text-white">{currentDepartment}</h1>
                   </div>
-
-                  {/* BLOCK 2: Active Step (The "What's Next") */}
                   <div className="p-6 md:w-2/4 flex flex-col justify-center">
                       <p className="text-[10px] font-bold uppercase opacity-50 tracking-widest mb-2">Active Task</p>
                       {activeStepItem ? (
@@ -418,8 +410,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                           <div className="text-gray-500 italic text-sm">No active steps. Workflow complete or not started.</div>
                       )}
                   </div>
-
-                  {/* BLOCK 3: Countdown */}
                   <div className="p-6 md:w-1/4 flex flex-col justify-center items-end">
                       <p className="text-[10px] font-bold uppercase opacity-50 tracking-widest mb-1">Production Deadline</p>
                       <div className={`px-4 py-1.5 rounded font-bold text-lg flex items-center gap-2 ${countdown.color} ${countdown.textCol}`}>
@@ -477,11 +467,12 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* SPECS */}
+            {/* SPECS (UPDATED WITH SIZE) */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 flex items-center gap-2"><Layers size={14}/> Job Specs</h3>
                 <div className="space-y-3 text-sm">
                     <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">Qty</span><span className="font-bold">{job.quantity}</span></div>
+                    <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">Size</span><span className="font-bold text-right w-1/2">{job.size || 'N/A'}</span></div>
                     <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">Stock</span><span className="font-bold text-right w-1/2">{job.paper_stock}</span></div>
                 </div>
             </div>
