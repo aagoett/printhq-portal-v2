@@ -11,6 +11,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
+// Fix: ensure the import path to actions is correct
 import { sendProofNotification } from '../../../actions'; 
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
@@ -98,6 +99,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
             .select('role')
             .eq('id', user.id)
             .single();
+        // If DB says 'admin', then true. Else false (customer).
         setIsAdmin(profile?.role === 'admin');
     }
 
