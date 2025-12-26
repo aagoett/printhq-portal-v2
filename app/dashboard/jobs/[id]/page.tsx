@@ -102,9 +102,10 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         setCurrentUserName(profile?.first_name || user.email || 'User'); 
     }
 
+    // UPDATED FETCH: We now fetch orders -> brands -> name
     const { data: jobData } = await supabase
       .from('jobs')
-      .select('*, orders(brand), profiles:user_id(first_name, last_name, email, company, phone)')
+      .select('*, orders(brands(name)), profiles:user_id(first_name, last_name, email, company, phone)')
       .eq('id', params.id)
       .single();
     
@@ -332,6 +333,10 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const countdown = getCountdown();
   const activeStepItem = workflowSteps.find(s => s.status === 'Pending');
 
+  // DYNAMIC BRAND DISPLAY
+  // If brands relation exists, use name. Fallback to 'Pacific Printing'.
+  const brandName = job.orders?.brands?.name || 'Pacific Printing';
+
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
       
@@ -368,7 +373,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
              <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={20} /></Link>
              <div>
                <h1 className="text-xl font-bold text-gray-900 leading-none">{job.title}</h1>
-               <p className="text-xs font-mono text-gray-400 mt-1">#{job.id.substring(0,8).toUpperCase()} • {job.orders?.brand}</p>
+               {/* DYNAMIC BRAND NAME HERE */}
+               <p className="text-xs font-mono text-gray-400 mt-1">#{job.id.substring(0,8).toUpperCase()} • {brandName}</p>
              </div>
           </div>
           <div className="flex gap-2">
@@ -460,7 +466,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 )}
             </div>
 
-            {/* SHIPPING CARD (NEW) */}
+            {/* SHIPPING CARD */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-gray-400 mb-3 flex items-center gap-2"><Truck size={14}/> Ship To</h3>
                 <div className="bg-gray-50 p-3 rounded border border-gray-100 text-sm">
