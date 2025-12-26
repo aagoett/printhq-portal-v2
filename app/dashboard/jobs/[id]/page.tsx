@@ -6,7 +6,7 @@ import {
   Clock, MessageSquare, Printer, Calendar, Layers, Hash,
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, Maximize2, PlayCircle, ArrowDown
+  Activity, Save, Lock, X, UploadCloud, Maximize2, PlayCircle, ArrowDown, MapPin, Truck, Check
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -74,7 +74,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'job_logs', filter: `job_id=eq.${params.id}` }, () => fetchLogs())
       .subscribe();
       
-    // Listen for step updates to refresh the ladder
     const stepChannel = supabase.channel('job_steps')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'job_steps', filter: `job_id=eq.${params.id}` }, () => fetchWorkflow())
       .subscribe();
@@ -147,6 +146,19 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const fetchLogs = async () => {
     const { data } = await supabase.from('job_logs').select('*, profiles(first_name, role)').eq('job_id', params.id).order('created_at', { ascending: true });
     if (data) setLogs(data);
+  };
+
+  // --- HELPER: COUNTDOWN ---
+  const getCountdown = () => {
+      if (!job?.due_date) return { text: "NO DATE", color: "bg-gray-700", textCol: "text-gray-400" };
+      const due = new Date(job.due_date);
+      const now = new Date();
+      due.setHours(23, 59, 59, 999);
+      const diffDays = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      
+      if (diffDays < 0) return { text: `${Math.abs(diffDays)} DAYS LATE`, color: "bg-red-600", textCol: "text-white animate-pulse" };
+      if (diffDays === 0) return { text: "DUE TODAY", color: "bg-orange-500", textCol: "text-white" };
+      return { text: `${diffDays} DAYS LEFT`, color: "bg-emerald-500", textCol: "text-white" };
   };
 
   // --- ACTIONS ---
@@ -287,25 +299,17 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     else { fetchMessages(); }
   };
 
-  // --- NOTES (FIXED: LOGS TO ACTIVITY) ---
+  // --- NOTES ---
   const handleSaveNotes = async () => {
       setIsSaving(true);
-      
-      // 1. Update the scratchpad
-      const { error } = await supabase
-        .from('jobs')
-        .update({ internal_notes: internalNotes })
-        .eq('id', params.id);
-
+      const { error } = await supabase.from('jobs').update({ internal_notes: internalNotes }).eq('id', params.id);
       if (error) {
           console.error("Save Note Error:", error);
           alert(`FAILED TO SAVE: ${error.message}`);
       } else {
-          // 2. Add to Activity Log so it is "Displayed"
           await logActivity('Note Added', `"${internalNotes}"`);
-          alert('Note saved and logged to Activity.');
+          alert('Note saved and logged.');
       }
-      
       setIsSaving(false);
   };
 
@@ -320,11 +324,13 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   if (loading) return <div className="p-12 text-center">Loading...</div>;
   if (!job) return <div className="p-12 text-center">Job not found</div>;
 
-  const currentDepartment = job.status; // Using simple job status for header
+  const currentDepartment = job.status;
   const currentAsset = assets.find(a => a.id === viewingAssetId);
   const isApprovedAsset = currentAsset?.status === 'approved';
   const isPendingProof = currentAsset?.asset_type === 'proof' && currentAsset?.status === 'pending';
   const originalAsset = assets.length > 0 ? [...assets].reverse().find(a => a.asset_type === 'source') : null;
+  const countdown = getCountdown();
+  const activeStepItem = workflowSteps.find(s => s.status === 'Pending');
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
@@ -355,7 +361,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      {/* 1. HEADER */}
+      {/* 1. HEADER (Navigation) */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
         <div className="max-w-[1920px] mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -366,20 +372,54 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
              </div>
           </div>
           <div className="flex gap-2">
-             <div className={`px-4 py-1 rounded-md text-white font-bold uppercase text-xs flex items-center ${isAdmin ? 'bg-black' : (isApprovedAsset ? 'bg-green-600' : 'bg-yellow-500')}`}>
-                {isAdmin ? currentDepartment : (isApprovedAsset ? 'In Production' : 'Action Required')}
-             </div>
+             {!isAdmin && (
+               <div className={`px-4 py-1 rounded-md text-white font-bold uppercase text-xs flex items-center ${isApprovedAsset ? 'bg-green-600' : 'bg-yellow-500'}`}>
+                  {isApprovedAsset ? 'In Production' : 'Action Required'}
+               </div>
+             )}
           </div>
         </div>
       </div>
 
-       {/* 2. ADMIN HERO */}
+       {/* 2. ADMIN COMMAND CENTER (Expanded Header) */}
        {isAdmin && (
-           <div className="bg-gray-800 text-white shadow-xl">
-              <div className="max-w-[1920px] mx-auto flex flex-col md:flex-row">
-                  <div className="p-6 flex-1">
-                      <p className="text-xs font-bold uppercase opacity-75 tracking-widest mb-1">Production Stage</p>
-                      <h1 className="text-4xl font-black uppercase tracking-tight leading-none">{currentDepartment}</h1>
+           <div className="bg-gray-900 text-white shadow-xl border-b-4 border-blue-500">
+              <div className="max-w-[1920px] mx-auto flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-gray-700">
+                  
+                  {/* BLOCK 1: Current Status */}
+                  <div className="p-6 md:w-1/4">
+                      <p className="text-[10px] font-bold uppercase opacity-50 tracking-widest mb-1">Current Department</p>
+                      <h1 className="text-3xl font-black uppercase tracking-tight leading-none text-white">{currentDepartment}</h1>
+                  </div>
+
+                  {/* BLOCK 2: Active Step (The "What's Next") */}
+                  <div className="p-6 md:w-2/4 flex flex-col justify-center">
+                      <p className="text-[10px] font-bold uppercase opacity-50 tracking-widest mb-2">Active Task</p>
+                      {activeStepItem ? (
+                          <div className="flex items-center justify-between bg-gray-800 rounded-lg p-3 border border-gray-700">
+                              <div className="flex items-center gap-3">
+                                  <div className="bg-blue-500 text-white p-2 rounded-full"><Activity size={18}/></div>
+                                  <div>
+                                      <p className="font-bold text-lg leading-none">{activeStepItem.name}</p>
+                                      <p className="text-xs text-gray-400 mt-0.5">{activeStepItem.department}</p>
+                                  </div>
+                              </div>
+                              <button onClick={() => handleCompleteStep(activeStepItem)} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-bold text-xs flex items-center gap-2 transition-all">
+                                  Complete Step <ArrowLeft size={14} className="rotate-180"/>
+                              </button>
+                          </div>
+                      ) : (
+                          <div className="text-gray-500 italic text-sm">No active steps. Workflow complete or not started.</div>
+                      )}
+                  </div>
+
+                  {/* BLOCK 3: Countdown */}
+                  <div className="p-6 md:w-1/4 flex flex-col justify-center items-end">
+                      <p className="text-[10px] font-bold uppercase opacity-50 tracking-widest mb-1">Production Deadline</p>
+                      <div className={`px-4 py-1.5 rounded font-bold text-lg flex items-center gap-2 ${countdown.color} ${countdown.textCol}`}>
+                          <Clock size={18}/> {countdown.text}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">{new Date(job.due_date).toLocaleDateString()}</p>
                   </div>
               </div>
           </div>
@@ -394,31 +434,24 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
             {/* WORKFLOW LADDER */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 flex items-center gap-2"><ArrowDown size={14}/> Production Workflow</h3>
-                
                 {workflowSteps.length === 0 ? (
                     <button onClick={handleGenerateWorkflow} className="w-full py-3 bg-gray-100 border border-dashed border-gray-300 rounded text-xs font-bold text-gray-500 hover:bg-gray-200 flex items-center justify-center gap-2">
                         <PlayCircle size={14}/> Start Workflow
                     </button>
                 ) : (
-                    <div className="space-y-0 relative">
-                        <div className="absolute left-3 top-2 bottom-2 w-0.5 bg-gray-100 z-0"></div>
-                        
+                    <div className="space-y-0 relative pl-2">
+                        <div className="absolute left-5 top-2 bottom-2 w-0.5 bg-gray-100 z-0"></div>
                         {workflowSteps.map((step) => {
                             const isPending = step.status === 'Pending';
                             const isCompleted = step.status === 'Completed';
                             return (
                                 <div key={step.id} className="relative z-10 flex gap-3 pb-4 last:pb-0 group">
-                                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center bg-white ${isCompleted ? 'border-green-500 text-green-500' : isPending ? 'border-blue-500 text-blue-500 shadow-md' : 'border-gray-200 text-gray-200'}`}>
-                                        {isCompleted ? <CheckCircle size={14} className="fill-green-500 text-white"/> : <div className={`w-2 h-2 rounded-full ${isPending ? 'bg-blue-500 animate-pulse' : 'bg-gray-200'}`}></div>}
+                                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center bg-white ${isCompleted ? 'border-green-500 text-green-500' : isPending ? 'border-blue-500 text-blue-500 shadow-md ring-2 ring-blue-100' : 'border-gray-200 text-gray-200'}`}>
+                                        {isCompleted ? <Check size={12} strokeWidth={4}/> : <div className={`w-2 h-2 rounded-full ${isPending ? 'bg-blue-500' : 'bg-gray-200'}`}></div>}
                                     </div>
                                     <div className="flex-1 pt-0.5">
                                         <p className={`text-xs font-bold ${isCompleted ? 'text-gray-400 line-through' : isPending ? 'text-gray-900' : 'text-gray-300'}`}>{step.name}</p>
                                         <p className="text-[9px] text-gray-400 uppercase">{step.department}</p>
-                                        {isPending && (
-                                            <button onClick={() => handleCompleteStep(step)} className="mt-2 text-[10px] bg-blue-600 text-white px-3 py-1 rounded font-bold hover:bg-blue-500 shadow-sm flex items-center gap-1">
-                                                Complete Step
-                                            </button>
-                                        )}
                                     </div>
                                 </div>
                             );
@@ -427,6 +460,18 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 )}
             </div>
 
+            {/* SHIPPING CARD (NEW) */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                <h3 className="text-xs font-bold uppercase text-gray-400 mb-3 flex items-center gap-2"><Truck size={14}/> Ship To</h3>
+                <div className="bg-gray-50 p-3 rounded border border-gray-100 text-sm">
+                    <p className="font-bold text-gray-900">{job.shipping_name || job.profiles?.first_name || 'Customer'}</p>
+                    <p className="text-gray-600">{job.shipping_address1 || '123 Print Street'}</p>
+                    {job.shipping_address2 && <p className="text-gray-600">{job.shipping_address2}</p>}
+                    <p className="text-gray-600">{job.shipping_city || 'City'}, {job.shipping_state || 'ST'} {job.shipping_zip || '00000'}</p>
+                </div>
+            </div>
+
+            {/* SPECS */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 flex items-center gap-2"><Layers size={14}/> Job Specs</h3>
                 <div className="space-y-3 text-sm">
@@ -434,6 +479,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">Stock</span><span className="font-bold text-right w-1/2">{job.paper_stock}</span></div>
                 </div>
             </div>
+
+            {/* FINISHING */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-gray-400 mb-3 flex items-center gap-2"><Scissors size={14}/> Finishing</h3>
                 <div className="flex flex-wrap gap-2">
@@ -443,11 +490,15 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     })}
                 </div>
             </div>
+
+            {/* INTERNAL NOTES */}
             <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-4">
                 <h3 className="text-xs font-bold uppercase text-yellow-700 mb-2 flex items-center gap-2"><Lock size={14}/> Internal Notes</h3>
                 <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} className="w-full h-20 bg-white border border-yellow-300 rounded p-2 text-xs mb-2" />
                 <button onClick={handleSaveNotes} disabled={isSaving} className="w-full bg-yellow-400 text-yellow-900 text-xs font-bold py-1 rounded">Save Notes</button>
             </div>
+
+            {/* ORIGINAL FILE */}
             <div className="bg-blue-50 rounded-lg border border-blue-100 p-4">
                 <h3 className="text-xs font-bold uppercase text-blue-800 mb-2 flex items-center gap-2"><FileText size={14}/> Original Asset</h3>
                 {originalAsset ? (
@@ -467,7 +518,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         {/* --- MIDDLE COL --- */}
         <div className={`col-span-12 ${isAdmin ? 'lg:col-span-6' : 'lg:col-span-9'} flex flex-col gap-4`}>
              
-             {/* CUSTOMER ONLY: ACTION BAR */}
+             {/* CUSTOMER ACTION BAR */}
              {!isAdmin && isPendingProof && (
                  <div className="bg-blue-600 rounded-xl shadow-lg p-6 flex flex-col md:flex-row items-center justify-between gap-4 text-white">
                      <div>
@@ -509,7 +560,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
              </div>
         </div>
 
-        {/* --- RIGHT COL --- */}
+        {/* --- RIGHT COL: CHAT & HISTORY --- */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/4">
                 <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
