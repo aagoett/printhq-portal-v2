@@ -247,7 +247,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       fetchPageData(); 
   };
 
-  // --- ADD STEP WITH NOTES ---
+  // --- ADD STEP WITH NOTES & DROPDOWNS ---
   const handleAddStep = async () => {
       const parentQueue = allQueues.find(q => q.id === selectedQueueId);
       const finalName = selectedSubTaskName || parentQueue?.name;
