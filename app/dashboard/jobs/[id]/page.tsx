@@ -398,7 +398,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const hasOriginalFile = !!originalAsset || !!job.file_url;
 
   const activeStepItem = workflowSteps.find(s => s.status === 'Pending');
-  const countdown = getCountdown(); // This function is now properly defined above
+  const countdown = getCountdown(); // This function is now present!
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
