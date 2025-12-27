@@ -7,7 +7,8 @@ import {
   AlertTriangle, User, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
   Activity, Save, Lock, X, UploadCloud, Maximize2, PlayCircle, 
-  ArrowDown, MapPin, Truck, Check, Ruler, Edit2, Plus, Trash2, LogOut
+  ArrowDown, MapPin, Truck, Check, Ruler, Edit2, Plus, Trash2, LogOut,
+  ArrowUp
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -28,7 +29,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [currentUserName, setCurrentUserName] = useState('');
   const [loading, setLoading] = useState(true);
   
-  const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes'); // Changed default logic
+  const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes'); 
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isEditingWorkflow, setIsEditingWorkflow] = useState(false); 
 
@@ -244,6 +245,31 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       fetchWorkflow();
   };
 
+  // --- NEW: REORDERING LOGIC ---
+  const handleMoveStep = async (index: number, direction: 'up' | 'down') => {
+      const newSteps = [...workflowSteps];
+      if (direction === 'up' && index > 0) {
+          // Swap logic
+          const temp = newSteps[index];
+          newSteps[index] = newSteps[index - 1];
+          newSteps[index - 1] = temp;
+      } else if (direction === 'down' && index < newSteps.length - 1) {
+          const temp = newSteps[index];
+          newSteps[index] = newSteps[index + 1];
+          newSteps[index + 1] = temp;
+      } else {
+          return;
+      }
+
+      // Optimistic update
+      setWorkflowSteps(newSteps);
+
+      // Database update loop
+      for (let i = 0; i < newSteps.length; i++) {
+          await supabase.from('job_steps').update({ step_order: i + 1 }).eq('id', newSteps[i].id);
+      }
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) setUploadFile(e.target.files[0]);
   };
@@ -354,7 +380,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const brandName = job.orders?.brands?.name || 'Pacific Printing';
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col relative">
+    <div className="min-h-screen bg-gray-100 flex flex-col relative">
       
       {/* UPLOAD MODAL */}
       {showUploadModal && isAdmin && (
@@ -497,13 +523,18 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     <div className="space-y-0 relative pl-4">
                         {!isEditingWorkflow && <div className="absolute left-7 top-4 bottom-4 w-0.5 bg-gray-100 z-0"></div>}
                         
-                        {workflowSteps.map((step) => {
+                        {workflowSteps.map((step, index) => {
                             const isPending = step.status === 'Pending';
                             const isCompleted = step.status === 'Completed';
                             return (
                                 <div key={step.id} className="relative z-10 flex gap-4 pb-6 last:pb-0 group items-start">
                                     {isEditingWorkflow ? (
-                                        <button onClick={() => handleDeleteStep(step.id)} className="mt-1 text-red-300 hover:text-red-600 p-1 bg-red-50 rounded"><Trash2 size={14}/></button>
+                                        <div className="flex flex-col gap-1 items-center">
+                                            {/* REORDER BUTTONS */}
+                                            {index > 0 && <button onClick={() => handleMoveStep(index, 'up')} className="p-1 hover:bg-gray-100 rounded text-gray-500"><ArrowUp size={12}/></button>}
+                                            {index < workflowSteps.length - 1 && <button onClick={() => handleMoveStep(index, 'down')} className="p-1 hover:bg-gray-100 rounded text-gray-500"><ArrowDown size={12}/></button>}
+                                            <button onClick={() => handleDeleteStep(step.id)} className="mt-1 text-red-300 hover:text-red-600 p-1 bg-red-50 rounded"><Trash2 size={14}/></button>
+                                        </div>
                                     ) : (
                                         <div className={`w-8 h-8 rounded-full border-4 flex items-center justify-center bg-white shadow-sm ${isCompleted ? 'border-green-500 text-green-500' : isPending ? 'border-blue-500 text-blue-500 ring-4 ring-blue-50' : 'border-gray-200 text-gray-200'}`}>
                                             {isCompleted ? <Check size={14} strokeWidth={4}/> : <div className={`w-2 h-2 rounded-full ${isPending ? 'bg-blue-500' : 'bg-gray-200'}`}></div>}
@@ -515,7 +546,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                                 <p className={`text-sm font-bold ${!isEditingWorkflow && isCompleted ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{step.name}</p>
                                                 <p className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">{step.department}</p>
                                             </div>
-                                            {isCompleted && <span className="text-[10px] text-green-600 bg-green-50 px-2 py-0.5 rounded font-mono">{new Date(step.completed_at).toLocaleDateString()}</span>}
+                                            {/* FIX 1969 DATE BUG */}
+                                            {isCompleted && step.completed_at && <span className="text-[10px] text-green-600 bg-green-50 px-2 py-0.5 rounded font-mono">{new Date(step.completed_at).toLocaleDateString()}</span>}
                                         </div>
                                     </div>
                                 </div>
