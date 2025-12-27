@@ -6,7 +6,8 @@ import {
   Clock, MessageSquare, Layers, 
   Activity, Lock, X, UploadCloud, Maximize2, PlayCircle, 
   ArrowDown, Truck, Check, Ruler, Edit2, Plus, Trash2, LogOut,
-  ArrowUp, Calendar as CalendarIcon, FileImage, ThumbsUp, CheckCircle
+  ArrowUp, Calendar as CalendarIcon, FileImage, ThumbsUp, CheckCircle,
+  AlertCircle
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -31,11 +32,14 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [allQueues, setAllQueues] = useState<any[]>([]);
   const [allSubTasks, setAllSubTasks] = useState<any[]>([]);
   const [filteredSubTasks, setFilteredSubTasks] = useState<any[]>([]);
+  
+  // --- ADD STEP STATE ---
   const [selectedQueueId, setSelectedQueueId] = useState('');
   const [selectedSubTaskName, setSelectedSubTaskName] = useState('');
+  const [newStepNotes, setNewStepNotes] = useState(''); // NEW: Step Notes
 
   // --- UI STATE ---
-  const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes'); 
+  const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat'); 
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isEditingWorkflow, setIsEditingWorkflow] = useState(false); 
 
@@ -91,8 +95,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, logs]);
+  }, [messages, logs, rightTab]);
 
+  // Smart Filtering for Sub-Tasks
   useEffect(() => {
       if (selectedQueueId && allSubTasks.length > 0) {
           const subs = allSubTasks.filter(t => t.queue_id === selectedQueueId);
@@ -188,10 +193,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       }
   };
 
-  // --- NEW: Load the Original Source File (Fallback) ---
   const loadOriginalSource = async () => {
       if (!job?.file_url) return;
-      // Temporarily clear view ID so we know we aren't looking at a version
       setViewingAssetId('source'); 
       const { data } = await supabase.storage.from('uploads').createSignedUrl(job.file_url, 3600);
       if (data?.signedUrl) {
@@ -203,15 +206,10 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       }
   };
 
-  // --- NEW: UPDATE DEADLINE ---
   const handleDateChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const newDate = e.target.value;
       if (!newDate) return;
-      
-      // Update State immediately
       setJob({ ...job, due_date: newDate });
-      
-      // Update DB
       await supabase.from('jobs').update({ due_date: newDate }).eq('id', params.id);
       await logActivity('Deadline Updated', `New date: ${newDate}`);
   };
@@ -249,6 +247,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       fetchPageData(); 
   };
 
+  // --- ADD STEP WITH NOTES ---
   const handleAddStep = async () => {
       const parentQueue = allQueues.find(q => q.id === selectedQueueId);
       const finalName = selectedSubTaskName || parentQueue?.name;
@@ -258,15 +257,22 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
       const maxOrder = workflowSteps.length > 0 ? Math.max(...workflowSteps.map(s => s.step_order)) : 0;
       
-      await supabase.from('job_steps').insert({
+      const { error } = await supabase.from('job_steps').insert({
           job_id: params.id,
           name: finalName,
           department: finalDept,
+          notes: newStepNotes, // SAVE NOTES
           status: 'Waiting', 
           step_order: maxOrder + 1
       });
-      await logActivity('Workflow Updated', `Added step: ${finalName}`);
-      fetchWorkflow();
+
+      if (error) {
+          alert("Error adding step: " + error.message);
+      } else {
+          setNewStepNotes(''); // Clear notes input
+          await logActivity('Workflow Updated', `Added step: ${finalName}`);
+          fetchWorkflow();
+      }
   };
 
   const handleDeleteStep = async (stepId: string) => {
@@ -357,15 +363,12 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     if (!error) fetchMessages();
   };
 
-  // --- UPDATED: SAVE NOTES WITH CONTEXT ---
   const handleSaveNotes = async () => {
       setIsSaving(true);
       const { error } = await supabase.from('jobs').update({ internal_notes: internalNotes }).eq('id', params.id);
-      
       if (!error) {
-          // NEW: Automatically log where we were when the note was saved
           const currentStatus = job.status || 'Unknown';
-          await logActivity('Notes Updated', `Notes updated during status: ${currentStatus}`);
+          await logActivity('Notes Updated', `Instructions updated during status: ${currentStatus}`);
       }
       setIsSaving(false);
   };
@@ -379,11 +382,11 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const isPendingProof = currentAsset?.asset_type === 'proof' && currentAsset?.status === 'pending';
   const brandName = job.orders?.brands?.name || 'Pacific Printing';
 
-  // Find original asset from list OR fallback to job file
   const originalAsset = assets.length > 0 ? [...assets].reverse().find(a => a.asset_type === 'source') : null;
   const hasOriginalFile = !!originalAsset || !!job.file_url;
 
   const activeStepItem = workflowSteps.find(s => s.status === 'Pending');
+  const countdown = getCountdown();
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
@@ -462,8 +465,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                   </div>
                   <div className="p-6 md:w-1/4 flex flex-col justify-center items-end">
                       <p className="text-[10px] font-bold uppercase opacity-50 tracking-widest mb-1 flex items-center gap-1"><CalendarIcon size={12}/> Production Deadline</p>
-                      
-                      {/* NEW: CLICKABLE DATE PICKER */}
                       <input 
                         type="date" 
                         value={job.due_date ? new Date(job.due_date).toISOString().split('T')[0] : ''}
@@ -489,11 +490,11 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* NEW: PRODUCTION NOTES (Prominent & Central) */}
+            {/* PRODUCTION NOTES */}
             <div className="bg-yellow-50 rounded-lg border border-yellow-300 p-4 md:col-span-2 flex flex-col shadow-sm relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-2 h-full bg-yellow-400"></div>
                 <div className="pl-4 h-full flex flex-col">
-                    <h3 className="text-xs font-bold uppercase text-yellow-800 mb-2 flex items-center gap-2"><Lock size={14}/> Important Instructions</h3>
+                    <h3 className="text-xs font-bold uppercase text-yellow-800 mb-2 flex items-center gap-2"><Lock size={14}/> Special Instructions / Job Notes</h3>
                     <textarea 
                         value={internalNotes} 
                         onChange={(e) => setInternalNotes(e.target.value)} 
@@ -545,7 +546,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                 <div key={step.id} className="relative z-10 flex gap-4 pb-6 last:pb-0 group items-start">
                                     {isEditingWorkflow ? (
                                         <div className="flex flex-col gap-1 items-center">
-                                            {/* REORDER BUTTONS */}
                                             {index > 0 && <button onClick={() => handleMoveStep(index, 'up')} className="p-1 hover:bg-gray-100 rounded text-gray-500"><ArrowUp size={12}/></button>}
                                             {index < workflowSteps.length - 1 && <button onClick={() => handleMoveStep(index, 'down')} className="p-1 hover:bg-gray-100 rounded text-gray-500"><ArrowDown size={12}/></button>}
                                             <button onClick={() => handleDeleteStep(step.id)} className="mt-1 text-red-300 hover:text-red-600 p-1 bg-red-50 rounded"><Trash2 size={14}/></button>
@@ -560,6 +560,14 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                             <div>
                                                 <p className={`text-sm font-bold ${!isEditingWorkflow && isCompleted ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{step.name}</p>
                                                 <p className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">{step.department}</p>
+                                                
+                                                {/* NEW: DISPLAY NOTES PROMINENTLY */}
+                                                {step.notes && (
+                                                    <div className="mt-2 text-xs text-gray-700 bg-gray-50 p-2 rounded border border-gray-200 flex items-start gap-2">
+                                                        <AlertCircle size={14} className="text-gray-400 shrink-0 mt-0.5"/>
+                                                        <span className="italic">{step.notes}</span>
+                                                    </div>
+                                                )}
                                             </div>
                                             {isCompleted && step.completed_at && <span className="text-[10px] text-green-600 bg-green-50 px-2 py-0.5 rounded font-mono">{new Date(step.completed_at).toLocaleDateString()}</span>}
                                         </div>
@@ -571,18 +579,31 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                         {isEditingWorkflow && (
                             <div className="mt-6 pt-6 border-t border-gray-100">
                                 <p className="text-[10px] font-bold uppercase text-gray-400 mb-2">Add Custom Step</p>
-                                <div className="flex gap-2">
-                                    <select value={selectedQueueId} onChange={(e) => setSelectedQueueId(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white font-bold w-1/3">
-                                        {allQueues.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
-                                    </select>
-                                    <select value={selectedSubTaskName} onChange={(e) => setSelectedSubTaskName(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white w-2/3 disabled:bg-gray-100" disabled={filteredSubTasks.length === 0}>
-                                        {filteredSubTasks.length > 0 ? (
-                                            filteredSubTasks.map(t => <option key={t.id} value={t.name}>{t.name}</option>)
-                                        ) : (
-                                            <option value="">{allQueues.find(q => q.id === selectedQueueId)?.name || 'Generic'}</option>
-                                        )}
-                                    </select>
-                                    <button onClick={handleAddStep} className="bg-black text-white px-4 rounded font-bold"><Plus size={16}/></button>
+                                <div className="space-y-2">
+                                    <div className="flex gap-2">
+                                        <select value={selectedQueueId} onChange={(e) => setSelectedQueueId(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white font-bold w-1/3">
+                                            {allQueues.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
+                                        </select>
+                                        <select value={selectedSubTaskName} onChange={(e) => setSelectedSubTaskName(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white w-2/3 disabled:bg-gray-100" disabled={filteredSubTasks.length === 0}>
+                                            {filteredSubTasks.length > 0 ? (
+                                                filteredSubTasks.map(t => <option key={t.id} value={t.name}>{t.name}</option>
+                                            ) : (
+                                                <option value="">{allQueues.find(q => q.id === selectedQueueId)?.name || 'Generic'}</option>
+                                            )}
+                                        </select>
+                                    </div>
+                                    
+                                    {/* NEW: NOTES INPUT */}
+                                    <div className="flex gap-2">
+                                        <input 
+                                            type="text" 
+                                            placeholder="Specific Instructions... (e.g. Use 2400dpi, Box in 50s)"
+                                            value={newStepNotes}
+                                            onChange={(e) => setNewStepNotes(e.target.value)}
+                                            className="flex-1 border rounded px-3 py-2 text-sm"
+                                        />
+                                        <button onClick={handleAddStep} className="bg-black text-white px-4 rounded font-bold"><Plus size={16}/></button>
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -590,10 +611,10 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 )}
             </div>
 
-            {/* COL 2: Original File & Chat */}
+            {/* COL 2: RIGHT SIDE PANEL (Chat & Activity) */}
             <div className="flex flex-col gap-4">
                 
-                {/* NEW: ORIGINAL SOURCE FILE (Fallback Included) */}
+                {/* ORIGINAL SOURCE FILE */}
                 {hasOriginalFile ? (
                     <div className="bg-blue-50 rounded-lg border border-blue-200 p-4 flex items-center justify-between">
                         <div className="flex items-center gap-4">
@@ -611,25 +632,64 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-center text-xs text-gray-400 italic">No source file attached.</div>
                 )}
 
-                <div className="bg-white rounded-lg border border-gray-200 flex flex-col h-64">
-                    <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 font-bold text-xs uppercase text-gray-500">Recent Chat Activity</div>
-                    <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                        {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
-                        {messages.map((msg) => {
-                            const isMe = msg.user_id === user?.id;
-                            return (
-                                <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                                    <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${isMe ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
-                                    <span className="text-[9px] text-gray-400 mt-0.5">{msg.sender_name || 'User'}</span>
-                                </div>
-                            );
-                        })}
-                        <div ref={messagesEndRef} />
+                {/* RESTORED: TABBED INTERFACE */}
+                <div className="bg-white rounded-lg border border-gray-200 flex flex-col h-[400px]">
+                    <div className="flex border-b border-gray-200">
+                        <button 
+                            onClick={() => setRightTab('chat')} 
+                            className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}
+                        >
+                            <MessageSquare size={14}/> Discussion
+                        </button>
+                        <button 
+                            onClick={() => setRightTab('activity')} 
+                            className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}
+                        >
+                            <Activity size={14}/> Audit Log
+                        </button>
                     </div>
-                    <div className="p-2 border-t border-gray-100 bg-gray-50 flex gap-2">
-                        <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-300 text-xs focus:outline-none focus:border-black" placeholder="Type message..." />
-                        <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
+
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3 relative">
+                        {rightTab === 'chat' && (
+                            <>
+                                {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
+                                {messages.map((msg) => {
+                                    const isMe = msg.user_id === user?.id;
+                                    return (
+                                        <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                                            <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${isMe ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
+                                            <span className="text-[9px] text-gray-400 mt-0.5">{msg.sender_name || 'User'}</span>
+                                        </div>
+                                    );
+                                })}
+                                <div ref={messagesEndRef} />
+                            </>
+                        )}
+
+                        {rightTab === 'activity' && (
+                            <>
+                                {logs.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No activity yet.</div>}
+                                {logs.map((log) => (
+                                    <div key={log.id} className="flex gap-3 text-xs pb-3 border-b border-gray-50 last:border-0">
+                                        <div className="mt-0.5 min-w-[30px] text-gray-400 font-mono text-[9px]">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                                        <div>
+                                            <p className="font-bold text-gray-900">{log.action}</p>
+                                            <p className="text-gray-500">{log.details}</p>
+                                            <p className="text-[9px] text-blue-400 mt-0.5">{log.profiles?.first_name || 'System'}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                                <div ref={logsEndRef} />
+                            </>
+                        )}
                     </div>
+
+                    {rightTab === 'chat' && (
+                        <div className="p-2 border-t border-gray-100 bg-gray-50 flex gap-2">
+                            <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-300 text-xs focus:outline-none focus:border-black" placeholder="Type message..." />
+                            <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
