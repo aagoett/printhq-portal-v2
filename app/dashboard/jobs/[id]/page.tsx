@@ -36,7 +36,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   // --- ADD STEP STATE ---
   const [selectedQueueId, setSelectedQueueId] = useState('');
   const [selectedSubTaskName, setSelectedSubTaskName] = useState('');
-  const [newStepNotes, setNewStepNotes] = useState(''); // NEW: Step Notes
+  const [newStepNotes, setNewStepNotes] = useState(''); 
 
   // --- UI STATE ---
   const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat'); 
