@@ -2,13 +2,11 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { 
-  ArrowLeft, Send, FileText, Download, DollarSign, 
-  Clock, MessageSquare, Printer, Calendar, Layers, Hash,
-  AlertTriangle, User, Scissors, CheckSquare, Megaphone,
-  History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, Maximize2, PlayCircle, 
-  ArrowDown, MapPin, Truck, Check, Ruler, Edit2, Plus, Trash2, LogOut,
-  ArrowUp
+  ArrowLeft, Send, FileText, Download, 
+  Clock, MessageSquare, Layers, 
+  Activity, Lock, X, UploadCloud, Maximize2, PlayCircle, 
+  ArrowDown, Truck, Check, Ruler, Edit2, Plus, Trash2, LogOut,
+  ArrowUp, Calendar as CalendarIcon, FileImage, ThumbsUp, CheckCircle
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -29,24 +27,21 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [currentUserName, setCurrentUserName] = useState('');
   const [loading, setLoading] = useState(true);
   
-  // --- DYNAMIC DROPDOWNS STATE ---
-  const [mainQueues, setMainQueues] = useState<any[]>([]);      // Parent categories
-  const [allSubQueues, setAllSubQueues] = useState<any[]>([]);  // All possible tasks
-  const [filteredTasks, setFilteredTasks] = useState<any[]>([]); // Tasks for selected category
-  
+  // --- DROPDOWNS ---
+  const [allQueues, setAllQueues] = useState<any[]>([]);
+  const [allSubTasks, setAllSubTasks] = useState<any[]>([]);
+  const [filteredSubTasks, setFilteredSubTasks] = useState<any[]>([]);
+  const [selectedQueueId, setSelectedQueueId] = useState('');
+  const [selectedSubTaskName, setSelectedSubTaskName] = useState('');
+
+  // --- UI STATE ---
   const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes'); 
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isEditingWorkflow, setIsEditingWorkflow] = useState(false); 
 
-  // Form State
-  const [selectedMainQueue, setSelectedMainQueue] = useState('');
-  const [selectedSubTask, setSelectedSubTask] = useState('');
-
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadMessage, setUploadMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
-
-  const [serviceList, setServiceList] = useState<any[]>([]);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<string>('unknown');
@@ -65,10 +60,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  // --- INITIAL DATA FETCH ---
   useEffect(() => {
     fetchPageData();
-    fetchDropdownOptions(); // Load Settings
+    fetchSettings();
 
     const chatChannel = supabase.channel('job_chat')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, () => fetchMessages())
@@ -99,28 +93,23 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, logs]);
 
-  // --- SMART DROPDOWN LOGIC ---
-  // When Main Queue changes, filter the Sub Tasks
   useEffect(() => {
-      if (selectedMainQueue) {
-          const queueId = mainQueues.find(q => q.name === selectedMainQueue)?.id;
-          const relevantTasks = allSubQueues.filter(sq => sq.queue_id === queueId);
-          setFilteredTasks(relevantTasks);
-          // Auto-select first option if available
-          if (relevantTasks.length > 0) setSelectedSubTask(relevantTasks[0].name);
-          else setSelectedSubTask('');
+      if (selectedQueueId && allSubTasks.length > 0) {
+          const subs = allSubTasks.filter(t => t.queue_id === selectedQueueId);
+          setFilteredSubTasks(subs);
+          if (subs.length > 0) setSelectedSubTaskName(subs[0].name);
+          else setSelectedSubTaskName(''); 
       }
-  }, [selectedMainQueue, mainQueues, allSubQueues]);
+  }, [selectedQueueId, allSubTasks]);
 
-  const fetchDropdownOptions = async () => {
-      const { data: queues } = await supabase.from('production_queues').select('*').order('sort_order');
-      const { data: subs } = await supabase.from('production_subqueues').select('*').order('sort_order');
-      
-      if (queues) {
-          setMainQueues(queues);
-          if (queues.length > 0) setSelectedMainQueue(queues[0].name);
+  const fetchSettings = async () => {
+      const { data: qData } = await supabase.from('production_queues').select('*').order('sort_order');
+      const { data: sData } = await supabase.from('production_subqueues').select('*').order('sort_order');
+      if (qData) {
+          setAllQueues(qData);
+          if (qData.length > 0) setSelectedQueueId(qData[0].id);
       }
-      if (subs) setAllSubQueues(subs);
+      if (sData) setAllSubTasks(sData);
   };
 
   const fetchPageData = async () => {
@@ -143,10 +132,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     if (jobData?.internal_notes) setInternalNotes(jobData.internal_notes);
 
     await fetchWorkflow();
-
-    const { data: services } = await supabase.from('finishing_services').select('*').order('name');
-    if (services) setServiceList(services);
-
     await fetchAssets();
     await fetchMessages();
     await fetchLogs();
@@ -179,18 +164,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     if (data) setLogs(data);
   };
 
-  const getCountdown = () => {
-      if (!job?.due_date) return { text: "NO DATE", color: "bg-gray-700", textCol: "text-gray-400" };
-      const due = new Date(job.due_date);
-      const now = new Date();
-      due.setHours(23, 59, 59, 999);
-      const diffDays = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-      
-      if (diffDays < 0) return { text: `${Math.abs(diffDays)} DAYS LATE`, color: "bg-red-600", textCol: "text-white animate-pulse" };
-      if (diffDays === 0) return { text: "DUE TODAY", color: "bg-orange-500", textCol: "text-white" };
-      return { text: `${diffDays} DAYS LEFT`, color: "bg-emerald-500", textCol: "text-white" };
-  };
-
   const logActivity = async (action: string, details: string) => {
       if (!user) return;
       await supabase.from('job_logs').insert({ job_id: params.id, user_id: user.id, action, details });
@@ -215,14 +188,40 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       }
   };
 
+  // --- NEW: Load the Original Source File (Fallback) ---
+  const loadOriginalSource = async () => {
+      if (!job?.file_url) return;
+      // Temporarily clear view ID so we know we aren't looking at a version
+      setViewingAssetId('source'); 
+      const { data } = await supabase.storage.from('uploads').createSignedUrl(job.file_url, 3600);
+      if (data?.signedUrl) {
+          setPreviewUrl(data.signedUrl);
+          const lower = job.file_url.toLowerCase();
+          if (lower.match(/\.(jpg|jpeg|png|webp)$/)) setPreviewType('image');
+          else if (lower.endsWith('.pdf')) setPreviewType('pdf');
+          else setPreviewType('other');
+      }
+  };
+
+  // --- NEW: UPDATE DEADLINE ---
+  const handleDateChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newDate = e.target.value;
+      if (!newDate) return;
+      
+      // Update State immediately
+      setJob({ ...job, due_date: newDate });
+      
+      // Update DB
+      await supabase.from('jobs').update({ due_date: newDate }).eq('id', params.id);
+      await logActivity('Deadline Updated', `New date: ${newDate}`);
+  };
+
   const handleGenerateWorkflow = async () => {
       const { data: standardQueues } = await supabase.from('production_queues').select('*').order('sort_order');
-      
       if (!standardQueues || standardQueues.length === 0) {
           alert("No workflow settings found! Please go to Settings to configure your queues.");
           return;
       }
-
       for (let i = 0; i < standardQueues.length; i++) {
           const q = standardQueues[i];
           await supabase.from('job_steps').insert({
@@ -238,43 +237,36 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
   const handleCompleteStep = async (step: any) => {
       await supabase.from('job_steps').update({ status: 'Completed', completed_at: new Date().toISOString() }).eq('id', step.id);
-      
       const nextStep = workflowSteps.find(s => s.step_order > step.step_order);
-      
       if (nextStep) {
           await supabase.from('job_steps').update({ status: 'Pending' }).eq('id', nextStep.id);
           await supabase.from('jobs').update({ status: nextStep.department }).eq('id', params.id);
       } else {
           await supabase.from('jobs').update({ status: 'Completed' }).eq('id', params.id);
       }
-
       await logActivity('Step Completed', `Completed: ${step.name}`);
       fetchWorkflow();
       fetchPageData(); 
   };
 
-  // --- UPDATED ADD STEP (RESTRICTED) ---
   const handleAddStep = async () => {
-      // Use selectedSubTask, or fallback to Main Queue name if no subs exist
-      const taskName = selectedSubTask || selectedMainQueue;
-      
-      if (!taskName) return;
+      const parentQueue = allQueues.find(q => q.id === selectedQueueId);
+      const finalName = selectedSubTaskName || parentQueue?.name;
+      const finalDept = parentQueue?.name || 'Production';
+
+      if (!finalName) return;
+
       const maxOrder = workflowSteps.length > 0 ? Math.max(...workflowSteps.map(s => s.step_order)) : 0;
       
-      const { error } = await supabase.from('job_steps').insert({
+      await supabase.from('job_steps').insert({
           job_id: params.id,
-          name: taskName,
-          department: selectedMainQueue,
+          name: finalName,
+          department: finalDept,
           status: 'Waiting', 
           step_order: maxOrder + 1
       });
-
-      if (error) {
-          alert("Error adding step: " + error.message);
-      } else {
-          await logActivity('Workflow Updated', `Added step: ${taskName}`);
-          fetchWorkflow();
-      }
+      await logActivity('Workflow Updated', `Added step: ${finalName}`);
+      fetchWorkflow();
   };
 
   const handleDeleteStep = async (stepId: string) => {
@@ -297,9 +289,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       } else {
           return;
       }
-
       setWorkflowSteps(newSteps);
-
       for (let i = 0; i < newSteps.length; i++) {
           await supabase.from('job_steps').update({ step_order: i + 1 }).eq('id', newSteps[i].id);
       }
@@ -317,11 +307,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
           if (error) throw new Error("Storage Upload failed");
 
-          await supabase.from('job_assets')
-            .update({ status: 'archived' })
-            .eq('job_id', params.id)
-            .eq('asset_type', 'proof')
-            .neq('status', 'archived');
+          await supabase.from('job_assets').update({ status: 'archived' }).eq('job_id', params.id).eq('asset_type', 'proof').neq('status', 'archived');
 
           const { data: newAsset } = await supabase.from('job_assets').insert({
               job_id: params.id, uploader_id: user.id, file_url: data?.path, file_name: uploadFile.name, asset_type: 'proof', status: 'pending'
@@ -341,12 +327,12 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
               loadPreview(newAsset); 
           }
           setShowUploadModal(false); setUploadFile(null); setUploadMessage('');
-          alert("Proof sent! Previous versions archived.");
+          alert("Proof sent!");
       } catch (error: any) { alert("Error: " + error.message); } finally { setIsUploading(false); }
   };
 
   const handleApproveProof = async (assetId: string) => {
-      if (!confirm("Confirm Approval? This will send the job to production.")) return;
+      if (!confirm("Confirm Approval?")) return;
       await supabase.from('job_assets').update({ status: 'approved' }).eq('id', assetId);
       await supabase.from('jobs').update({ status: 'In Production' }).eq('id', params.id);
       
@@ -355,9 +341,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       await supabase.from('messages').insert({ 
           job_id: params.id, user_id: user.id, content: "✅ APPROVED FOR PRODUCTION", sender_name: currentUserName
       });
-      
       fetchPageData();
-      alert("Job moved to Production!");
   };
 
   const handleSendMessage = async () => {
@@ -367,39 +351,23 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     const msgContent = newMessage;
     setNewMessage(''); 
 
-    const optimisticMsg = {
-        id: Math.random().toString(), user_id: user.id, content: msgContent, created_at: new Date().toISOString(),
-        profiles: { first_name: currentUserName, role: isAdmin ? 'admin' : 'customer' }
-    };
-    setMessages((prev) => [...prev, optimisticMsg]); 
-
     const { error } = await supabase.from('messages').insert({ 
         job_id: params.id, user_id: user.id, content: msgContent, sender_name: currentUserName
     });
-
-    if (error) { console.error("Chat Error:", error); alert(`CHAT FAILED: ${error.message}`); fetchMessages(); } 
-    else { fetchMessages(); }
+    if (!error) fetchMessages();
   };
 
+  // --- UPDATED: SAVE NOTES WITH CONTEXT ---
   const handleSaveNotes = async () => {
       setIsSaving(true);
       const { error } = await supabase.from('jobs').update({ internal_notes: internalNotes }).eq('id', params.id);
-      if (error) {
-          console.error("Save Note Error:", error);
-          alert(`FAILED TO SAVE: ${error.message}`);
-      } else {
-          await logActivity('Note Added', `"${internalNotes}"`);
-          alert('Note saved and logged.');
+      
+      if (!error) {
+          // NEW: Automatically log where we were when the note was saved
+          const currentStatus = job.status || 'Unknown';
+          await logActivity('Notes Updated', `Notes updated during status: ${currentStatus}`);
       }
       setIsSaving(false);
-  };
-
-  const toggleFinishingOption = async (optionName: string) => {
-      if (!isAdmin) return;
-      const currentOptions = job.finishing_options || [];
-      let newOptions = currentOptions.includes(optionName) ? currentOptions.filter((o: string) => o !== optionName) : [...currentOptions, optionName];
-      setJob({ ...job, finishing_options: newOptions }); 
-      await supabase.from('jobs').update({ finishing_options: newOptions }).eq('id', params.id);
   };
 
   if (loading) return <div className="p-12 text-center">Loading...</div>;
@@ -409,10 +377,13 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const currentAsset = assets.find(a => a.id === viewingAssetId);
   const isApprovedAsset = currentAsset?.status === 'approved';
   const isPendingProof = currentAsset?.asset_type === 'proof' && currentAsset?.status === 'pending';
-  const originalAsset = assets.length > 0 ? [...assets].reverse().find(a => a.asset_type === 'source') : null;
-  const countdown = getCountdown();
-  const activeStepItem = workflowSteps.find(s => s.status === 'Pending');
   const brandName = job.orders?.brands?.name || 'Pacific Printing';
+
+  // Find original asset from list OR fallback to job file
+  const originalAsset = assets.length > 0 ? [...assets].reverse().find(a => a.asset_type === 'source') : null;
+  const hasOriginalFile = !!originalAsset || !!job.file_url;
+
+  const activeStepItem = workflowSteps.find(s => s.status === 'Pending');
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
@@ -490,11 +461,15 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                       )}
                   </div>
                   <div className="p-6 md:w-1/4 flex flex-col justify-center items-end">
-                      <p className="text-[10px] font-bold uppercase opacity-50 tracking-widest mb-1">Production Deadline</p>
-                      <div className={`px-4 py-1.5 rounded font-bold text-lg flex items-center gap-2 ${countdown.color} ${countdown.textCol}`}>
-                          <Clock size={18}/> {countdown.text}
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">{new Date(job.due_date).toLocaleDateString()}</p>
+                      <p className="text-[10px] font-bold uppercase opacity-50 tracking-widest mb-1 flex items-center gap-1"><CalendarIcon size={12}/> Production Deadline</p>
+                      
+                      {/* NEW: CLICKABLE DATE PICKER */}
+                      <input 
+                        type="date" 
+                        value={job.due_date ? new Date(job.due_date).toISOString().split('T')[0] : ''}
+                        onChange={handleDateChange}
+                        className="bg-gray-800 text-white font-bold text-lg px-3 py-1 rounded border border-gray-700 focus:outline-none focus:border-blue-500"
+                      />
                   </div>
               </div>
           </div>
@@ -514,13 +489,22 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 md:col-span-2">
-                <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-2 flex items-center gap-2"><Scissors size={12}/> Finishing</h3>
-                <div className="flex flex-wrap gap-2">
-                    {serviceList.map((service) => {
-                        const isSelected = job.finishing_options?.includes(service.name);
-                        return <div key={service.id} onClick={() => toggleFinishingOption(service.name)} className={`px-2 py-1 rounded text-[10px] font-bold border cursor-pointer transition-colors ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-400 hover:border-black'}`}>{service.name}</div>;
-                    })}
+            {/* NEW: PRODUCTION NOTES (Prominent & Central) */}
+            <div className="bg-yellow-50 rounded-lg border border-yellow-300 p-4 md:col-span-2 flex flex-col shadow-sm relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-2 h-full bg-yellow-400"></div>
+                <div className="pl-4 h-full flex flex-col">
+                    <h3 className="text-xs font-bold uppercase text-yellow-800 mb-2 flex items-center gap-2"><Lock size={14}/> Important Instructions</h3>
+                    <textarea 
+                        value={internalNotes} 
+                        onChange={(e) => setInternalNotes(e.target.value)} 
+                        className="w-full flex-1 bg-yellow-50 text-yellow-900 font-medium text-sm focus:outline-none resize-none placeholder-yellow-800/50" 
+                        placeholder="Enter specific production details here..."
+                    />
+                    <div className="flex justify-end mt-2">
+                        <button onClick={handleSaveNotes} disabled={isSaving} className="text-[10px] bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold px-3 py-1 rounded">
+                            {isSaving ? 'Saving...' : 'Save Instructions'}
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -534,7 +518,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
             </div>
         </div>
 
-        {/* ROW 2: WORKFLOW & INSTRUCTIONS */}
+        {/* ROW 2: WORKFLOW & DETAILS */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             
             {/* COL 1: The Workflow Ladder */}
@@ -577,7 +561,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                                 <p className={`text-sm font-bold ${!isEditingWorkflow && isCompleted ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{step.name}</p>
                                                 <p className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">{step.department}</p>
                                             </div>
-                                            {/* FIX 1969 DATE BUG */}
                                             {isCompleted && step.completed_at && <span className="text-[10px] text-green-600 bg-green-50 px-2 py-0.5 rounded font-mono">{new Date(step.completed_at).toLocaleDateString()}</span>}
                                         </div>
                                     </div>
@@ -589,30 +572,16 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                             <div className="mt-6 pt-6 border-t border-gray-100">
                                 <p className="text-[10px] font-bold uppercase text-gray-400 mb-2">Add Custom Step</p>
                                 <div className="flex gap-2">
-                                    
-                                    {/* DROPDOWN 1: QUEUE */}
-                                    <select 
-                                        value={selectedMainQueue} 
-                                        onChange={(e) => setSelectedMainQueue(e.target.value)} 
-                                        className="border rounded px-3 py-2 text-sm bg-white font-bold w-1/3"
-                                    >
-                                        {mainQueues.map(q => <option key={q.id} value={q.name}>{q.name}</option>)}
+                                    <select value={selectedQueueId} onChange={(e) => setSelectedQueueId(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white font-bold w-1/3">
+                                        {allQueues.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
                                     </select>
-
-                                    {/* DROPDOWN 2: SUB-TASK */}
-                                    <select 
-                                        value={selectedSubTask} 
-                                        onChange={(e) => setSelectedSubTask(e.target.value)} 
-                                        className="border rounded px-3 py-2 text-sm bg-white w-2/3"
-                                        disabled={filteredTasks.length === 0}
-                                    >
-                                        {filteredTasks.length > 0 ? (
-                                            filteredTasks.map(t => <option key={t.id} value={t.name}>{t.name}</option>)
+                                    <select value={selectedSubTaskName} onChange={(e) => setSelectedSubTaskName(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white w-2/3 disabled:bg-gray-100" disabled={filteredSubTasks.length === 0}>
+                                        {filteredSubTasks.length > 0 ? (
+                                            filteredSubTasks.map(t => <option key={t.id} value={t.name}>{t.name}</option>)
                                         ) : (
-                                            <option value="">{selectedMainQueue} (Generic)</option>
+                                            <option value="">{allQueues.find(q => q.id === selectedQueueId)?.name || 'Generic'}</option>
                                         )}
                                     </select>
-                                    
                                     <button onClick={handleAddStep} className="bg-black text-white px-4 rounded font-bold"><Plus size={16}/></button>
                                 </div>
                             </div>
@@ -621,23 +590,26 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 )}
             </div>
 
-            {/* COL 2: Notes & Chat (Tabbed) */}
+            {/* COL 2: Original File & Chat */}
             <div className="flex flex-col gap-4">
-                <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-6 flex-1 flex flex-col">
-                    <h3 className="font-bold text-lg text-yellow-800 mb-2 flex items-center gap-2"><Lock size={18}/> Production Notes</h3>
-                    <p className="text-xs text-yellow-600 mb-4">These notes are visible to staff only.</p>
-                    <textarea 
-                        value={internalNotes} 
-                        onChange={(e) => setInternalNotes(e.target.value)} 
-                        className="w-full flex-1 bg-white border border-yellow-300 rounded-lg p-4 text-sm focus:outline-none focus:border-yellow-500 focus:ring-2 focus:ring-yellow-100 min-h-[150px]" 
-                        placeholder="Enter specific instructions here..."
-                    />
-                    <div className="mt-4 flex justify-end">
-                        <button onClick={handleSaveNotes} disabled={isSaving} className="bg-yellow-400 text-yellow-900 text-sm font-bold px-6 py-2 rounded-lg hover:bg-yellow-300 shadow-sm">
-                            {isSaving ? 'Saving...' : 'Save Instructions'}
+                
+                {/* NEW: ORIGINAL SOURCE FILE (Fallback Included) */}
+                {hasOriginalFile ? (
+                    <div className="bg-blue-50 rounded-lg border border-blue-200 p-4 flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-blue-500 text-white p-3 rounded-lg"><FileText size={24}/></div>
+                            <div>
+                                <h3 className="font-bold text-blue-900 text-sm">Original Source File</h3>
+                                <p className="text-xs text-blue-700 truncate w-48">{originalAsset?.file_name || 'View Source File'}</p>
+                            </div>
+                        </div>
+                        <button onClick={loadOriginalSource} className="bg-white text-blue-600 border border-blue-200 px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-50">
+                            Download / View
                         </button>
                     </div>
-                </div>
+                ) : (
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-center text-xs text-gray-400 italic">No source file attached.</div>
+                )}
 
                 <div className="bg-white rounded-lg border border-gray-200 flex flex-col h-64">
                     <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 font-bold text-xs uppercase text-gray-500">Recent Chat Activity</div>
@@ -667,7 +639,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
             <div className="px-6 py-4 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
                 <div className="flex items-center gap-4">
                     <h3 className="font-bold text-lg text-gray-900">Artwork Preview</h3>
-                    <span className="text-xs font-mono text-gray-500 bg-white px-2 py-1 rounded border">{currentAsset?.file_name || 'No File Selected'}</span>
+                    <span className="text-xs font-mono text-gray-500 bg-white px-2 py-1 rounded border">{currentAsset?.file_name || 'No Proof Selected'}</span>
                 </div>
                 <div className="flex items-center gap-2">
                         {isAdmin && <button onClick={() => setShowUploadModal(true)} className="text-xs bg-black text-white px-3 py-1.5 rounded-lg font-bold">+ New Version</button>}
@@ -679,7 +651,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 {!previewUrl ? (
                     <div className="text-gray-400 flex flex-col items-center">
                         <FileImage size={48} className="mb-4 opacity-20"/>
-                        <p>No preview available</p>
+                        <p>Select a file or upload a proof to view.</p>
                     </div>
                 ) : previewType === 'image' ? (
                     <img src={previewUrl} className="max-w-full max-h-full shadow-2xl border-4 border-white rounded-lg" />
@@ -688,7 +660,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 )}
             </div>
             
-            {/* Version History in Preview Footer */}
             <div className="bg-white border-t border-gray-200 p-4 flex gap-4 overflow-x-auto">
                  {assets.map((asset) => (
                     <div key={asset.id} onClick={() => loadPreview(asset)} className={`flex-shrink-0 w-32 p-2 rounded border cursor-pointer text-center ${viewingAssetId === asset.id ? 'bg-blue-50 border-blue-500 ring-2 ring-blue-100' : 'hover:bg-gray-50'}`}>
