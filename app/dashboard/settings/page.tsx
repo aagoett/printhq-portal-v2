@@ -2,15 +2,20 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, Settings, Layers, ScrollText } from 'lucide-react';
+import { Plus, Trash2, Settings, Layers, ScrollText, Edit2, Check, X } from 'lucide-react';
 
 export default function SettingsPage() {
   // --- STATE: WORKFLOW ---
   const [queues, setQueues] = useState<any[]>([]);
   const [subQueues, setSubQueues] = useState<any[]>([]);
+  
   const [newQueueName, setNewQueueName] = useState('');
   const [newSubTaskName, setNewSubTaskName] = useState('');
   const [activeQueueId, setActiveQueueId] = useState<string | null>(null);
+
+  // --- STATE: EDITING ---
+  const [editingQueueId, setEditingQueueId] = useState<string | null>(null);
+  const [editQueueName, setEditQueueName] = useState('');
 
   // --- STATE: PAPER ---
   const [stocks, setStocks] = useState<any[]>([]);
@@ -34,7 +39,7 @@ export default function SettingsPage() {
     if (qData) setQueues(qData);
     if (sData) setSubQueues(sData);
 
-    // 2. Fetch Paper Data (RESTORED)
+    // 2. Fetch Paper Data
     const { data: pData } = await supabase.from('paper_stocks').select('*').order('name');
     if (pData) setStocks(pData);
 
@@ -48,6 +53,32 @@ export default function SettingsPage() {
     await supabase.from('production_queues').insert({ name: newQueueName, sort_order: maxOrder + 1 });
     setNewQueueName('');
     fetchSettings();
+  };
+
+  // NEW: Start Editing
+  const startEditing = (queue: any) => {
+      setEditingQueueId(queue.id);
+      setEditQueueName(queue.name);
+  };
+
+  // NEW: Save Edit
+  const handleUpdateQueue = async () => {
+      if (!editQueueName.trim() || !editingQueueId) return;
+      
+      await supabase
+        .from('production_queues')
+        .update({ name: editQueueName })
+        .eq('id', editingQueueId);
+      
+      setEditingQueueId(null);
+      setEditQueueName('');
+      fetchSettings();
+  };
+
+  // NEW: Cancel Edit
+  const cancelEditing = () => {
+      setEditingQueueId(null);
+      setEditQueueName('');
   };
 
   const handleDeleteQueue = async (id: string) => {
@@ -75,7 +106,7 @@ export default function SettingsPage() {
     fetchSettings();
   };
 
-  // --- PAPER ACTIONS (RESTORED) ---
+  // --- PAPER ACTIONS ---
   const handleAddStock = async () => {
       if (!newStockName.trim()) return;
       await supabase.from('paper_stocks').insert({ name: newStockName });
@@ -115,18 +146,49 @@ export default function SettingsPage() {
                 {queues.map((queue) => {
                     const mySubTasks = subQueues.filter(sq => sq.queue_id === queue.id);
                     const isAddingToThis = activeQueueId === queue.id;
+                    const isEditing = editingQueueId === queue.id;
 
                     return (
                         <div key={queue.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                             {/* QUEUE HEADER */}
                             <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex justify-between items-center group">
-                                <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-3 flex-1">
                                     <span className="font-mono text-xs text-gray-400 font-bold bg-white px-2 py-1 rounded border">#{queue.sort_order}</span>
-                                    <h3 className="font-bold text-lg text-gray-900">{queue.name}</h3>
+                                    
+                                    {isEditing ? (
+                                        <div className="flex items-center gap-2">
+                                            <input 
+                                                autoFocus
+                                                type="text" 
+                                                value={editQueueName}
+                                                onChange={(e) => setEditQueueName(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') handleUpdateQueue();
+                                                    if (e.key === 'Escape') cancelEditing();
+                                                }}
+                                                className="font-bold text-lg text-gray-900 bg-white border border-blue-400 rounded px-2 py-1 outline-none focus:ring-2 ring-blue-100"
+                                            />
+                                            <button onClick={handleUpdateQueue} className="bg-green-500 text-white p-1 rounded hover:bg-green-600"><Check size={16}/></button>
+                                            <button onClick={cancelEditing} className="bg-gray-200 text-gray-600 p-1 rounded hover:bg-gray-300"><X size={16}/></button>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center gap-2 group/title">
+                                            <h3 className="font-bold text-lg text-gray-900">{queue.name}</h3>
+                                            <button 
+                                                onClick={() => startEditing(queue)} 
+                                                className="text-gray-300 hover:text-blue-500 opacity-0 group-hover/title:opacity-100 transition-opacity"
+                                            >
+                                                <Edit2 size={14}/>
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
-                                <button onClick={() => handleDeleteQueue(queue.id)} className="text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <Trash2 size={18} />
-                                </button>
+
+                                {!isEditing && (
+                                    <button onClick={() => handleDeleteQueue(queue.id)} className="text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <Trash2 size={18} />
+                                    </button>
+                                )}
                             </div>
 
                             {/* SUB-TASKS LIST */}
@@ -184,7 +246,7 @@ export default function SettingsPage() {
             </div>
         </div>
 
-        {/* SECTION 2: PAPER LIBRARY (RESTORED) */}
+        {/* SECTION 2: PAPER LIBRARY */}
         <div className="pt-8 border-t border-gray-200">
             <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
                 <ScrollText size={18}/> Paper Inventory
