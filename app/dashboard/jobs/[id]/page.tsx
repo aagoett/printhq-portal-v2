@@ -29,12 +29,15 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [currentUserName, setCurrentUserName] = useState('');
   const [loading, setLoading] = useState(true);
   
+  // Dynamic Settings State
+  const [deptOptions, setDeptOptions] = useState<any[]>([]); // For the dropdown
+  
   const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes'); 
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isEditingWorkflow, setIsEditingWorkflow] = useState(false); 
 
   const [newStepName, setNewStepName] = useState('');
-  const [newStepDept, setNewStepDept] = useState('Production');
+  const [newStepDept, setNewStepDept] = useState(''); // Empty by default now
 
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadMessage, setUploadMessage] = useState('');
@@ -61,6 +64,16 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     fetchPageData();
+
+    // Fetch dynamic departments for the dropdown
+    const fetchDepts = async () => {
+        const { data } = await supabase.from('production_queues').select('*').order('sort_order');
+        if (data) {
+            setDeptOptions(data);
+            if(data.length > 0) setNewStepDept(data[0].name);
+        }
+    };
+    fetchDepts();
 
     const chatChannel = supabase.channel('job_chat')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, () => fetchMessages())
@@ -183,20 +196,23 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       }
   };
 
+  // --- UPDATED: GENERATE WORKFLOW FROM SETTINGS ---
   const handleGenerateWorkflow = async () => {
-      const defaultSteps = [
-          { name: 'Prepress Check', department: 'Prepress' },
-          { name: 'RIP & Print', department: 'Production' },
-          { name: 'Finishing / Cutting', department: 'Finishing' },
-          { name: 'Quality Control', department: 'QC' },
-          { name: 'Pack & Ship', department: 'Shipping' }
-      ];
+      // 1. Fetch the "Master List" from Settings
+      const { data: standardQueues } = await supabase.from('production_queues').select('*').order('sort_order');
+      
+      if (!standardQueues || standardQueues.length === 0) {
+          alert("No workflow settings found! Please go to Settings to configure your queues.");
+          return;
+      }
 
-      for (let i = 0; i < defaultSteps.length; i++) {
+      // 2. Insert them as steps
+      for (let i = 0; i < standardQueues.length; i++) {
+          const q = standardQueues[i];
           await supabase.from('job_steps').insert({
               job_id: params.id,
-              name: defaultSteps[i].name,
-              department: defaultSteps[i].department,
+              name: q.name, // e.g. "Bindery"
+              department: q.name,
               status: i === 0 ? 'Pending' : 'Waiting',
               step_order: i + 1
           });
@@ -225,17 +241,22 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       if (!newStepName.trim()) return;
       const maxOrder = workflowSteps.length > 0 ? Math.max(...workflowSteps.map(s => s.step_order)) : 0;
       
-      await supabase.from('job_steps').insert({
+      const { error } = await supabase.from('job_steps').insert({
           job_id: params.id,
           name: newStepName,
-          department: newStepDept,
+          department: newStepDept || 'Production',
           status: 'Waiting', 
           step_order: maxOrder + 1
       });
 
-      setNewStepName('');
-      await logActivity('Workflow Updated', `Added step: ${newStepName}`);
-      fetchWorkflow();
+      if (error) {
+          console.error("ADD STEP ERROR:", error);
+          alert("Error adding step: " + error.message);
+      } else {
+          setNewStepName('');
+          await logActivity('Workflow Updated', `Added step: ${newStepName}`);
+          fetchWorkflow();
+      }
   };
 
   const handleDeleteStep = async (stepId: string) => {
@@ -245,11 +266,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       fetchWorkflow();
   };
 
-  // --- NEW: REORDERING LOGIC ---
   const handleMoveStep = async (index: number, direction: 'up' | 'down') => {
       const newSteps = [...workflowSteps];
       if (direction === 'up' && index > 0) {
-          // Swap logic
           const temp = newSteps[index];
           newSteps[index] = newSteps[index - 1];
           newSteps[index - 1] = temp;
@@ -261,10 +280,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           return;
       }
 
-      // Optimistic update
       setWorkflowSteps(newSteps);
 
-      // Database update loop
       for (let i = 0; i < newSteps.length; i++) {
           await supabase.from('job_steps').update({ step_order: i + 1 }).eq('id', newSteps[i].id);
       }
@@ -382,7 +399,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
       
-      {/* UPLOAD MODAL */}
       {showUploadModal && isAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -471,7 +487,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         {/* ROW 1: THE JOB TICKET (Specs) */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             
-            {/* Spec Card */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-2 flex items-center gap-2"><Layers size={12}/> Job Specs</h3>
                 <div className="space-y-1">
@@ -481,7 +496,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* Finishing Card */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 md:col-span-2">
                 <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-2 flex items-center gap-2"><Scissors size={12}/> Finishing</h3>
                 <div className="flex flex-wrap gap-2">
@@ -492,7 +506,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 </div>
             </div>
 
-            {/* Shipping Card */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
                 <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-2 flex items-center gap-2"><Truck size={12}/> Ship To</h3>
                 <div className="text-xs text-gray-700">
@@ -546,7 +559,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                                 <p className={`text-sm font-bold ${!isEditingWorkflow && isCompleted ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{step.name}</p>
                                                 <p className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">{step.department}</p>
                                             </div>
-                                            {/* FIX 1969 DATE BUG */}
                                             {isCompleted && step.completed_at && <span className="text-[10px] text-green-600 bg-green-50 px-2 py-0.5 rounded font-mono">{new Date(step.completed_at).toLocaleDateString()}</span>}
                                         </div>
                                     </div>
@@ -559,12 +571,15 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                 <p className="text-[10px] font-bold uppercase text-gray-400 mb-2">Add Custom Step</p>
                                 <div className="flex gap-2">
                                     <input type="text" value={newStepName} onChange={(e) => setNewStepName(e.target.value)} placeholder="Step Name" className="border rounded px-3 py-2 text-sm w-full"/>
+                                    
+                                    {/* DYNAMIC DEPT DROPDOWN */}
                                     <select value={newStepDept} onChange={(e) => setNewStepDept(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white">
-                                        <option value="Prepress">Prepress</option>
-                                        <option value="Production">Production</option>
-                                        <option value="Finishing">Finishing</option>
-                                        <option value="Shipping">Shipping</option>
+                                        {deptOptions.map(d => (
+                                            <option key={d.id} value={d.name}>{d.name}</option>
+                                        ))}
+                                        {deptOptions.length === 0 && <option>Default</option>}
                                     </select>
+                                    
                                     <button onClick={handleAddStep} className="bg-black text-white px-4 rounded font-bold"><Plus size={16}/></button>
                                 </div>
                             </div>
@@ -575,7 +590,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
 
             {/* COL 2: Notes & Chat (Tabbed) */}
             <div className="flex flex-col gap-4">
-                {/* Notes Block (ALWAYS VISIBLE) */}
                 <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-6 flex-1 flex flex-col">
                     <h3 className="font-bold text-lg text-yellow-800 mb-2 flex items-center gap-2"><Lock size={18}/> Production Notes</h3>
                     <p className="text-xs text-yellow-600 mb-4">These notes are visible to staff only.</p>
@@ -592,7 +606,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                     </div>
                 </div>
 
-                {/* Chat Block (Compact) */}
                 <div className="bg-white rounded-lg border border-gray-200 flex flex-col h-64">
                     <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 font-bold text-xs uppercase text-gray-500">Recent Chat Activity</div>
                     <div className="flex-1 overflow-y-auto p-4 space-y-3">
