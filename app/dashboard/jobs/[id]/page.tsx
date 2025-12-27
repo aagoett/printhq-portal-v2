@@ -7,7 +7,7 @@ import {
   Activity, Lock, X, UploadCloud, Maximize2, PlayCircle, 
   ArrowDown, Truck, Check, Ruler, Edit2, Plus, Trash2, LogOut,
   ArrowUp, Calendar as CalendarIcon, FileImage, ThumbsUp, CheckCircle,
-  AlertCircle
+  AlertCircle, StickyNote
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
@@ -23,6 +23,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [messages, setMessages] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]); 
   const [assets, setAssets] = useState<any[]>([]);
+  const [jobNotes, setJobNotes] = useState<any[]>([]); // NEW: List of notes
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [currentUserName, setCurrentUserName] = useState('');
@@ -52,7 +53,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [viewingAssetId, setViewingAssetId] = useState<string>('');
 
   const [newMessage, setNewMessage] = useState('');
-  const [internalNotes, setInternalNotes] = useState('');
+  const [newJobNote, setNewJobNote] = useState(''); // NEW: Input for job notes
   const [isSaving, setIsSaving] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -64,7 +65,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  // --- HELPER: GET COUNTDOWN (Defined Early) ---
+  // --- HELPER: GET COUNTDOWN ---
   const getCountdown = () => {
       if (!job?.due_date) return { text: "NO DATE", color: "bg-gray-700", textCol: "text-gray-400" };
       const due = new Date(job.due_date);
@@ -96,12 +97,18 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     const stepChannel = supabase.channel('job_steps')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'job_steps', filter: `job_id=eq.${params.id}` }, () => fetchWorkflow())
       .subscribe();
+      
+    // Listen for new notes
+    const notesChannel = supabase.channel('job_notes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'job_notes', filter: `job_id=eq.${params.id}` }, () => fetchJobNotes())
+      .subscribe();
 
     return () => { 
       supabase.removeChannel(chatChannel); 
       supabase.removeChannel(assetChannel);
       supabase.removeChannel(logChannel);
       supabase.removeChannel(stepChannel);
+      supabase.removeChannel(notesChannel);
     };
   }, [params.id]);
 
@@ -147,18 +154,23 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       .single();
     
     setJob(jobData);
-    if (jobData?.internal_notes) setInternalNotes(jobData.internal_notes);
 
     await fetchWorkflow();
     await fetchAssets();
     await fetchMessages();
     await fetchLogs();
+    await fetchJobNotes(); // NEW
     setLoading(false);
   };
 
   const fetchWorkflow = async () => {
       const { data } = await supabase.from('job_steps').select('*').eq('job_id', params.id).order('step_order', { ascending: true });
       if (data) setWorkflowSteps(data);
+  };
+
+  const fetchJobNotes = async () => {
+      const { data } = await supabase.from('job_notes').select('*').eq('job_id', params.id).order('created_at', { ascending: true });
+      if (data) setJobNotes(data);
   };
 
   const fetchAssets = async () => {
@@ -260,7 +272,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       fetchPageData(); 
   };
 
-  // --- ADD STEP ---
+  // --- ADD STEP WITH NOTES ---
   const handleAddStep = async () => {
       const parentQueue = allQueues.find(q => q.id === selectedQueueId);
       const finalName = selectedSubTaskName || parentQueue?.name;
@@ -376,14 +388,21 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     if (!error) fetchMessages();
   };
 
-  const handleSaveNotes = async () => {
+  // --- NEW: ADD INSTRUCTION NOTE ---
+  const handleAddJobNote = async () => {
+      if (!newJobNote.trim()) return;
       setIsSaving(true);
-      const { error } = await supabase.from('jobs').update({ internal_notes: internalNotes }).eq('id', params.id);
-      if (!error) {
-          const currentStatus = job.status || 'Unknown';
-          await logActivity('Notes Updated', `Instructions updated during status: ${currentStatus}`);
-      }
+      await supabase.from('job_notes').insert({ job_id: params.id, content: newJobNote, user_id: user.id });
+      setNewJobNote('');
+      fetchJobNotes();
       setIsSaving(false);
+  };
+
+  // --- NEW: DELETE INSTRUCTION NOTE ---
+  const handleDeleteJobNote = async (noteId: string) => {
+      if (!confirm('Remove this instruction?')) return;
+      await supabase.from('job_notes').delete().eq('id', noteId);
+      fetchJobNotes();
   };
 
   if (loading) return <div className="p-12 text-center">Loading...</div>;
@@ -394,14 +413,13 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const isApprovedAsset = currentAsset?.status === 'approved';
   const isPendingProof = currentAsset?.asset_type === 'proof' && currentAsset?.status === 'pending';
   const brandName = job.orders?.brands?.name || 'Pacific Printing';
-  // FIX: Ensure title exists, or fallback to project_name
   const jobTitle = job.title || job.project_name || 'Job Details';
 
   const originalAsset = assets.length > 0 ? [...assets].reverse().find(a => a.asset_type === 'source') : null;
   const hasOriginalFile = !!originalAsset || !!job.file_url;
 
   const activeStepItem = workflowSteps.find(s => s.status === 'Pending');
-  const countdown = getCountdown();
+  const countdown = getCountdown(); 
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
@@ -496,29 +514,57 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         {/* ROW 1: THE JOB TICKET */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             
+            {/* SPECS - IMPROVED */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-2 flex items-center gap-2"><Layers size={12}/> Job Specs</h3>
-                <div className="space-y-1">
-                    <div className="flex justify-between text-sm"><span className="text-gray-500">Qty</span><span className="font-bold">{job.quantity}</span></div>
-                    <div className="flex justify-between text-sm"><span className="text-gray-500">Size</span><span className="font-bold">{job.size || 'N/A'}</span></div>
-                    <div className="flex justify-between text-sm"><span className="text-gray-500">Stock</span><span className="font-bold text-right truncate w-24">{job.paper_stock}</span></div>
+                <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-3 flex items-center gap-2"><Layers size={12}/> Job Specs</h3>
+                <div className="space-y-2">
+                    <div className="flex justify-between text-sm items-baseline border-b border-gray-50 pb-1">
+                        <span className="text-gray-500">Qty</span>
+                        <span className="font-bold text-lg">{job.quantity}</span>
+                    </div>
+                    <div className="flex justify-between text-sm items-baseline border-b border-gray-50 pb-1">
+                        <span className="text-gray-500">Size</span>
+                        <span className="font-bold">{job.size || 'N/A'}</span>
+                    </div>
+                    <div className="pt-1">
+                        <span className="text-gray-500 text-xs block mb-1">Stock / Material</span>
+                        <span className="font-bold text-sm block leading-tight break-words">{job.paper_stock}</span>
+                    </div>
                 </div>
             </div>
 
-            {/* PRODUCTION NOTES */}
-            <div className="bg-yellow-50 rounded-lg border border-yellow-300 p-4 md:col-span-2 flex flex-col shadow-sm relative overflow-hidden">
+            {/* PRODUCTION NOTES - UPGRADED TO LIST */}
+            <div className="bg-yellow-50 rounded-lg border border-yellow-300 p-4 md:col-span-2 flex flex-col shadow-sm relative overflow-hidden h-64">
                 <div className="absolute top-0 left-0 w-2 h-full bg-yellow-400"></div>
                 <div className="pl-4 h-full flex flex-col">
-                    <h3 className="text-xs font-bold uppercase text-yellow-800 mb-2 flex items-center gap-2"><Lock size={14}/> Special Instructions / Job Notes</h3>
-                    <textarea 
-                        value={internalNotes} 
-                        onChange={(e) => setInternalNotes(e.target.value)} 
-                        className="w-full flex-1 bg-yellow-50 text-yellow-900 font-medium text-sm focus:outline-none resize-none placeholder-yellow-800/50" 
-                        placeholder="Enter specific production details here..."
-                    />
-                    <div className="flex justify-end mt-2">
-                        <button onClick={handleSaveNotes} disabled={isSaving} className="text-[10px] bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold px-3 py-1 rounded">
-                            {isSaving ? 'Saving...' : 'Save Instructions'}
+                    <h3 className="text-xs font-bold uppercase text-yellow-800 mb-2 flex items-center gap-2"><StickyNote size={14}/> Special Instructions</h3>
+                    
+                    {/* NOTES LIST */}
+                    <div className="flex-1 overflow-y-auto space-y-2 pr-2 mb-2">
+                        {jobNotes.length === 0 && <div className="text-yellow-800/50 text-xs italic">No special instructions yet.</div>}
+                        {jobNotes.map(note => (
+                            <div key={note.id} className="bg-white/60 p-2 rounded border border-yellow-200 text-sm shadow-sm relative group">
+                                <p className="text-yellow-900 font-medium pr-6">{note.content}</p>
+                                <span className="text-[10px] text-yellow-600 block mt-1">{new Date(note.created_at).toLocaleDateString()} • {new Date(note.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                                <button onClick={() => handleDeleteJobNote(note.id)} className="absolute top-1 right-1 text-yellow-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <X size={14}/>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* ADD NOTE INPUT */}
+                    <div className="flex gap-2 mt-auto pt-2 border-t border-yellow-200">
+                        <input 
+                            type="text" 
+                            value={newJobNote} 
+                            onChange={(e) => setNewJobNote(e.target.value)} 
+                            onKeyDown={(e) => e.key === 'Enter' && handleAddJobNote()}
+                            placeholder="Add new instruction..."
+                            className="flex-1 bg-white border border-yellow-300 rounded px-3 py-1 text-sm focus:outline-none focus:border-yellow-500"
+                        />
+                        <button onClick={handleAddJobNote} disabled={!newJobNote.trim() || isSaving} className="bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-bold px-3 py-1 rounded text-xs shadow-sm">
+                            Add Note
                         </button>
                     </div>
                 </div>
@@ -576,7 +622,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                                 <p className={`text-sm font-bold ${!isEditingWorkflow && isCompleted ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{step.name}</p>
                                                 <p className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">{step.department}</p>
                                                 
-                                                {/* NEW: DISPLAY NOTES PROMINENTLY */}
                                                 {step.notes && (
                                                     <div className="mt-2 text-xs text-gray-700 bg-gray-50 p-2 rounded border border-gray-200 flex items-start gap-2">
                                                         <AlertCircle size={14} className="text-gray-400 shrink-0 mt-0.5"/>
@@ -599,8 +644,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                         <select value={selectedQueueId} onChange={(e) => setSelectedQueueId(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white font-bold w-1/3">
                                             {allQueues.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
                                         </select>
-                                        
-                                        {/* FIX: EXPLICIT MAP RETURN */}
                                         <select value={selectedSubTaskName} onChange={(e) => setSelectedSubTaskName(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white w-2/3 disabled:bg-gray-100" disabled={filteredSubTasks.length === 0}>
                                             {filteredSubTasks.length > 0 ? (
                                                 filteredSubTasks.map((t) => (
@@ -614,7 +657,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                         </select>
                                     </div>
                                     
-                                    {/* NEW: NOTES INPUT */}
                                     <div className="flex gap-2">
                                         <input 
                                             type="text" 
