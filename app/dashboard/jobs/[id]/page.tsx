@@ -29,15 +29,18 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [currentUserName, setCurrentUserName] = useState('');
   const [loading, setLoading] = useState(true);
   
-  // Dynamic Settings State
-  const [deptOptions, setDeptOptions] = useState<any[]>([]); // For the dropdown
+  // --- DYNAMIC DROPDOWNS STATE ---
+  const [mainQueues, setMainQueues] = useState<any[]>([]);      // Parent categories
+  const [allSubQueues, setAllSubQueues] = useState<any[]>([]);  // All possible tasks
+  const [filteredTasks, setFilteredTasks] = useState<any[]>([]); // Tasks for selected category
   
   const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes'); 
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isEditingWorkflow, setIsEditingWorkflow] = useState(false); 
 
-  const [newStepName, setNewStepName] = useState('');
-  const [newStepDept, setNewStepDept] = useState(''); // Empty by default now
+  // Form State
+  const [selectedMainQueue, setSelectedMainQueue] = useState('');
+  const [selectedSubTask, setSelectedSubTask] = useState('');
 
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadMessage, setUploadMessage] = useState('');
@@ -62,18 +65,10 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
+  // --- INITIAL DATA FETCH ---
   useEffect(() => {
     fetchPageData();
-
-    // Fetch dynamic departments for the dropdown
-    const fetchDepts = async () => {
-        const { data } = await supabase.from('production_queues').select('*').order('sort_order');
-        if (data) {
-            setDeptOptions(data);
-            if(data.length > 0) setNewStepDept(data[0].name);
-        }
-    };
-    fetchDepts();
+    fetchDropdownOptions(); // Load Settings
 
     const chatChannel = supabase.channel('job_chat')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${params.id}` }, () => fetchMessages())
@@ -103,6 +98,30 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, logs]);
+
+  // --- SMART DROPDOWN LOGIC ---
+  // When Main Queue changes, filter the Sub Tasks
+  useEffect(() => {
+      if (selectedMainQueue) {
+          const queueId = mainQueues.find(q => q.name === selectedMainQueue)?.id;
+          const relevantTasks = allSubQueues.filter(sq => sq.queue_id === queueId);
+          setFilteredTasks(relevantTasks);
+          // Auto-select first option if available
+          if (relevantTasks.length > 0) setSelectedSubTask(relevantTasks[0].name);
+          else setSelectedSubTask('');
+      }
+  }, [selectedMainQueue, mainQueues, allSubQueues]);
+
+  const fetchDropdownOptions = async () => {
+      const { data: queues } = await supabase.from('production_queues').select('*').order('sort_order');
+      const { data: subs } = await supabase.from('production_subqueues').select('*').order('sort_order');
+      
+      if (queues) {
+          setMainQueues(queues);
+          if (queues.length > 0) setSelectedMainQueue(queues[0].name);
+      }
+      if (subs) setAllSubQueues(subs);
+  };
 
   const fetchPageData = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -196,9 +215,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       }
   };
 
-  // --- UPDATED: GENERATE WORKFLOW FROM SETTINGS ---
   const handleGenerateWorkflow = async () => {
-      // 1. Fetch the "Master List" from Settings
       const { data: standardQueues } = await supabase.from('production_queues').select('*').order('sort_order');
       
       if (!standardQueues || standardQueues.length === 0) {
@@ -206,12 +223,11 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           return;
       }
 
-      // 2. Insert them as steps
       for (let i = 0; i < standardQueues.length; i++) {
           const q = standardQueues[i];
           await supabase.from('job_steps').insert({
               job_id: params.id,
-              name: q.name, // e.g. "Bindery"
+              name: q.name, 
               department: q.name,
               status: i === 0 ? 'Pending' : 'Waiting',
               step_order: i + 1
@@ -237,24 +253,26 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       fetchPageData(); 
   };
 
+  // --- UPDATED ADD STEP (RESTRICTED) ---
   const handleAddStep = async () => {
-      if (!newStepName.trim()) return;
+      // Use selectedSubTask, or fallback to Main Queue name if no subs exist
+      const taskName = selectedSubTask || selectedMainQueue;
+      
+      if (!taskName) return;
       const maxOrder = workflowSteps.length > 0 ? Math.max(...workflowSteps.map(s => s.step_order)) : 0;
       
       const { error } = await supabase.from('job_steps').insert({
           job_id: params.id,
-          name: newStepName,
-          department: newStepDept || 'Production',
+          name: taskName,
+          department: selectedMainQueue,
           status: 'Waiting', 
           step_order: maxOrder + 1
       });
 
       if (error) {
-          console.error("ADD STEP ERROR:", error);
           alert("Error adding step: " + error.message);
       } else {
-          setNewStepName('');
-          await logActivity('Workflow Updated', `Added step: ${newStepName}`);
+          await logActivity('Workflow Updated', `Added step: ${taskName}`);
           fetchWorkflow();
       }
   };
@@ -399,6 +417,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
       
+      {/* UPLOAD MODAL */}
       {showUploadModal && isAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -481,10 +500,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           </div>
        )}
 
-      {/* --- NEW LAYOUT STARTS HERE --- */}
       <div className="flex-1 max-w-[1920px] mx-auto w-full p-6 space-y-6">
         
-        {/* ROW 1: THE JOB TICKET (Specs) */}
+        {/* ROW 1: THE JOB TICKET */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
@@ -559,6 +577,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                                 <p className={`text-sm font-bold ${!isEditingWorkflow && isCompleted ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{step.name}</p>
                                                 <p className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">{step.department}</p>
                                             </div>
+                                            {/* FIX 1969 DATE BUG */}
                                             {isCompleted && step.completed_at && <span className="text-[10px] text-green-600 bg-green-50 px-2 py-0.5 rounded font-mono">{new Date(step.completed_at).toLocaleDateString()}</span>}
                                         </div>
                                     </div>
@@ -570,14 +589,28 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                             <div className="mt-6 pt-6 border-t border-gray-100">
                                 <p className="text-[10px] font-bold uppercase text-gray-400 mb-2">Add Custom Step</p>
                                 <div className="flex gap-2">
-                                    <input type="text" value={newStepName} onChange={(e) => setNewStepName(e.target.value)} placeholder="Step Name" className="border rounded px-3 py-2 text-sm w-full"/>
                                     
-                                    {/* DYNAMIC DEPT DROPDOWN */}
-                                    <select value={newStepDept} onChange={(e) => setNewStepDept(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white">
-                                        {deptOptions.map(d => (
-                                            <option key={d.id} value={d.name}>{d.name}</option>
-                                        ))}
-                                        {deptOptions.length === 0 && <option>Default</option>}
+                                    {/* DROPDOWN 1: QUEUE */}
+                                    <select 
+                                        value={selectedMainQueue} 
+                                        onChange={(e) => setSelectedMainQueue(e.target.value)} 
+                                        className="border rounded px-3 py-2 text-sm bg-white font-bold w-1/3"
+                                    >
+                                        {mainQueues.map(q => <option key={q.id} value={q.name}>{q.name}</option>)}
+                                    </select>
+
+                                    {/* DROPDOWN 2: SUB-TASK */}
+                                    <select 
+                                        value={selectedSubTask} 
+                                        onChange={(e) => setSelectedSubTask(e.target.value)} 
+                                        className="border rounded px-3 py-2 text-sm bg-white w-2/3"
+                                        disabled={filteredTasks.length === 0}
+                                    >
+                                        {filteredTasks.length > 0 ? (
+                                            filteredTasks.map(t => <option key={t.id} value={t.name}>{t.name}</option>)
+                                        ) : (
+                                            <option value="">{selectedMainQueue} (Generic)</option>
+                                        )}
                                     </select>
                                     
                                     <button onClick={handleAddStep} className="bg-black text-white px-4 rounded font-bold"><Plus size={16}/></button>
