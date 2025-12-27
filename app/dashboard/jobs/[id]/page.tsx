@@ -64,7 +64,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  // --- HELPER FUNCTION: GET COUNTDOWN ---
+  // --- HELPER: GET COUNTDOWN (Defined Early) ---
   const getCountdown = () => {
       if (!job?.due_date) return { text: "NO DATE", color: "bg-gray-700", textCol: "text-gray-400" };
       const due = new Date(job.due_date);
@@ -260,7 +260,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       fetchPageData(); 
   };
 
-  // --- ADD STEP WITH NOTES & DROPDOWNS ---
+  // --- ADD STEP ---
   const handleAddStep = async () => {
       const parentQueue = allQueues.find(q => q.id === selectedQueueId);
       const finalName = selectedSubTaskName || parentQueue?.name;
@@ -394,6 +394,8 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const isApprovedAsset = currentAsset?.status === 'approved';
   const isPendingProof = currentAsset?.asset_type === 'proof' && currentAsset?.status === 'pending';
   const brandName = job.orders?.brands?.name || 'Pacific Printing';
+  // FIX: Ensure title exists, or fallback to project_name
+  const jobTitle = job.title || job.project_name || 'Job Details';
 
   const originalAsset = assets.length > 0 ? [...assets].reverse().find(a => a.asset_type === 'source') : null;
   const hasOriginalFile = !!originalAsset || !!job.file_url;
@@ -436,7 +438,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           <div className="flex items-center gap-4">
              <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={20} /></Link>
              <div>
-               <h1 className="text-xl font-bold text-gray-900 leading-none">{job.title}</h1>
+               <h1 className="text-xl font-bold text-gray-900 leading-none">{jobTitle}</h1>
                <p className="text-xs font-mono text-gray-400 mt-1">#{job.id.substring(0,8).toUpperCase()} • {brandName}</p>
              </div>
           </div>
@@ -597,9 +599,15 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                                         <select value={selectedQueueId} onChange={(e) => setSelectedQueueId(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white font-bold w-1/3">
                                             {allQueues.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
                                         </select>
+                                        
+                                        {/* FIX: EXPLICIT MAP RETURN */}
                                         <select value={selectedSubTaskName} onChange={(e) => setSelectedSubTaskName(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white w-2/3 disabled:bg-gray-100" disabled={filteredSubTasks.length === 0}>
                                             {filteredSubTasks.length > 0 ? (
-                                                filteredSubTasks.map(t => <option key={t.id} value={t.name}>{t.name}</option>
+                                                filteredSubTasks.map((t) => (
+                                                    <option key={t.id} value={t.name}>
+                                                        {t.name}
+                                                    </option>
+                                                ))
                                             ) : (
                                                 <option value="">{allQueues.find(q => q.id === selectedQueueId)?.name || 'Generic'}</option>
                                             )}
