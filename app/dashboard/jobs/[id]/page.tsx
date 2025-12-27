@@ -169,6 +169,18 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     if (data) setLogs(data);
   };
 
+  const getCountdown = () => {
+      if (!job?.due_date) return { text: "NO DATE", color: "bg-gray-700", textCol: "text-gray-400" };
+      const due = new Date(job.due_date);
+      const now = new Date();
+      due.setHours(23, 59, 59, 999);
+      const diffDays = Math.ceil((due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      
+      if (diffDays < 0) return { text: `${Math.abs(diffDays)} DAYS LATE`, color: "bg-red-600", textCol: "text-white animate-pulse" };
+      if (diffDays === 0) return { text: "DUE TODAY", color: "bg-orange-500", textCol: "text-white" };
+      return { text: `${diffDays} DAYS LEFT`, color: "bg-emerald-500", textCol: "text-white" };
+  };
+
   const logActivity = async (action: string, details: string) => {
       if (!user) return;
       await supabase.from('job_logs').insert({ job_id: params.id, user_id: user.id, action, details });
@@ -386,7 +398,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const hasOriginalFile = !!originalAsset || !!job.file_url;
 
   const activeStepItem = workflowSteps.find(s => s.status === 'Pending');
-  const countdown = getCountdown();
+  const countdown = getCountdown(); // This function is now properly defined above
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
