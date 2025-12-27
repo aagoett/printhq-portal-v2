@@ -169,6 +169,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
     if (data) setLogs(data);
   };
 
+  // --- THE MISSING FUNCTION IS HERE NOW ---
   const getCountdown = () => {
       if (!job?.due_date) return { text: "NO DATE", color: "bg-gray-700", textCol: "text-gray-400" };
       const due = new Date(job.due_date);
@@ -398,7 +399,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const hasOriginalFile = !!originalAsset || !!job.file_url;
 
   const activeStepItem = workflowSteps.find(s => s.status === 'Pending');
-  const countdown = getCountdown(); // This function is now present!
+  const countdown = getCountdown(); 
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
