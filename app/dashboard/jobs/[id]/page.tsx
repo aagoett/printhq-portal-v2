@@ -28,11 +28,10 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const [currentUserName, setCurrentUserName] = useState('');
   const [loading, setLoading] = useState(true);
   
-  const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat');
+  const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes'); // Changed default logic
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isEditingWorkflow, setIsEditingWorkflow] = useState(false); 
 
-  // Workflow Edit State
   const [newStepName, setNewStepName] = useState('');
   const [newStepDept, setNewStepDept] = useState('Production');
 
@@ -89,7 +88,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, logs, rightTab]);
+  }, [messages, logs]);
 
   const fetchPageData = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -204,11 +203,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
       await fetchWorkflow();
   };
 
-  // --- FIXED: ROBUST COMPLETE STEP ---
   const handleCompleteStep = async (step: any) => {
       await supabase.from('job_steps').update({ status: 'Completed', completed_at: new Date().toISOString() }).eq('id', step.id);
       
-      // FIX: Find first step with order > current, instead of blindly adding 1
       const nextStep = workflowSteps.find(s => s.step_order > step.step_order);
       
       if (nextStep) {
@@ -357,8 +354,9 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const brandName = job.orders?.brands?.name || 'Pacific Printing';
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col relative">
+    <div className="min-h-screen bg-gray-50 flex flex-col relative">
       
+      {/* UPLOAD MODAL */}
       {showUploadModal && isAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -384,6 +382,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
+      {/* HEADER */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
         <div className="max-w-[1920px] mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -394,12 +393,6 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
              </div>
           </div>
           <div className="flex gap-2">
-             {!isAdmin && (
-               <div className={`px-4 py-1 rounded-md text-white font-bold uppercase text-xs flex items-center ${isApprovedAsset ? 'bg-green-600' : 'bg-yellow-500'}`}>
-                  {isApprovedAsset ? 'In Production' : 'Action Required'}
-               </div>
-             )}
-             
              <button onClick={handleSignOut} className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors ml-2 border border-gray-200 hover:border-red-200">
                 <LogOut size={16} />
                 Sign Out
@@ -408,6 +401,7 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
+       {/* ADMIN COMMAND CENTER */}
        {isAdmin && (
            <div className="bg-gray-900 text-white shadow-xl border-b-4 border-blue-500">
               <div className="max-w-[1920px] mx-auto flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-gray-700">
@@ -445,63 +439,101 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
           </div>
        )}
 
-      <div className="flex-1 max-w-[1920px] mx-auto w-full p-4 grid grid-cols-12 gap-4">
+      {/* --- NEW LAYOUT STARTS HERE --- */}
+      <div className="flex-1 max-w-[1920px] mx-auto w-full p-6 space-y-6">
         
-        <div className={`${isAdmin ? 'col-span-12 lg:col-span-3' : 'hidden'} space-y-4`}>
+        {/* ROW 1: THE JOB TICKET (Specs) */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             
+            {/* Spec Card */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <div className="flex justify-between items-center mb-4">
-                     <h3 className="text-xs font-bold uppercase text-gray-400 flex items-center gap-2"><ArrowDown size={14}/> Production Workflow</h3>
-                     <button onClick={() => setIsEditingWorkflow(!isEditingWorkflow)} className={`p-1 rounded hover:bg-gray-100 ${isEditingWorkflow ? 'text-blue-600' : 'text-gray-400'}`}>
-                        <Edit2 size={12}/>
+                <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-2 flex items-center gap-2"><Layers size={12}/> Job Specs</h3>
+                <div className="space-y-1">
+                    <div className="flex justify-between text-sm"><span className="text-gray-500">Qty</span><span className="font-bold">{job.quantity}</span></div>
+                    <div className="flex justify-between text-sm"><span className="text-gray-500">Size</span><span className="font-bold">{job.size || 'N/A'}</span></div>
+                    <div className="flex justify-between text-sm"><span className="text-gray-500">Stock</span><span className="font-bold text-right truncate w-24">{job.paper_stock}</span></div>
+                </div>
+            </div>
+
+            {/* Finishing Card */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 md:col-span-2">
+                <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-2 flex items-center gap-2"><Scissors size={12}/> Finishing</h3>
+                <div className="flex flex-wrap gap-2">
+                    {serviceList.map((service) => {
+                        const isSelected = job.finishing_options?.includes(service.name);
+                        return <div key={service.id} onClick={() => toggleFinishingOption(service.name)} className={`px-2 py-1 rounded text-[10px] font-bold border cursor-pointer transition-colors ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-400 hover:border-black'}`}>{service.name}</div>;
+                    })}
+                </div>
+            </div>
+
+            {/* Shipping Card */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+                <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-2 flex items-center gap-2"><Truck size={12}/> Ship To</h3>
+                <div className="text-xs text-gray-700">
+                    <p className="font-bold">{job.shipping_name || job.profiles?.first_name || 'Customer'}</p>
+                    <p>{job.shipping_address1}</p>
+                    <p>{job.shipping_city}, {job.shipping_state} {job.shipping_zip}</p>
+                </div>
+            </div>
+        </div>
+
+        {/* ROW 2: WORKFLOW & INSTRUCTIONS */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            {/* COL 1: The Workflow Ladder */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div className="flex justify-between items-center mb-6">
+                     <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2"><ArrowDown size={18}/> Production Path</h3>
+                     <button onClick={() => setIsEditingWorkflow(!isEditingWorkflow)} className={`p-2 rounded hover:bg-gray-100 ${isEditingWorkflow ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`}>
+                        <Edit2 size={16}/>
                      </button>
                 </div>
                 
                 {workflowSteps.length === 0 ? (
-                    <button onClick={handleGenerateWorkflow} className="w-full py-3 bg-gray-100 border border-dashed border-gray-300 rounded text-xs font-bold text-gray-500 hover:bg-gray-200 flex items-center justify-center gap-2">
-                        <PlayCircle size={14}/> Start Workflow
+                    <button onClick={handleGenerateWorkflow} className="w-full py-8 bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl text-sm font-bold text-gray-500 hover:bg-gray-100 hover:border-gray-400 flex flex-col items-center justify-center gap-2 transition-all">
+                        <PlayCircle size={24}/> Start Workflow
                     </button>
                 ) : (
-                    <div className="space-y-0 relative pl-2">
-                        {!isEditingWorkflow && <div className="absolute left-5 top-2 bottom-2 w-0.5 bg-gray-100 z-0"></div>}
+                    <div className="space-y-0 relative pl-4">
+                        {!isEditingWorkflow && <div className="absolute left-7 top-4 bottom-4 w-0.5 bg-gray-100 z-0"></div>}
                         
                         {workflowSteps.map((step) => {
                             const isPending = step.status === 'Pending';
                             const isCompleted = step.status === 'Completed';
                             return (
-                                <div key={step.id} className="relative z-10 flex gap-3 pb-4 last:pb-0 group items-center">
+                                <div key={step.id} className="relative z-10 flex gap-4 pb-6 last:pb-0 group items-start">
                                     {isEditingWorkflow ? (
-                                        <button onClick={() => handleDeleteStep(step.id)} className="text-red-400 hover:text-red-600 p-1">
-                                            <Trash2 size={14}/>
-                                        </button>
+                                        <button onClick={() => handleDeleteStep(step.id)} className="mt-1 text-red-300 hover:text-red-600 p-1 bg-red-50 rounded"><Trash2 size={14}/></button>
                                     ) : (
-                                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center bg-white ${isCompleted ? 'border-green-500 text-green-500' : isPending ? 'border-blue-500 text-blue-500 shadow-md ring-2 ring-blue-100' : 'border-gray-200 text-gray-200'}`}>
-                                            {isCompleted ? <Check size={12} strokeWidth={4}/> : <div className={`w-2 h-2 rounded-full ${isPending ? 'bg-blue-500' : 'bg-gray-200'}`}></div>}
+                                        <div className={`w-8 h-8 rounded-full border-4 flex items-center justify-center bg-white shadow-sm ${isCompleted ? 'border-green-500 text-green-500' : isPending ? 'border-blue-500 text-blue-500 ring-4 ring-blue-50' : 'border-gray-200 text-gray-200'}`}>
+                                            {isCompleted ? <Check size={14} strokeWidth={4}/> : <div className={`w-2 h-2 rounded-full ${isPending ? 'bg-blue-500' : 'bg-gray-200'}`}></div>}
                                         </div>
                                     )}
-                                    <div className="flex-1 pt-0.5">
-                                        <p className={`text-xs font-bold ${!isEditingWorkflow && isCompleted ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{step.name}</p>
-                                        <p className="text-[9px] text-gray-400 uppercase">{step.department}</p>
+                                    <div className="flex-1 pt-1">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <p className={`text-sm font-bold ${!isEditingWorkflow && isCompleted ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{step.name}</p>
+                                                <p className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">{step.department}</p>
+                                            </div>
+                                            {isCompleted && <span className="text-[10px] text-green-600 bg-green-50 px-2 py-0.5 rounded font-mono">{new Date(step.completed_at).toLocaleDateString()}</span>}
+                                        </div>
                                     </div>
                                 </div>
                             );
                         })}
 
                         {isEditingWorkflow && (
-                            <div className="mt-4 pt-4 border-t border-gray-100">
+                            <div className="mt-6 pt-6 border-t border-gray-100">
                                 <p className="text-[10px] font-bold uppercase text-gray-400 mb-2">Add Custom Step</p>
-                                <div className="flex flex-col gap-2">
-                                    <input type="text" value={newStepName} onChange={(e) => setNewStepName(e.target.value)} placeholder="e.g. Mailing" className="border rounded px-2 py-1 text-xs w-full"/>
-                                    <select value={newStepDept} onChange={(e) => setNewStepDept(e.target.value)} className="border rounded px-2 py-1 text-xs w-full bg-white">
+                                <div className="flex gap-2">
+                                    <input type="text" value={newStepName} onChange={(e) => setNewStepName(e.target.value)} placeholder="Step Name" className="border rounded px-3 py-2 text-sm w-full"/>
+                                    <select value={newStepDept} onChange={(e) => setNewStepDept(e.target.value)} className="border rounded px-3 py-2 text-sm bg-white">
                                         <option value="Prepress">Prepress</option>
                                         <option value="Production">Production</option>
                                         <option value="Finishing">Finishing</option>
                                         <option value="Shipping">Shipping</option>
-                                        <option value="Mailing">Mailing</option>
                                     </select>
-                                    <button onClick={handleAddStep} className="bg-black text-white text-xs font-bold py-1 rounded flex items-center justify-center gap-1">
-                                        <Plus size={12}/> Add
-                                    </button>
+                                    <button onClick={handleAddStep} className="bg-black text-white px-4 rounded font-bold"><Plus size={16}/></button>
                                 </div>
                             </div>
                         )}
@@ -509,170 +541,87 @@ export default function JobDetailsPage({ params }: { params: { id: string } }) {
                 )}
             </div>
 
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <h3 className="text-xs font-bold uppercase text-gray-400 mb-3 flex items-center gap-2"><Truck size={14}/> Ship To</h3>
-                <div className="bg-gray-50 p-3 rounded border border-gray-100 text-sm">
-                    <p className="font-bold text-gray-900">{job.shipping_name || job.profiles?.first_name || 'Customer'}</p>
-                    <p className="text-gray-600">{job.shipping_address1 || '123 Print Street'}</p>
-                    {job.shipping_address2 && <p className="text-gray-600">{job.shipping_address2}</p>}
-                    <p className="text-gray-600">{job.shipping_city || 'City'}, {job.shipping_state || 'ST'} {job.shipping_zip || '00000'}</p>
-                </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 flex items-center gap-2"><Layers size={14}/> Job Specs</h3>
-                <div className="space-y-3 text-sm">
-                    <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">Qty</span><span className="font-bold">{job.quantity}</span></div>
-                    <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">Size</span><span className="font-bold text-right w-1/2">{job.size || 'N/A'}</span></div>
-                    <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">Stock</span><span className="font-bold text-right w-1/2">{job.paper_stock}</span></div>
-                </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <h3 className="text-xs font-bold uppercase text-gray-400 mb-3 flex items-center gap-2"><Scissors size={14}/> Finishing</h3>
-                <div className="flex flex-wrap gap-2">
-                    {serviceList.map((service) => {
-                        const isSelected = job.finishing_options?.includes(service.name);
-                        return <div key={service.id} onClick={() => toggleFinishingOption(service.name)} className={`px-2 py-1 rounded text-[10px] font-bold border cursor-pointer ${isSelected ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-400'}`}>{service.name}</div>;
-                    })}
-                </div>
-            </div>
-
-            <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-4">
-                <h3 className="text-xs font-bold uppercase text-yellow-700 mb-2 flex items-center gap-2"><Lock size={14}/> Internal Notes</h3>
-                <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} className="w-full h-20 bg-white border border-yellow-300 rounded p-2 text-xs mb-2" />
-                <button onClick={handleSaveNotes} disabled={isSaving} className="w-full bg-yellow-400 text-yellow-900 text-xs font-bold py-1 rounded">Save Notes</button>
-            </div>
-
-            <div className="bg-blue-50 rounded-lg border border-blue-100 p-4">
-                <h3 className="text-xs font-bold uppercase text-blue-800 mb-2 flex items-center gap-2"><FileText size={14}/> Original Asset</h3>
-                {originalAsset ? (
-                    <div onClick={() => loadPreview(originalAsset)} className="flex items-center gap-3 p-2 bg-white rounded border border-blue-200 cursor-pointer hover:border-blue-400 transition-all">
-                        <div className="bg-blue-100 p-2 rounded text-blue-600"><FileImage size={20}/></div>
-                        <div className="overflow-hidden">
-                            <p className="text-xs font-bold text-gray-900 truncate w-32">{originalAsset.file_name}</p>
-                            <p className="text-[10px] text-gray-500">Click to view</p>
-                        </div>
-                    </div>
-                ) : (
-                    <p className="text-xs text-blue-400 italic">No source file found.</p>
-                )}
-            </div>
-        </div>
-
-        <div className={`col-span-12 ${isAdmin ? 'lg:col-span-6' : 'lg:col-span-9'} flex flex-col gap-4`}>
-             
-             {!isAdmin && isPendingProof && (
-                 <div className="bg-blue-600 rounded-xl shadow-lg p-6 flex flex-col md:flex-row items-center justify-between gap-4 text-white">
-                     <div>
-                         <h2 className="text-2xl font-black uppercase">Proof Ready for Approval</h2>
-                         <p className="opacity-90">Please review the artwork below carefully.</p>
-                     </div>
-                     <div className="flex gap-3 w-full md:w-auto">
-                        <button onClick={() => setRightTab('chat')} className="flex-1 md:flex-none px-6 py-4 rounded-lg bg-blue-700 hover:bg-blue-800 font-bold border border-blue-500 text-sm">Request Changes</button>
-                        <button onClick={() => handleApproveProof(currentAsset.id)} className="flex-1 md:flex-none px-8 py-4 rounded-lg bg-green-400 hover:bg-green-300 text-green-900 font-black shadow-xl text-lg flex items-center justify-center gap-2 transform transition hover:scale-105">
-                            <ThumbsUp size={24}/> APPROVE ARTWORK
+            {/* COL 2: Notes & Chat (Tabbed) */}
+            <div className="flex flex-col gap-4">
+                {/* Notes Block (ALWAYS VISIBLE) */}
+                <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-6 flex-1 flex flex-col">
+                    <h3 className="font-bold text-lg text-yellow-800 mb-2 flex items-center gap-2"><Lock size={18}/> Production Notes</h3>
+                    <p className="text-xs text-yellow-600 mb-4">These notes are visible to staff only.</p>
+                    <textarea 
+                        value={internalNotes} 
+                        onChange={(e) => setInternalNotes(e.target.value)} 
+                        className="w-full flex-1 bg-white border border-yellow-300 rounded-lg p-4 text-sm focus:outline-none focus:border-yellow-500 focus:ring-2 focus:ring-yellow-100 min-h-[150px]" 
+                        placeholder="Enter specific instructions here..."
+                    />
+                    <div className="mt-4 flex justify-end">
+                        <button onClick={handleSaveNotes} disabled={isSaving} className="bg-yellow-400 text-yellow-900 text-sm font-bold px-6 py-2 rounded-lg hover:bg-yellow-300 shadow-sm">
+                            {isSaving ? 'Saving...' : 'Save Instructions'}
                         </button>
-                     </div>
-                 </div>
-             )}
-
-             <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden relative ${isApprovedAsset ? 'border-green-400 ring-4 ring-green-50' : 'border-gray-200'}`} style={{minHeight: '70vh'}}>
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-                    <span className="text-xs font-bold text-gray-500 uppercase">{currentAsset?.file_name || 'No File Selected'}</span>
-                    <div className="flex items-center gap-2">
-                         {isAdmin && isPendingProof && (
-                             <button onClick={() => handleApproveProof(currentAsset.id)} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-green-500 shadow-sm flex items-center gap-1">
-                                 <ThumbsUp size={12}/> Approve
-                             </button>
-                         )}
-                         {previewUrl && <a href={previewUrl} target="_blank" className="text-xs font-bold flex items-center gap-1 text-gray-600 hover:text-black bg-white border px-2 py-1 rounded"><Maximize2 size={12}/> Fullscreen</a>}
-                         {previewUrl && <a href={previewUrl} download className="text-xs font-bold flex items-center gap-1 text-gray-600 hover:text-black bg-white border px-2 py-1 rounded"><Download size={12}/> Download</a>}
                     </div>
                 </div>
-                <div className="flex-1 bg-gray-200 flex items-center justify-center p-4 overflow-auto">
-                    {!previewUrl ? (
-                        <div className="text-gray-400">Select a file to preview</div>
-                    ) : previewType === 'image' ? (
-                        <img src={previewUrl} className="max-w-full max-h-full shadow-2xl border border-white" />
-                    ) : (
-                        <iframe src={`${previewUrl}#toolbar=0`} className="w-full h-full shadow-2xl bg-white" />
-                    )}
-                </div>
-             </div>
-        </div>
 
-        <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/4">
-                <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                     <h3 className="text-xs font-bold uppercase text-gray-500">Versions</h3>
-                     {isAdmin && <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold">+ Proof</button>}
-                </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                    {assets.map((asset) => {
-                        if (!isAdmin && (asset.status === 'archived' || asset.asset_type === 'source')) return null;
-                        const isCurrent = viewingAssetId === asset.id;
-                        return (
-                        <div key={asset.id} onClick={() => loadPreview(asset)} className={`p-2 rounded border cursor-pointer flex justify-between items-center ${isCurrent ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
-                            <div>
-                                <p className="text-xs font-bold text-gray-700 truncate w-32">{asset.file_name}</p>
-                                <p className="text-[9px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</p>
-                            </div>
-                            {asset.status === 'approved' && <CheckCircle size={14} className="text-green-500"/>}
-                        </div>
-                        );
-                    })}
-                </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-3/4 overflow-hidden">
-                <div className="flex border-b border-gray-200">
-                    <button onClick={() => setRightTab('chat')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><MessageSquare size={14}/> Discussion</button>
-                    <button onClick={() => setRightTab('activity')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><Activity size={14}/> Activity</button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
-                    {rightTab === 'chat' && (
-                        <>
-                             {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
-                             {messages.map((msg) => {
-                                const isMe = msg.user_id === user?.id;
-                                return (
-                                    <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                                        <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${isMe ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
-                                        <span className="text-[9px] text-gray-400 mt-0.5">{msg.sender_name || msg.profiles?.first_name || 'User'}</span>
-                                    </div>
-                                );
-                            })}
-                            <div ref={messagesEndRef} />
-                        </>
-                    )}
-                    {rightTab === 'activity' && (
-                        <>
-                            {logs.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No activity yet.</div>}
-                            {logs.map((log) => (
-                                <div key={log.id} className="flex gap-3 text-xs pb-3 border-b border-gray-50 last:border-0">
-                                    <div className="mt-0.5 min-w-[30px] text-gray-400 font-mono text-[9px]">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
-                                    <div>
-                                        <p className="font-bold text-gray-900">{log.action}</p>
-                                        <p className="text-gray-500">{log.details}</p>
-                                        <p className="text-[9px] text-blue-400 mt-0.5">{log.profiles?.first_name || 'System'}</p>
-                                    </div>
+                {/* Chat Block (Compact) */}
+                <div className="bg-white rounded-lg border border-gray-200 flex flex-col h-64">
+                    <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 font-bold text-xs uppercase text-gray-500">Recent Chat Activity</div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                        {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
+                        {messages.map((msg) => {
+                            const isMe = msg.user_id === user?.id;
+                            return (
+                                <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                                    <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${isMe ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
+                                    <span className="text-[9px] text-gray-400 mt-0.5">{msg.sender_name || 'User'}</span>
                                 </div>
-                            ))}
-                            <div ref={logsEndRef} />
-                        </>
-                    )}
-                </div>
-
-                {rightTab === 'chat' && (
+                            );
+                        })}
+                        <div ref={messagesEndRef} />
+                    </div>
                     <div className="p-2 border-t border-gray-100 bg-gray-50 flex gap-2">
                         <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-300 text-xs focus:outline-none focus:border-black" placeholder="Type message..." />
                         <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
                     </div>
-                )}
+                </div>
             </div>
         </div>
+
+        {/* ROW 3: THE PREVIEW (Bottom) */}
+        <div className={`bg-white rounded-xl shadow-sm border overflow-hidden ${isApprovedAsset ? 'border-green-400 ring-4 ring-green-50' : 'border-gray-200'}`}>
+            <div className="px-6 py-4 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
+                <div className="flex items-center gap-4">
+                    <h3 className="font-bold text-lg text-gray-900">Artwork Preview</h3>
+                    <span className="text-xs font-mono text-gray-500 bg-white px-2 py-1 rounded border">{currentAsset?.file_name || 'No File Selected'}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                        {isAdmin && <button onClick={() => setShowUploadModal(true)} className="text-xs bg-black text-white px-3 py-1.5 rounded-lg font-bold">+ New Version</button>}
+                        {previewUrl && <a href={previewUrl} target="_blank" className="text-xs font-bold flex items-center gap-1 text-gray-600 hover:text-black bg-white border px-3 py-1.5 rounded-lg"><Maximize2 size={14}/> Fullscreen</a>}
+                        {previewUrl && <a href={previewUrl} download className="text-xs font-bold flex items-center gap-1 text-gray-600 hover:text-black bg-white border px-3 py-1.5 rounded-lg"><Download size={14}/> Download</a>}
+                </div>
+            </div>
+            <div className="bg-gray-100 h-[600px] flex items-center justify-center p-8 overflow-auto">
+                {!previewUrl ? (
+                    <div className="text-gray-400 flex flex-col items-center">
+                        <FileImage size={48} className="mb-4 opacity-20"/>
+                        <p>No preview available</p>
+                    </div>
+                ) : previewType === 'image' ? (
+                    <img src={previewUrl} className="max-w-full max-h-full shadow-2xl border-4 border-white rounded-lg" />
+                ) : (
+                    <iframe src={`${previewUrl}#toolbar=0`} className="w-full h-full shadow-2xl bg-white rounded-lg" />
+                )}
+            </div>
+            
+            {/* Version History in Preview Footer */}
+            <div className="bg-white border-t border-gray-200 p-4 flex gap-4 overflow-x-auto">
+                 {assets.map((asset) => (
+                    <div key={asset.id} onClick={() => loadPreview(asset)} className={`flex-shrink-0 w-32 p-2 rounded border cursor-pointer text-center ${viewingAssetId === asset.id ? 'bg-blue-50 border-blue-500 ring-2 ring-blue-100' : 'hover:bg-gray-50'}`}>
+                        <div className="text-[10px] text-gray-400 font-bold uppercase mb-1">{asset.status}</div>
+                        <div className="text-xs truncate font-medium">{asset.file_name}</div>
+                        <div className="text-[9px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</div>
+                    </div>
+                 ))}
+            </div>
+        </div>
+
       </div>
     </div>
   );
