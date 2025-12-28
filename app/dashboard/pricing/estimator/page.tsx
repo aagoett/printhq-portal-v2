@@ -2,19 +2,27 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
-import { Calculator, Trophy, DollarSign, LayoutGrid, ArrowLeft, ArrowRight } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Calculator, Trophy, DollarSign, LayoutGrid, ArrowLeft, Save, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 
 export default function AutoEstimatorPage() {
+  const router = useRouter();
+  
+  // --- INPUTS ---
   const [finishW, setFinishW] = useState(8.5);
   const [finishH, setFinishH] = useState(11);
   const [quantity, setQuantity] = useState(5000);
-  const [selectedPaperId, setSelectedPaperId] = useState(''); // Specific Paper
+  const [selectedPaperId, setSelectedPaperId] = useState(''); 
+  const [quoteTitle, setQuoteTitle] = useState(''); // New: Name the quote
 
+  // --- DATA ---
   const [papers, setPapers] = useState<any[]>([]);
   const [presses, setPresses] = useState<any[]>([]);
   const [estimates, setEstimates] = useState<any[]>([]);
   const [winner, setWinner] = useState<any>(null);
+  
+  const [isSaving, setIsSaving] = useState(false);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -32,7 +40,6 @@ export default function AutoEstimatorPage() {
   }, [finishW, finishH, quantity, selectedPaperId]);
 
   const fetchInventory = async () => {
-    // Fetch all papers and presses
     const { data: pData } = await supabase.from('pricing_components').select('*').eq('type', 'paper').order('name');
     const { data: mData } = await supabase.from('pricing_components').select('*').in('type', ['press_digital', 'press_offset']);
 
@@ -51,25 +58,18 @@ export default function AutoEstimatorPage() {
 
   const calculateBestRoute = () => {
       const results: any[] = [];
-      
-      // Get the SPECIFIC paper selected
       const paper = papers.find(p => p.id === selectedPaperId);
       if (!paper) return;
 
-      // 1. Calculate N-Up
       const nUp = calculateNUp(paper.parent_sheet_width, paper.parent_sheet_height, finishW, finishH);
       if (nUp === 0) return;
 
       const sheetsNeeded = Math.ceil(quantity / nUp);
       const sheetsWithWaste = Math.ceil(sheetsNeeded * 1.1);
-      
-      // Cost vs Price for Paper
       const paperCost = sheetsWithWaste * paper.cost_amount;
       const paperPrice = sheetsWithWaste * paper.price_amount;
 
-      // 2. Test every Press
       presses.forEach(press => {
-          // Filter: Does this press fit the sheet?
           if (paper.parent_sheet_width > press.max_sheet_width && press.max_sheet_width > 0) return;
 
           let pressCost = 0;
@@ -81,10 +81,8 @@ export default function AutoEstimatorPage() {
               pressPrice = sheetsWithWaste * press.price_amount;
               detail = `Click: $${press.price_amount}/sheet`;
           } else {
-              // Offset: Setup (Plate) + Run
-              // Using setup_minutes as placeholder for plate cost if field missing, ideally use price_amount for run
-              const platePrice = 50; // Hardcoded fixed setup if not in DB, usually setup_cost
-              const runPrice = (sheetsWithWaste / 1000) * press.price_amount; // per 1k
+              const platePrice = 50; 
+              const runPrice = (sheetsWithWaste / 1000) * press.price_amount; 
               pressPrice = platePrice + runPrice;
               
               const plateCost = 15;
@@ -105,13 +103,40 @@ export default function AutoEstimatorPage() {
               pressPrice,
               totalPrice,
               totalCost,
-              detail
+              detail,
+              paperName: paper.name
           });
       });
 
       results.sort((a, b) => a.totalPrice - b.totalPrice);
       setEstimates(results);
       if (results.length > 0) setWinner(results[0]);
+  };
+
+  const handleSaveQuote = async () => {
+      if (!winner) return;
+      const title = quoteTitle || `Estimate for ${quantity}x ${finishW}x${finishH}`;
+      setIsSaving(true);
+
+      const { error } = await supabase.from('quotes').insert({
+          title: title,
+          quantity: quantity,
+          width: finishW,
+          height: finishH,
+          paper_stock: winner.paperName,
+          production_method: winner.method,
+          total_cost: winner.totalCost,
+          total_price: winner.totalPrice,
+          cost_breakdown: winner, // Store the full math object
+          status: 'Draft'
+      });
+
+      if (error) {
+          alert('Error saving quote: ' + error.message);
+          setIsSaving(false);
+      } else {
+          router.push('/dashboard/quotes'); // Redirect to list
+      }
   };
 
   return (
@@ -125,8 +150,7 @@ export default function AutoEstimatorPage() {
             </div>
             <div className="flex gap-2">
                 <Link href="/dashboard/pricing" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><DollarSign size={16}/> Costs</Link>
-                <Link href="/dashboard/pricing/products" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Recipes</Link>
-                <Link href="/dashboard/pricing/estimator" className="px-4 py-2 bg-black text-white rounded-lg text-sm font-bold flex items-center gap-2"><Calculator size={16}/> Estimator</Link>
+                <Link href="/dashboard/quotes" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> My Quotes</Link>
             </div>
         </div>
 
@@ -134,6 +158,10 @@ export default function AutoEstimatorPage() {
             
             {/* INPUTS */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-fit space-y-6">
+                <div>
+                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Quote Reference</label>
+                    <input type="text" placeholder="e.g. Haleigh's Flyers" value={quoteTitle} onChange={(e) => setQuoteTitle(e.target.value)} className="w-full border rounded p-2 text-sm focus:border-black outline-none"/>
+                </div>
                 <div>
                     <label className="block text-xs font-bold uppercase text-gray-500 mb-2">1. Finished Size</label>
                     <div className="flex gap-2 items-center">
@@ -143,12 +171,10 @@ export default function AutoEstimatorPage() {
                         <span className="text-xs text-gray-400 ml-2">in</span>
                     </div>
                 </div>
-
                 <div>
                     <label className="block text-xs font-bold uppercase text-gray-500 mb-2">2. Quantity</label>
                     <input type="number" value={quantity} onChange={(e) => setQuantity(parseInt(e.target.value))} className="w-full border rounded p-3 text-lg font-bold"/>
                 </div>
-
                 <div>
                     <label className="block text-xs font-bold uppercase text-gray-500 mb-2">3. Select Paper Stock</label>
                     <select value={selectedPaperId} onChange={(e) => setSelectedPaperId(e.target.value)} className="w-full border rounded p-3 text-sm bg-white">
@@ -175,7 +201,7 @@ export default function AutoEstimatorPage() {
                             <div className="text-right">
                                 <p className="text-xs font-bold text-green-600 uppercase mb-1">Client Price</p>
                                 <p className="text-4xl font-black text-green-900">${winner.totalPrice.toFixed(2)}</p>
-                                <p className="text-xs text-green-700 font-mono mt-1">${(winner.totalPrice/quantity).toFixed(3)} / unit</p>
+                                <p className="text-xs text-green-700 font-mono mt-1">${winner.unitCost.toFixed(3)} / unit</p>
                             </div>
                         </div>
                         
@@ -183,9 +209,12 @@ export default function AutoEstimatorPage() {
                             <div className="bg-blue-400 h-full" style={{ width: `${(winner.paperPrice / winner.totalPrice) * 100}%` }}></div>
                             <div className="bg-orange-400 h-full" style={{ width: `${(winner.pressPrice / winner.totalPrice) * 100}%` }}></div>
                         </div>
-                        <div className="flex justify-between text-[10px] uppercase font-bold mt-2 text-gray-500">
-                            <span className="flex items-center gap-1"><div className="w-2 h-2 bg-blue-400 rounded-full"></div> Paper: ${winner.paperPrice.toFixed(2)}</span>
-                            <span className="flex items-center gap-1"><div className="w-2 h-2 bg-orange-400 rounded-full"></div> Press: ${winner.pressPrice.toFixed(2)}</span>
+                        
+                        <div className="mt-6 pt-6 border-t border-green-200 flex justify-end">
+                            <button onClick={handleSaveQuote} disabled={isSaving} className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg flex items-center gap-2 shadow-lg transition-all">
+                                {isSaving ? <Loader2 className="animate-spin" size={20}/> : <Save size={20}/>}
+                                Save as Quote
+                            </button>
                         </div>
                     </div>
                 ) : (
