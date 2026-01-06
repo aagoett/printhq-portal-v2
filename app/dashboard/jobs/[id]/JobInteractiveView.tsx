@@ -4,16 +4,50 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, AlertTriangle
+  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, AlertTriangle, Plus
 } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-// Fix: Use relative path to avoid alias errors
-import { sendProofNotification } from '../../../server-actions';
+// Fix: Use relative path (3 dots) for Dashboard folder
+import { sendProofNotification } from '../../../server-actions'; 
+
+// --- HELPER COMPONENT: ADD ITEM FORM ---
+function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel: () => void }) {
+  const [desc, setDesc] = useState('');
+  const [qty, setQty] = useState('');
+  const [stock, setStock] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!desc) return;
+    onAdd({ description: desc, quantity: parseInt(qty) || 0, paper_stock: stock });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="bg-blue-50 p-4 border-b border-blue-100 flex flex-wrap gap-2 items-end animate-in slide-in-from-top-2">
+      <div className="flex-1 min-w-[200px]">
+        <label className="text-[10px] font-bold uppercase text-blue-800 block mb-1">Item Name</label>
+        <input autoFocus value={desc} onChange={e => setDesc(e.target.value)} placeholder="e.g. Letterhead" className="w-full text-xs p-2 rounded border border-blue-200 focus:outline-none focus:border-blue-500" />
+      </div>
+      <div className="w-24">
+        <label className="text-[10px] font-bold uppercase text-blue-800 block mb-1">Qty</label>
+        <input type="number" value={qty} onChange={e => setQty(e.target.value)} placeholder="0" className="w-full text-xs p-2 rounded border border-blue-200 focus:outline-none focus:border-blue-500" />
+      </div>
+      <div className="flex-1 min-w-[150px]">
+        <label className="text-[10px] font-bold uppercase text-blue-800 block mb-1">Paper / Stock</label>
+        <input value={stock} onChange={e => setStock(e.target.value)} placeholder="e.g. 70lb Uncoated" className="w-full text-xs p-2 rounded border border-blue-200 focus:outline-none focus:border-blue-500" />
+      </div>
+      <div className="flex gap-2">
+        <button type="submit" className="bg-blue-600 text-white text-xs font-bold px-4 py-2 rounded hover:bg-blue-700 shadow-sm">Save</button>
+        <button type="button" onClick={onCancel} className="bg-white text-blue-600 text-xs font-bold px-3 py-2 rounded border border-blue-200 hover:bg-blue-50">Cancel</button>
+      </div>
+    </form>
+  );
+}
 
 // --- HELPER COMPONENT: PRODUCTION ITEMS TABLE ---
-function JobItemsTable({ items }: { items: any[] }) {
-  if (!items || items.length === 0) return null;
+function JobItemsTable({ items, onAddItem }: { items: any[], onAddItem: (item: any) => void }) {
+  const [isAdding, setIsAdding] = useState(false);
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-4">
@@ -21,9 +55,28 @@ function JobItemsTable({ items }: { items: any[] }) {
         <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2">
           <Layers size={14} /> Production Line Items
         </h3>
-        <span className="text-xs font-mono bg-gray-200 px-2 py-1 rounded">{items.length} Items</span>
+        <div className="flex items-center gap-2">
+           <span className="text-xs font-mono bg-gray-200 px-2 py-1 rounded text-gray-600">{items.length} Items</span>
+           <button onClick={() => setIsAdding(true)} className="flex items-center gap-1 text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800 transition-colors">
+             <Plus size={12} /> Add Item
+           </button>
+        </div>
       </div>
       
+      {/* ADD ITEM FORM (Shows only when clicked) */}
+      {isAdding && (
+        <AddItemForm 
+          onAdd={(item) => { onAddItem(item); setIsAdding(false); }} 
+          onCancel={() => setIsAdding(false)} 
+        />
+      )}
+
+      {/* EMPTY STATE OR TABLE */}
+      {items.length === 0 && !isAdding ? (
+         <div className="p-8 text-center text-gray-400 text-xs italic">
+            No items yet. Click "Add Item" to start building this job.
+         </div>
+      ) : (
       <div className="overflow-x-auto">
         <table className="w-full text-sm text-left">
           <thead className="bg-white text-xs text-gray-500 font-bold uppercase border-b border-gray-100">
@@ -81,6 +134,7 @@ function JobItemsTable({ items }: { items: any[] }) {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
@@ -89,7 +143,7 @@ function JobItemsTable({ items }: { items: any[] }) {
 interface JobViewProps {
   user: any;
   initialJob: any;
-  initialItems: any[]; // Matches the server data
+  initialItems: any[]; 
   serviceList: any[];
   initialAssets: any[];
   initialMessages: any[];
@@ -149,7 +203,6 @@ export default function JobInteractiveView({
         () => refreshMessages())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'job_assets', filter: `job_id=eq.${jobId}` }, 
         () => refreshAssets())
-      // Add subscription for items if needed later
       .subscribe();
 
     if (assets.length > 0) {
@@ -175,7 +228,31 @@ export default function JobInteractiveView({
   // --- ACTIONS ---
   const logActivity = async (action: string, details: string) => {
       await supabase.from('job_logs').insert({ job_id: jobId, user_id: user.id, action, details });
-      // Optimistic update for logs could go here
+  };
+
+  const handleAddItem = async (newItem: any) => {
+    // 1. Optimistic Update (Show it immediately)
+    const tempId = Math.random().toString();
+    const optimisticItem = { ...newItem, id: tempId, status: 'Pending', job_id: jobId };
+    setItems([...items, optimisticItem]);
+
+    // 2. Save to Database
+    const { data, error } = await supabase.from('job_items').insert({
+      job_id: jobId,
+      description: newItem.description,
+      quantity: newItem.quantity,
+      paper_stock: newItem.paper_stock,
+      status: 'Pending'
+    }).select().single();
+
+    if (error) {
+      alert("Error adding item: " + error.message);
+      setItems(items); // Revert on fail
+    } else {
+      // Replace temp item with real DB item
+      setItems(current => current.map(i => i.id === tempId ? data : i));
+      logActivity('Item Added', `Added production item: ${newItem.description}`);
+    }
   };
 
   const loadPreview = async (asset: any) => {
@@ -292,10 +369,10 @@ export default function JobInteractiveView({
   };
 
   const countdown = getCountdown();
-  const statusColor = 'bg-gray-900'; // Simplification for now, or calculate based on dept
+  const statusColor = 'bg-gray-900'; 
   const currentAsset = assets.find(a => a.id === viewingAssetId);
   const isApprovedAsset = currentAsset?.status === 'approved';
-  const originalAsset = assets.find(a => a.asset_type === 'source'); // Simple find
+  const originalAsset = assets.find(a => a.asset_type === 'source');
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
@@ -456,8 +533,8 @@ export default function JobInteractiveView({
         {/* MIDDLE COL: MAIN PROOF STAGE (Width 6) */}
         <div className="col-span-12 lg:col-span-6 flex flex-col gap-4">
              
-             {/* --- NEW: PRODUCTION ITEMS TABLE --- */}
-             <JobItemsTable items={items} />
+             {/* --- PRODUCTION ITEMS TABLE (WITH ADD BUTTON) --- */}
+             <JobItemsTable items={items} onAddItem={handleAddItem} />
 
              {/* PREVIEW/PROOF VIEWER */}
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden min-h-[500px] relative ${isApprovedAsset ? 'border-green-400 ring-2 ring-green-100' : 'border-gray-200'}`}>
