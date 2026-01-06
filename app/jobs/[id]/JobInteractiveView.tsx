@@ -9,7 +9,7 @@ import {
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 // Fix: Use relative path to avoid alias errors
-import { sendProofNotification } from '../../server-actions'; 
+import { sendProofNotification } from '../../server-actions';
 
 // --- HELPER COMPONENT: PRODUCTION ITEMS TABLE ---
 function JobItemsTable({ items }: { items: any[] }) {
