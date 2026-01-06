@@ -1,6 +1,6 @@
 'use client';
 
-import { createBrowserClient } from '@supabase/ssr';
+import { createClient } from '../../utils/supabase/server';
 import { 
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
   Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, 
