@@ -1,47 +1,84 @@
 import { createClient } from '@/utils/supabase/server';
 import JobInteractiveView from './JobInteractiveView';
-import { redirect } from 'next/navigation';
+import { redirect, notFound } from 'next/navigation';
 
-// This is a Server Component (No 'use client' at the top)
 export default async function JobPage({ params }: { params: { id: string } }) {
   const supabase = createClient();
 
-  // 1. Check Auth
+  // 1. AUTH CHECK
+  // We check this first to protect the data.
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     redirect('/login');
   }
 
-  // 2. FETCH EVERYTHING IN PARALLEL (No Waterfalls)
-  // This executes all queries at the exact same time, cutting load time by ~70%
-  const [jobRes, stepsRes, servicesRes, assetsRes, messagesRes, logsRes] = await Promise.all([
+  // 2. THE "FULL HIERARCHY" PROMISE
+  // We run all these queries at the exact same time to eliminate "Waterfalls".
+  const [
+    jobRes,       // The deep nested job data
+    servicesRes,  // Lookup list for finishing services
+    assetsRes,    // Files/Proofs
+    messagesRes,  // Chat history
+    logsRes       // Activity logs
+  ] = await Promise.all([
+
+    // QUERY A: The "Red Card" Hierarchy
+    // Fetches Job -> Job Items -> Job Item Steps all in one go.
     supabase
       .from('jobs')
-      .select('*, orders(brand), profiles:user_id(first_name, last_name, email, company, phone)')
+      .select(`
+        *,
+        orders (
+          brand,
+          due_date
+        ),
+        profiles:user_id (
+          first_name, 
+          last_name, 
+          email, 
+          company, 
+          phone
+        ),
+        job_items (
+          id,
+          description,
+          quantity,
+          paper_stock,
+          status,
+          job_item_steps (
+            id,
+            step_name,
+            status,
+            department,
+            notes,
+            step_order
+          )
+        )
+      `)
       .eq('id', params.id)
       .single(),
-    
-    supabase
-      .from('job_steps')
-      .select('*')
-      .eq('job_id', params.id)
-      .eq('status', 'Pending')
-      .order('step_order', { ascending: true }),
 
-    supabase.from('finishing_services').select('*').order('name'),
+    // QUERY B: Finishing Services Lookup
+    supabase
+      .from('finishing_services')
+      .select('*')
+      .order('name'),
     
+    // QUERY C: Assets (Files)
     supabase
       .from('job_assets')
       .select('*, profiles(first_name, email)')
       .eq('job_id', params.id)
       .order('created_at', { ascending: false }),
 
+    // QUERY D: Messages (Chat)
     supabase
       .from('messages')
       .select('*, profiles(email, first_name, role)')
       .eq('job_id', params.id)
       .order('created_at', { ascending: true }),
 
+    // QUERY E: Logs (History)
     supabase
       .from('job_logs')
       .select('*, profiles(first_name, role)')
@@ -49,16 +86,19 @@ export default async function JobPage({ params }: { params: { id: string } }) {
       .order('created_at', { ascending: true })
   ]);
 
-  if (jobRes.error) {
-    return <div>Job not found or access denied.</div>;
+  // 3. ERROR HANDLING
+  if (jobRes.error || !jobRes.data) {
+    console.error("Error fetching job:", jobRes.error);
+    return notFound(); // Shows the Next.js 404 page
   }
 
-  // 3. Pass data to the Client Component
+  // 4. PASS TO CLIENT COMPONENT
+  // We pass the "pre-fetched" data so the UI renders instantly.
   return (
     <JobInteractiveView 
       user={user}
       initialJob={jobRes.data}
-      initialStep={stepsRes.data?.[0] || null}
+      initialItems={jobRes.data.job_items || []} // Pass the nested items separately for cleaner code
       serviceList={servicesRes.data || []}
       initialAssets={assetsRes.data || []}
       initialMessages={messagesRes.data || []}
