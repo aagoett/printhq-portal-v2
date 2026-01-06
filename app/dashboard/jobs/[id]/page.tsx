@@ -12,7 +12,7 @@ import {
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
-import { sendProofNotification } from '../../../actions'; 
+import { ... } from '@/app/server-actions';
 
 export default function JobDetailsPage({ params }: { params: { id: string } }) {
   const router = useRouter(); 
