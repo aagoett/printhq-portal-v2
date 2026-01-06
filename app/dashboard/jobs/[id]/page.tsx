@@ -1,53 +1,66 @@
 import { createClient } from '../../../../utils/supabase/server';
 import JobInteractiveView from './JobInteractiveView';
-import { redirect, notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
 
 export default async function DashboardJobPage({ params }: { params: { id: string } }) {
   const supabase = createClient();
 
+  // 1. Auth Check
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     redirect('/login');
   }
 
-  // 1. Fetch BASIC Job Info (Removed the complex nested joins for a moment)
+  // 2. Fetch Job (Safe Query)
+  // I removed 'due_date' from orders() because that likely caused the crash
   const { data: job, error } = await supabase
     .from('jobs')
     .select(`
       *,
-      orders (brand, due_date),
+      orders (brand),
       profiles:user_id (first_name, last_name, email, company, phone)
     `)
     .eq('id', params.id)
     .single();
 
-  if (error || !job) {
-    console.error("Job fetch error:", error); // This will show up in your Vercel logs
-    return notFound();
+  // --- DEBUGGING BLOCK ---
+  // If there is an error, we will SHOW IT on screen instead of a 404
+  if (error) {
+    return (
+      <div className="p-12 bg-red-50 text-red-800 font-mono">
+        <h1 className="text-2xl font-bold mb-4">Database Error</h1>
+        <p className="mb-2">Could not load job: {params.id}</p>
+        <div className="bg-white p-4 border border-red-200 rounded">
+          {JSON.stringify(error, null, 2)}
+        </div>
+      </div>
+    );
   }
+  
+  if (!job) {
+     return <div className="p-12">Job not found (ID exists, but no data returned).</div>;
+  }
+  // -----------------------
 
-  // 2. Fetch Services & Assets separately
-  const { data: services } = await supabase.from('finishing_services').select('*').order('name');
-  const { data: assets } = await supabase.from('job_assets').select('*, profiles(first_name, email)').eq('job_id', params.id).order('created_at', { ascending: false });
-  const { data: messages } = await supabase.from('messages').select('*, profiles(email, first_name, role)').eq('job_id', params.id).order('created_at', { ascending: true });
-  const { data: logs } = await supabase.from('job_logs').select('*, profiles(first_name, role)').eq('job_id', params.id).order('created_at', { ascending: true });
-
-  // 3. Fetch Items separately (Safer check)
-  // If the table doesn't exist, this will just return null instead of crashing the whole page
-  const { data: items } = await supabase
-    .from('job_items')
-    .select('*, job_item_steps(*)')
-    .eq('job_id', params.id);
+  // 3. Fetch Extras (Parallel)
+  const [servicesRes, assetsRes, messagesRes, logsRes, itemsRes] = await Promise.all([
+    supabase.from('finishing_services').select('*').order('name'),
+    supabase.from('job_assets').select('*, profiles(first_name, email)').eq('job_id', params.id).order('created_at', { ascending: false }),
+    supabase.from('messages').select('*, profiles(email, first_name, role)').eq('job_id', params.id).order('created_at', { ascending: true }),
+    supabase.from('job_logs').select('*, profiles(first_name, role)').eq('job_id', params.id).order('created_at', { ascending: true }),
+    // Attempt to fetch items safely
+    supabase.from('job_items').select('*, job_item_steps(*)').eq('job_id', params.id)
+  ]);
 
   return (
     <JobInteractiveView 
       user={user}
       initialJob={job}
-      initialItems={items || []} 
-      serviceList={services || []}
-      initialAssets={assets || []}
-      initialMessages={messages || []}
-      initialLogs={logs || []}
+      initialItems={itemsRes.data || []} 
+      serviceList={servicesRes.data || []}
+      initialAssets={assetsRes.data || []}
+      initialMessages={messagesRes.data || []}
+      initialLogs={logsRes.data || []}
       jobId={params.id}
     />
   );
