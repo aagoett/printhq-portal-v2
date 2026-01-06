@@ -10,7 +10,7 @@ import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
 // Use the new name and the @ alias so it always finds the right spot
-import { sendOrderConfirmation } from '@/app/server-actions';
+import { sendOrderConfirmation } from '../server-actions';
 
 // --- TYPES ---
 type Job = {
