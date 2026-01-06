@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server';
+import { createClient } from '../../../utils/supabase/server';
 import JobInteractiveView from './JobInteractiveView';
 import { redirect, notFound } from 'next/navigation';
 
