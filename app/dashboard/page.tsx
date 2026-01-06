@@ -9,7 +9,8 @@ import {
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
 import Link from 'next/link';
-import { sendOrderConfirmation } from '../actions';
+// Use the new name and the @ alias so it always finds the right spot
+import { sendOrderConfirmation } from '@/app/server-actions';
 
 // --- TYPES ---
 type Job = {
