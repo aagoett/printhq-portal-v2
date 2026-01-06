@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, AlertTriangle, Plus
+  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, AlertTriangle, Plus, Settings
 } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
@@ -45,97 +45,207 @@ function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel
   );
 }
 
-// --- HELPER COMPONENT: PRODUCTION ITEMS TABLE ---
-function JobItemsTable({ items, onAddItem }: { items: any[], onAddItem: (item: any) => void }) {
-  const [isAdding, setIsAdding] = useState(false);
+// --- HELPER COMPONENT: ITEM DETAIL DRAWER (The "Home" for Item Specs) ---
+function ItemDetailDrawer({ item, onClose, onUpdate }: { item: any, onClose: () => void, onUpdate: (id: string, data: any) => void }) {
+  const [formData, setFormData] = useState({
+    description: item.description || '',
+    quantity: item.quantity || 0,
+    paper_stock: item.paper_stock || '',
+    size: item.size || '',
+    ink_colors: item.ink_colors || '',
+    notes: item.internal_notes || ''
+  });
+
+  const handleSave = () => {
+    onUpdate(item.id, formData);
+    onClose();
+  };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-4">
-      <div className="bg-gray-50 border-b border-gray-200 px-4 py-2 flex justify-between items-center">
-        <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2">
-          <Layers size={14} /> Production Line Items
-        </h3>
-        <div className="flex items-center gap-2">
-           <span className="text-xs font-mono bg-gray-200 px-2 py-1 rounded text-gray-600">{items.length} Items</span>
-           <button onClick={() => setIsAdding(true)} className="flex items-center gap-1 text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800 transition-colors">
-             <Plus size={12} /> Add Item
-           </button>
+    <div className="fixed inset-0 z-50 flex justify-end">
+      {/* Backdrop */}
+      <div onClick={onClose} className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-opacity" />
+      
+      {/* The Drawer */}
+      <div className="relative w-full max-w-md bg-white h-full shadow-2xl p-6 overflow-y-auto animate-in slide-in-from-right duration-200 border-l border-gray-200">
+        <div className="flex justify-between items-start mb-6">
+           <div>
+             <h2 className="text-xl font-bold text-gray-900">Item Details</h2>
+             <p className="text-xs text-gray-400 font-mono uppercase">{item.id.split('-')[0]}</p>
+           </div>
+           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full"><X size={20} /></button>
+        </div>
+
+        <div className="space-y-6">
+           {/* Section 1: Basics */}
+           <div className="space-y-4">
+              <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1">General Info</h3>
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Description / Name</label>
+                <input value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full border p-2 rounded text-sm font-bold" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Quantity</label>
+                    <input type="number" value={formData.quantity} onChange={e => setFormData({...formData, quantity: parseInt(e.target.value)})} className="w-full border p-2 rounded text-sm" />
+                </div>
+                <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Status</label>
+                    <div className="p-2 bg-gray-100 rounded text-sm text-gray-500">{item.status}</div>
+                </div>
+              </div>
+           </div>
+
+           {/* Section 2: Print Specs */}
+           <div className="space-y-4">
+              <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1">Print Specifications</h3>
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Paper Stock</label>
+                <input placeholder="e.g. 100lb Gloss Cover" value={formData.paper_stock} onChange={e => setFormData({...formData, paper_stock: e.target.value})} className="w-full border p-2 rounded text-sm" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Flat Size</label>
+                    <input placeholder="8.5 x 11" value={formData.size} onChange={e => setFormData({...formData, size: e.target.value})} className="w-full border p-2 rounded text-sm" />
+                </div>
+                <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Ink / Colors</label>
+                    <input placeholder="4/4, 4/0" value={formData.ink_colors} onChange={e => setFormData({...formData, ink_colors: e.target.value})} className="w-full border p-2 rounded text-sm" />
+                </div>
+              </div>
+           </div>
+
+           {/* Section 3: Notes */}
+           <div className="space-y-4">
+              <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1">Production Notes</h3>
+              <textarea 
+                className="w-full border p-2 rounded text-sm h-24" 
+                placeholder="Special finishing instructions..."
+                value={formData.notes}
+                onChange={e => setFormData({...formData, notes: e.target.value})}
+              />
+           </div>
+
+           {/* Section 4: File Placeholder */}
+           <div className="bg-blue-50 p-4 rounded border border-blue-100 text-center">
+              <p className="text-xs font-bold text-blue-800 mb-2">Item Artwork</p>
+              <button className="text-[10px] bg-white border border-blue-300 px-3 py-1 rounded hover:bg-blue-100">
+                 + Upload Art for this Item
+              </button>
+              <p className="text-[10px] text-blue-400 mt-2 italic">Feature coming in next update</p>
+           </div>
+
+           <div className="pt-4 border-t">
+              <button onClick={handleSave} className="w-full bg-black text-white py-3 rounded font-bold hover:bg-gray-800">
+                Save Changes
+              </button>
+           </div>
         </div>
       </div>
-      
-      {/* ADD ITEM FORM (Shows only when clicked) */}
-      {isAdding && (
-        <AddItemForm 
-          onAdd={(item) => { onAddItem(item); setIsAdding(false); }} 
-          onCancel={() => setIsAdding(false)} 
+    </div>
+  );
+}
+
+// --- HELPER COMPONENT: PRODUCTION ITEMS TABLE ---
+function JobItemsTable({ items, onAddItem, onUpdateItem }: { items: any[], onAddItem: (item: any) => void, onUpdateItem: (id: string, data: any) => void }) {
+  const [isAdding, setIsAdding] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null); // Track which item is open
+
+  return (
+    <>
+      {/* DRAWER (Shows if editingItem is not null) */}
+      {editingItem && (
+        <ItemDetailDrawer 
+          item={editingItem} 
+          onClose={() => setEditingItem(null)} 
+          onUpdate={onUpdateItem}
         />
       )}
 
-      {/* EMPTY STATE OR TABLE */}
-      {items.length === 0 && !isAdding ? (
-         <div className="p-8 text-center text-gray-400 text-xs italic">
-            No items yet. Click "Add Item" to start building this job.
-         </div>
-      ) : (
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm text-left">
-          <thead className="bg-white text-xs text-gray-500 font-bold uppercase border-b border-gray-100">
-            <tr>
-              <th className="px-4 py-2 w-10">#</th>
-              <th className="px-4 py-2">Description</th>
-              <th className="px-4 py-2 w-24 text-right">Qty</th>
-              <th className="px-4 py-2">Stock</th>
-              <th className="px-4 py-2">Steps</th>
-              <th className="px-4 py-2 w-24">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {items.map((item, index) => (
-              <tr key={item.id} className="hover:bg-blue-50 transition-colors">
-                <td className="px-4 py-3 font-mono text-gray-400">{index + 1}</td>
-                <td className="px-4 py-3 font-bold text-gray-900">
-                  {item.description}
-                </td>
-                <td className="px-4 py-3 text-right font-mono text-gray-600">
-                  {item.quantity?.toLocaleString() || '-'}
-                </td>
-                <td className="px-4 py-3 text-gray-600 text-xs">
-                  {item.paper_stock || '-'}
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-1">
-                    {item.job_item_steps?.map((step: any) => (
-                      <span 
-                        key={step.id} 
-                        title={step.notes}
-                        className={`text-[10px] px-1.5 py-0.5 border rounded uppercase font-bold tracking-wider cursor-help ${
-                          step.status === 'Completed' 
-                            ? 'bg-green-100 text-green-700 border-green-200' 
-                            : 'bg-gray-100 text-gray-500 border-gray-200'
-                        }`}
-                      >
-                        {step.step_name}
-                      </span>
-                    ))}
-                    {(!item.job_item_steps || item.job_item_steps.length === 0) && (
-                      <span className="text-gray-300 italic text-[10px]">No steps</span>
-                    )}
-                  </div>
-                </td>
-                <td className="px-4 py-3">
-                   <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${
-                     item.status === 'Completed' ? 'bg-green-50 text-green-800 border-green-200' : 'bg-yellow-50 text-yellow-800 border-yellow-200'
-                   }`}>
-                     {item.status || 'Pending'}
-                   </span>
-                </td>
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-4">
+        <div className="bg-gray-50 border-b border-gray-200 px-4 py-2 flex justify-between items-center">
+          <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2">
+            <Layers size={14} /> Production Line Items
+          </h3>
+          <div className="flex items-center gap-2">
+             <span className="text-xs font-mono bg-gray-200 px-2 py-1 rounded text-gray-600">{items.length} Items</span>
+             <button onClick={() => setIsAdding(true)} className="flex items-center gap-1 text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800 transition-colors">
+               <Plus size={12} /> Add Item
+             </button>
+          </div>
+        </div>
+        
+        {isAdding && (
+          <AddItemForm 
+            onAdd={(item) => { onAddItem(item); setIsAdding(false); }} 
+            onCancel={() => setIsAdding(false)} 
+          />
+        )}
+
+        {items.length === 0 && !isAdding ? (
+           <div className="p-8 text-center text-gray-400 text-xs italic">
+              No items yet. Click "Add Item" to start building this job.
+           </div>
+        ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-white text-xs text-gray-500 font-bold uppercase border-b border-gray-100">
+              <tr>
+                <th className="px-4 py-2 w-10">#</th>
+                <th className="px-4 py-2">Description</th>
+                <th className="px-4 py-2 w-24 text-right">Qty</th>
+                <th className="px-4 py-2">Stock</th>
+                <th className="px-4 py-2">Steps</th>
+                <th className="px-4 py-2 w-24">Status</th>
+                <th className="px-4 py-2 w-10"></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {items.map((item, index) => (
+                <tr key={item.id} onClick={() => setEditingItem(item)} className="hover:bg-blue-50 transition-colors cursor-pointer group">
+                  <td className="px-4 py-3 font-mono text-gray-400">{index + 1}</td>
+                  <td className="px-4 py-3 font-bold text-gray-900">
+                    {item.description}
+                    <div className="md:hidden text-[10px] text-gray-400 font-normal mt-0.5">
+                      {item.size} {item.ink_colors}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-gray-600">
+                    {item.quantity?.toLocaleString() || '-'}
+                  </td>
+                  <td className="px-4 py-3 text-gray-600 text-xs">
+                    <div>{item.paper_stock || '-'}</div>
+                    {(item.size || item.ink_colors) && (
+                       <div className="text-[10px] text-gray-400 mt-0.5">{item.size} • {item.ink_colors}</div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {item.job_item_steps?.map((step: any) => (
+                        <span key={step.id} className="text-[10px] px-1.5 py-0.5 border rounded uppercase font-bold bg-gray-100 text-gray-500 border-gray-200">
+                          {step.step_name}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                     <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${
+                       item.status === 'Completed' ? 'bg-green-50 text-green-800 border-green-200' : 'bg-yellow-50 text-yellow-800 border-yellow-200'
+                     }`}>
+                       {item.status || 'Pending'}
+                     </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                      <Settings size={14} className="text-gray-300 group-hover:text-black transition-colors" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        )}
       </div>
-      )}
-    </div>
+    </>
   );
 }
 
@@ -252,6 +362,21 @@ export default function JobInteractiveView({
       // Replace temp item with real DB item
       setItems(current => current.map(i => i.id === tempId ? data : i));
       logActivity('Item Added', `Added production item: ${newItem.description}`);
+    }
+  };
+
+  const handleUpdateItem = async (itemId: string, updates: any) => {
+    // Optimistic Update
+    setItems(items.map(i => i.id === itemId ? { ...i, ...updates } : i));
+
+    // DB Update
+    const { error } = await supabase.from('job_items').update(updates).eq('id', itemId);
+    
+    if (error) {
+      alert("Error saving item");
+      // Just reload page if error to keep it simple
+    } else {
+      logActivity('Item Updated', `Updated specs for ${updates.description || 'an item'}`);
     }
   };
 
@@ -533,8 +658,8 @@ export default function JobInteractiveView({
         {/* MIDDLE COL: MAIN PROOF STAGE (Width 6) */}
         <div className="col-span-12 lg:col-span-6 flex flex-col gap-4">
              
-             {/* --- PRODUCTION ITEMS TABLE (WITH ADD BUTTON) --- */}
-             <JobItemsTable items={items} onAddItem={handleAddItem} />
+             {/* --- PRODUCTION ITEMS TABLE (WITH ADD BUTTON & DRAWER) --- */}
+             <JobItemsTable items={items} onAddItem={handleAddItem} onUpdateItem={handleUpdateItem} />
 
              {/* PREVIEW/PROOF VIEWER */}
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden min-h-[500px] relative ${isApprovedAsset ? 'border-green-400 ring-2 ring-green-100' : 'border-gray-200'}`}>
