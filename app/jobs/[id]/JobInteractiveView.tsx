@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { sendProofNotification } from '@/app/actions'; 
+import { sendProofNotification } from '@/app/server-actions';
 
 // Define types for props to ensure type safety
 interface JobViewProps {
