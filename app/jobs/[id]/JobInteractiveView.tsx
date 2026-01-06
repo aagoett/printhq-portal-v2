@@ -1,5 +1,8 @@
 'use client';
 
+
+}
+
 import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, Scissors, CheckSquare, Megaphone,
@@ -14,12 +17,14 @@ import { sendProofNotification } from '../../server-actions';
 interface JobViewProps {
   user: any;
   initialJob: any;
-  initialStep: any;
+  initialItems: any[];    // <--- NEW: Add this line
+  initialStep?: any;      // <--- CHANGE: Add '?' to make it optional (since we removed it from page.tsx)
   serviceList: any[];
   initialAssets: any[];
   initialMessages: any[];
   initialLogs: any[];
   jobId: string;
+
 }
 
 export default function JobInteractiveView({ 
