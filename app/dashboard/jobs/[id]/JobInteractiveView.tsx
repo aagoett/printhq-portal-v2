@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo
+  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe
 } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
@@ -45,7 +45,7 @@ function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel
   );
 }
 
-// --- HELPER COMPONENT: ITEM DETAIL DRAWER (With Steps & Uploads) ---
+// --- HELPER COMPONENT: ITEM DETAIL DRAWER ---
 function ItemDetailDrawer({ 
   item, 
   assets, 
@@ -61,7 +61,7 @@ function ItemDetailDrawer({
   onClose: () => void, 
   onUpdate: (id: string, data: any) => void,
   onUpload: (file: File, itemId: string) => Promise<void>,
-  onAddStep: (itemId: string, stepName: string) => void,
+  onAddStep: (itemId: string, stepName: string, isInternal: boolean) => void,
   onToggleStep: (stepId: string, currentStatus: string) => void,
   onDeleteStep: (stepId: string) => void
 }) {
@@ -73,13 +73,15 @@ function ItemDetailDrawer({
     ink_colors: item.ink_colors || '',
     internal_notes: item.internal_notes || '' 
   });
+  
+  // New Step State
   const [newStep, setNewStep] = useState('');
+  const [isInternalStep, setIsInternalStep] = useState(true); // Default to internal (Hidden)
+
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Filter assets that belong to THIS item
   const itemAssets = assets.filter(a => a.job_item_id === item.id);
-  // Sort steps to keep them stable
   const steps = item.job_item_steps?.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) || [];
 
   const handleSave = () => {
@@ -90,8 +92,9 @@ function ItemDetailDrawer({
   const handleAddStepSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newStep.trim()) return;
-    onAddStep(item.id, newStep);
+    onAddStep(item.id, newStep, isInternalStep);
     setNewStep('');
+    setIsInternalStep(true); // Reset to default
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -142,7 +145,7 @@ function ItemDetailDrawer({
               </div>
            </div>
 
-           {/* Section 2: Production Steps (NEW) */}
+           {/* Section 2: Production Steps (UPDATED) */}
            <div className="space-y-3">
               <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1 flex items-center gap-2">
                 <ListTodo size={14}/> Production Path
@@ -152,17 +155,26 @@ function ItemDetailDrawer({
                  {steps.length === 0 && <p className="text-[11px] text-gray-400 italic">No steps defined. Add one below.</p>}
                  {steps.map((step: any) => {
                    const isDone = step.status === 'Completed';
+                   // NEW: Visual Logic for Internal vs Public
+                   const isInternal = step.is_internal !== false; // Handle null as true (safe default)
                    return (
-                     <div key={step.id} className={`flex items-center gap-2 p-2 rounded border transition-all ${isDone ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
+                     <div key={step.id} className={`flex items-center gap-2 p-2 rounded border transition-all ${isDone ? 'bg-green-50 border-green-200' : isInternal ? 'bg-gray-50 border-gray-200' : 'bg-blue-50 border-blue-200'}`}>
                         <button 
                           onClick={() => onToggleStep(step.id, step.status)}
                           className={`flex-shrink-0 w-5 h-5 rounded border flex items-center justify-center transition-colors ${isDone ? 'bg-green-500 border-green-600 text-white' : 'bg-white border-gray-300 hover:border-black'}`}
                         >
                           {isDone && <CheckSquare size={12}/>}
                         </button>
-                        <span className={`flex-1 text-xs font-bold ${isDone ? 'text-green-800 line-through opacity-70' : 'text-gray-800'}`}>
-                          {step.step_name}
-                        </span>
+                        
+                        <div className="flex-1 flex flex-col">
+                           <span className={`text-xs font-bold ${isDone ? 'text-green-800 line-through opacity-70' : 'text-gray-800'}`}>
+                             {step.step_name}
+                           </span>
+                           <span className="text-[9px] flex items-center gap-1 text-gray-400 uppercase font-bold">
+                              {isInternal ? <><Lock size={8}/> Internal</> : <><Globe size={8} className="text-blue-500"/> Customer Visible</>}
+                           </span>
+                        </div>
+
                         <button onClick={() => onDeleteStep(step.id)} className="text-gray-300 hover:text-red-500"><X size={14}/></button>
                      </div>
                    );
@@ -170,15 +182,29 @@ function ItemDetailDrawer({
               </div>
 
               {/* Add Step Input */}
-              <form onSubmit={handleAddStepSubmit} className="flex gap-2 pt-2">
-                 <input 
-                   placeholder="Add step (e.g. Cut, Drill)..." 
-                   value={newStep}
-                   onChange={e => setNewStep(e.target.value)}
-                   className="flex-1 text-xs p-2 rounded border border-gray-300 focus:outline-none focus:border-black"
-                 />
-                 <button type="submit" className="bg-gray-900 text-white px-3 rounded text-xs font-bold hover:bg-black">Add</button>
-              </form>
+              <div className="pt-2 border-t border-gray-100">
+                <form onSubmit={handleAddStepSubmit} className="flex flex-col gap-2">
+                   <div className="flex gap-2">
+                     <input 
+                       placeholder="Add step (e.g. Plate, Cut)..." 
+                       value={newStep}
+                       onChange={e => setNewStep(e.target.value)}
+                       className="flex-1 text-xs p-2 rounded border border-gray-300 focus:outline-none focus:border-black"
+                     />
+                     <button type="submit" className="bg-gray-900 text-white px-3 rounded text-xs font-bold hover:bg-black">Add</button>
+                   </div>
+                   {/* INTERNAL TOGGLE */}
+                   <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <div className={`w-3 h-3 border rounded flex items-center justify-center ${isInternalStep ? 'bg-gray-500 border-gray-600' : 'bg-white border-gray-300'}`}>
+                         {isInternalStep && <CheckSquare size={10} className="text-white"/>}
+                      </div>
+                      <input type="checkbox" checked={isInternalStep} onChange={e => setIsInternalStep(e.target.checked)} className="hidden" />
+                      <span className="text-[10px] uppercase font-bold text-gray-500 flex items-center gap-1">
+                        {isInternalStep ? <><Lock size={10}/> Internal Only (Hidden)</> : <><Globe size={10}/> Customer Can See</>}
+                      </span>
+                   </label>
+                </form>
+              </div>
            </div>
 
            {/* Section 3: Print Specs */}
@@ -256,7 +282,7 @@ function JobItemsTable({
   onAddItem: (item: any) => void, 
   onUpdateItem: (id: string, data: any) => void,
   onItemUpload: (file: File, itemId: string) => Promise<void>,
-  onAddStep: (itemId: string, stepName: string) => void,
+  onAddStep: (itemId: string, stepName: string, isInternal: boolean) => void,
   onToggleStep: (stepId: string, currentStatus: string) => void,
   onDeleteStep: (stepId: string) => void
 }) {
@@ -499,10 +525,10 @@ export default function JobInteractiveView({
       await logActivity('Asset Linked', `Uploaded ${file.name} to item.`);
   };
 
-  // --- STEP OPERATIONS (NEW) ---
-  const handleAddStep = async (itemId: string, stepName: string) => {
+  // --- STEP OPERATIONS (UPDATED FOR INTERNAL/EXTERNAL) ---
+  const handleAddStep = async (itemId: string, stepName: string, isInternal: boolean) => {
     const tempId = Math.random().toString();
-    const newStep = { id: tempId, job_item_id: itemId, step_name: stepName, status: 'Pending' };
+    const newStep = { id: tempId, job_item_id: itemId, step_name: stepName, status: 'Pending', is_internal: isInternal };
     
     // Optimistic Update
     setItems(current => current.map(i => {
@@ -515,11 +541,12 @@ export default function JobInteractiveView({
     const { data, error } = await supabase.from('job_item_steps').insert({
       job_item_id: itemId,
       step_name: stepName,
-      status: 'Pending'
+      status: 'Pending',
+      is_internal: isInternal
     }).select().single();
 
     if (error) {
-       alert('Error adding step'); // Could revert here if needed
+       alert('Error adding step: ' + error.message);
     } else {
        // Replace temp ID with real ID
        setItems(current => current.map(i => {
