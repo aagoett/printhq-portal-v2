@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, AlertTriangle, Plus, Settings
+  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2
 } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
@@ -45,8 +45,20 @@ function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel
   );
 }
 
-// --- HELPER COMPONENT: ITEM DETAIL DRAWER (The "Home" for Item Specs) ---
-function ItemDetailDrawer({ item, onClose, onUpdate }: { item: any, onClose: () => void, onUpdate: (id: string, data: any) => void }) {
+// --- HELPER COMPONENT: ITEM DETAIL DRAWER (With Uploads) ---
+function ItemDetailDrawer({ 
+  item, 
+  assets, // New: List of all assets to filter
+  onClose, 
+  onUpdate,
+  onUpload // New: Function to handle uploads
+}: { 
+  item: any, 
+  assets: any[],
+  onClose: () => void, 
+  onUpdate: (id: string, data: any) => void,
+  onUpload: (file: File, itemId: string) => Promise<void>
+}) {
   const [formData, setFormData] = useState({
     description: item.description || '',
     quantity: item.quantity || 0,
@@ -55,10 +67,29 @@ function ItemDetailDrawer({ item, onClose, onUpdate }: { item: any, onClose: () 
     ink_colors: item.ink_colors || '',
     notes: item.internal_notes || ''
   });
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Filter assets that belong to THIS item
+  const itemAssets = assets.filter(a => a.job_item_id === item.id);
 
   const handleSave = () => {
     onUpdate(item.id, formData);
     onClose();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setIsUploading(true);
+      try {
+        await onUpload(e.target.files[0], item.id);
+      } catch (err) {
+        alert("Upload failed.");
+      }
+      setIsUploading(false);
+      // Reset input
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   return (
@@ -67,16 +98,16 @@ function ItemDetailDrawer({ item, onClose, onUpdate }: { item: any, onClose: () 
       <div onClick={onClose} className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-opacity" />
       
       {/* The Drawer */}
-      <div className="relative w-full max-w-md bg-white h-full shadow-2xl p-6 overflow-y-auto animate-in slide-in-from-right duration-200 border-l border-gray-200">
+      <div className="relative w-full max-w-md bg-white h-full shadow-2xl p-6 overflow-y-auto animate-in slide-in-from-right duration-200 border-l border-gray-200 flex flex-col">
         <div className="flex justify-between items-start mb-6">
            <div>
              <h2 className="text-xl font-bold text-gray-900">Item Details</h2>
-             <p className="text-xs text-gray-400 font-mono uppercase">{item.id.split('-')[0]}</p>
+             <p className="text-xs text-gray-400 font-mono uppercase">{item.id.split('-')[0]} • {item.description}</p>
            </div>
            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full"><X size={20} /></button>
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-6 flex-1">
            {/* Section 1: Basics */}
            <div className="space-y-4">
               <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1">General Info</h3>
@@ -126,20 +157,40 @@ function ItemDetailDrawer({ item, onClose, onUpdate }: { item: any, onClose: () 
               />
            </div>
 
-           {/* Section 4: File Placeholder */}
-           <div className="bg-blue-50 p-4 rounded border border-blue-100 text-center">
-              <p className="text-xs font-bold text-blue-800 mb-2">Item Artwork</p>
-              <button className="text-[10px] bg-white border border-blue-300 px-3 py-1 rounded hover:bg-blue-100">
-                 + Upload Art for this Item
-              </button>
-              <p className="text-[10px] text-blue-400 mt-2 italic">Feature coming in next update</p>
-           </div>
+           {/* Section 4: Item Specific Files */}
+           <div className="bg-blue-50 p-4 rounded border border-blue-100">
+              <h3 className="text-xs font-bold uppercase text-blue-800 mb-3 flex items-center justify-between">
+                <span>Item Artwork</span>
+                <span className="text-[10px] bg-blue-200 px-1.5 rounded text-blue-800">{itemAssets.length}</span>
+              </h3>
+              
+              <div className="space-y-2 mb-3">
+                 {itemAssets.length === 0 && <p className="text-[11px] text-blue-400 italic">No files linked to this specific item yet.</p>}
+                 {itemAssets.map(asset => (
+                   <div key={asset.id} className="bg-white p-2 rounded border border-blue-200 flex items-center gap-2">
+                      <FileImage size={14} className="text-blue-500"/>
+                      <span className="text-xs font-bold text-gray-700 truncate flex-1">{asset.file_name}</span>
+                      <span className="text-[9px] uppercase font-bold text-gray-400">Linked</span>
+                   </div>
+                 ))}
+              </div>
 
-           <div className="pt-4 border-t">
-              <button onClick={handleSave} className="w-full bg-black text-white py-3 rounded font-bold hover:bg-gray-800">
-                Save Changes
+              <input ref={fileInputRef} type="file" onChange={handleFileChange} className="hidden" />
+              
+              <button 
+                onClick={() => fileInputRef.current?.click()} 
+                disabled={isUploading}
+                className="w-full text-xs bg-white border border-blue-300 text-blue-700 px-3 py-2 rounded hover:bg-blue-100 font-bold flex items-center justify-center gap-2"
+              >
+                 {isUploading ? 'Uploading...' : <><UploadCloud size={14}/> Upload Art for this Item</>}
               </button>
            </div>
+        </div>
+
+        <div className="pt-4 mt-4 border-t sticky bottom-0 bg-white">
+          <button onClick={handleSave} className="w-full bg-black text-white py-3 rounded font-bold hover:bg-gray-800 shadow-lg">
+            Save Changes
+          </button>
         </div>
       </div>
     </div>
@@ -147,18 +198,26 @@ function ItemDetailDrawer({ item, onClose, onUpdate }: { item: any, onClose: () 
 }
 
 // --- HELPER COMPONENT: PRODUCTION ITEMS TABLE ---
-function JobItemsTable({ items, onAddItem, onUpdateItem }: { items: any[], onAddItem: (item: any) => void, onUpdateItem: (id: string, data: any) => void }) {
+function JobItemsTable({ items, assets, onAddItem, onUpdateItem, onItemUpload }: { 
+  items: any[], 
+  assets: any[], 
+  onAddItem: (item: any) => void, 
+  onUpdateItem: (id: string, data: any) => void,
+  onItemUpload: (file: File, itemId: string) => Promise<void>
+}) {
   const [isAdding, setIsAdding] = useState(false);
-  const [editingItem, setEditingItem] = useState<any>(null); // Track which item is open
+  const [editingItem, setEditingItem] = useState<any>(null);
 
   return (
     <>
-      {/* DRAWER (Shows if editingItem is not null) */}
+      {/* DRAWER */}
       {editingItem && (
         <ItemDetailDrawer 
           item={editingItem} 
+          assets={assets}
           onClose={() => setEditingItem(null)} 
           onUpdate={onUpdateItem}
+          onUpload={onItemUpload}
         />
       )}
 
@@ -195,38 +254,36 @@ function JobItemsTable({ items, onAddItem, onUpdateItem }: { items: any[], onAdd
                 <th className="px-4 py-2">Description</th>
                 <th className="px-4 py-2 w-24 text-right">Qty</th>
                 <th className="px-4 py-2">Stock</th>
-                <th className="px-4 py-2">Steps</th>
+                <th className="px-4 py-2">Specs</th>
                 <th className="px-4 py-2 w-24">Status</th>
                 <th className="px-4 py-2 w-10"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {items.map((item, index) => (
+              {items.map((item, index) => {
+                 // Check if item has linked files
+                 const hasFiles = assets.some(a => a.job_item_id === item.id);
+                 return (
                 <tr key={item.id} onClick={() => setEditingItem(item)} className="hover:bg-blue-50 transition-colors cursor-pointer group">
                   <td className="px-4 py-3 font-mono text-gray-400">{index + 1}</td>
                   <td className="px-4 py-3 font-bold text-gray-900">
-                    {item.description}
-                    <div className="md:hidden text-[10px] text-gray-400 font-normal mt-0.5">
-                      {item.size} {item.ink_colors}
+                    <div className="flex items-center gap-2">
+                      {item.description}
+                      {hasFiles && <Paperclip size={12} className="text-blue-500" />}
                     </div>
                   </td>
                   <td className="px-4 py-3 text-right font-mono text-gray-600">
                     {item.quantity?.toLocaleString() || '-'}
                   </td>
                   <td className="px-4 py-3 text-gray-600 text-xs">
-                    <div>{item.paper_stock || '-'}</div>
-                    {(item.size || item.ink_colors) && (
-                       <div className="text-[10px] text-gray-400 mt-0.5">{item.size} • {item.ink_colors}</div>
-                    )}
+                    {item.paper_stock || '-'}
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {item.job_item_steps?.map((step: any) => (
-                        <span key={step.id} className="text-[10px] px-1.5 py-0.5 border rounded uppercase font-bold bg-gray-100 text-gray-500 border-gray-200">
-                          {step.step_name}
-                        </span>
-                      ))}
-                    </div>
+                  <td className="px-4 py-3 text-xs text-gray-500">
+                     {(item.size || item.ink_colors) ? (
+                        <span>{item.size} • {item.ink_colors}</span>
+                     ) : (
+                        <span className="text-gray-300 italic">No specs</span>
+                     )}
                   </td>
                   <td className="px-4 py-3">
                      <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${
@@ -239,7 +296,7 @@ function JobItemsTable({ items, onAddItem, onUpdateItem }: { items: any[], onAdd
                       <Settings size={14} className="text-gray-300 group-hover:text-black transition-colors" />
                   </td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>
@@ -316,6 +373,7 @@ export default function JobInteractiveView({
       .subscribe();
 
     if (assets.length > 0) {
+        // Prefer loading an approved file, then a proof, then generic
         const approved = assets.find((a: any) => a.status === 'approved');
         const latestProof = assets.find((a: any) => a.asset_type === 'proof' && a.status !== 'archived');
         loadPreview(approved || latestProof || assets[0]);
@@ -341,12 +399,10 @@ export default function JobInteractiveView({
   };
 
   const handleAddItem = async (newItem: any) => {
-    // 1. Optimistic Update (Show it immediately)
     const tempId = Math.random().toString();
     const optimisticItem = { ...newItem, id: tempId, status: 'Pending', job_id: jobId };
     setItems([...items, optimisticItem]);
 
-    // 2. Save to Database
     const { data, error } = await supabase.from('job_items').insert({
       job_id: jobId,
       description: newItem.description,
@@ -357,27 +413,43 @@ export default function JobInteractiveView({
 
     if (error) {
       alert("Error adding item: " + error.message);
-      setItems(items); // Revert on fail
+      setItems(items);
     } else {
-      // Replace temp item with real DB item
       setItems(current => current.map(i => i.id === tempId ? data : i));
       logActivity('Item Added', `Added production item: ${newItem.description}`);
     }
   };
 
   const handleUpdateItem = async (itemId: string, updates: any) => {
-    // Optimistic Update
     setItems(items.map(i => i.id === itemId ? { ...i, ...updates } : i));
-
-    // DB Update
     const { error } = await supabase.from('job_items').update(updates).eq('id', itemId);
-    
     if (error) {
       alert("Error saving item");
-      // Just reload page if error to keep it simple
     } else {
       logActivity('Item Updated', `Updated specs for ${updates.description || 'an item'}`);
     }
+  };
+
+  // NEW: UPLOAD SPECIFICALLY FOR A LINE ITEM
+  const handleItemUpload = async (file: File, itemId: string) => {
+      const storageName = `${jobId}-item-${itemId.substring(0,4)}-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
+      
+      const { data: uploadData, error: uploadError } = await supabase.storage.from('uploads').upload(storageName, file);
+      if (uploadError) throw uploadError;
+
+      const { error: dbError } = await supabase.from('job_assets').insert({
+          job_id: jobId,
+          job_item_id: itemId, // <--- LINKS IT TO THE ITEM
+          uploader_id: user.id,
+          file_url: uploadData.path,
+          file_name: file.name,
+          asset_type: 'source',
+          status: 'pending'
+      });
+      if (dbError) throw dbError;
+
+      await refreshAssets();
+      await logActivity('Asset Linked', `Uploaded ${file.name} to item.`);
   };
 
   const loadPreview = async (asset: any) => {
@@ -411,14 +483,12 @@ export default function JobInteractiveView({
           return;
       }
 
-      // Archive Old Proofs
       await supabase.from('job_assets')
           .update({ status: 'archived' })
           .eq('job_id', jobId)
           .eq('asset_type', 'proof')
           .eq('status', 'pending');
 
-      // Insert New
       const { data: newAsset } = await supabase.from('job_assets').insert({
           job_id: jobId,
           uploader_id: user.id,
@@ -428,7 +498,6 @@ export default function JobInteractiveView({
           status: 'pending'
       }).select().single();
 
-      // Email & Log
       await sendProofNotification(jobId, data?.path || '', uploadMessage);
       await logActivity('Proof Uploaded', `New version sent. Note: ${uploadMessage || 'None'}`);
 
@@ -659,7 +728,13 @@ export default function JobInteractiveView({
         <div className="col-span-12 lg:col-span-6 flex flex-col gap-4">
              
              {/* --- PRODUCTION ITEMS TABLE (WITH ADD BUTTON & DRAWER) --- */}
-             <JobItemsTable items={items} onAddItem={handleAddItem} onUpdateItem={handleUpdateItem} />
+             <JobItemsTable 
+               items={items} 
+               assets={assets}
+               onAddItem={handleAddItem} 
+               onUpdateItem={handleUpdateItem} 
+               onItemUpload={handleItemUpload}
+             />
 
              {/* PREVIEW/PROOF VIEWER */}
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden min-h-[500px] relative ${isApprovedAsset ? 'border-green-400 ring-2 ring-green-100' : 'border-gray-200'}`}>
@@ -713,6 +788,9 @@ export default function JobInteractiveView({
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
                     {assets.map((asset) => {
                         const isCurrent = viewingAssetId === asset.id;
+                        // Find linked item name if exists
+                        const linkedItem = asset.job_item_id ? items.find(i => i.id === asset.job_item_id) : null;
+
                         return (
                         <div key={asset.id} onClick={() => loadPreview(asset)} className={`p-2 rounded border cursor-pointer transition-all flex flex-col gap-2 group ${isCurrent ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
                             <div className="flex items-center gap-2 overflow-hidden">
@@ -722,15 +800,17 @@ export default function JobInteractiveView({
                                     <p className="text-[10px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</p>
                                 </div>
                             </div>
-                            <div className="flex items-center justify-between">
-                                {asset.status === 'approved' ? (
-                                    <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded flex items-center gap-1"><CheckCircle size={10}/> APPROVED</span>
-                                ) : asset.status === 'archived' ? (
-                                    <span className="text-[10px] font-bold bg-gray-100 text-gray-400 px-2 py-0.5 rounded flex items-center gap-1"><XCircle size={10}/> ARCHIVED</span>
-                                ) : asset.status === 'pending' && asset.asset_type === 'proof' ? (
-                                    <span className="text-[10px] font-bold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded animate-pulse">PENDING APPROVAL</span>
-                                ) : (<span></span>)}
-                                {isCurrent && <Eye size={14} className="text-blue-400"/>}
+                            
+                            {/* TAGS ROW */}
+                            <div className="flex flex-wrap gap-1">
+                                {asset.status === 'approved' && (
+                                    <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1.5 rounded flex items-center gap-1">APPROVED</span>
+                                )}
+                                {linkedItem && (
+                                     <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 rounded flex items-center gap-1 border border-blue-200 truncate max-w-full">
+                                        LINKED: {linkedItem.description}
+                                     </span>
+                                )}
                             </div>
                         </div>
                         );
