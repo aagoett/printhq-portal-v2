@@ -270,7 +270,7 @@ export default function Dashboard() {
     setCart(cart.filter(item => item.id !== id));
   };
 
-  // --- SUBMIT LOGIC ---
+  // --- SUBMIT LOGIC (FIXED: Detaches Admin User for Guests) ---
   const handleSubmitOrder = async () => {
     if (cart.length === 0) return alert("Cart is empty.");
     if (isNewCustomer && !newCustomerEmail.includes('@')) return alert("Invalid email.");
@@ -278,26 +278,29 @@ export default function Dashboard() {
     setIsUploading(true);
     try {
       // 1. Determine the REAL User
-      let targetUserId = user?.id; 
+      let targetUserId = user?.id; // Default to Logged in user
       let targetEmail = user?.email;
       const isInternal = role === 'admin' || role === 'staff';
 
+      // 2. ADMIN OVERRIDE LOGIC
       if (isInternal) {
           if (isNewCustomer) {
-            targetEmail = newCustomerEmail;
+            // FIX: Explicitly set ID to NULL for guests
             targetUserId = null; 
+            targetEmail = newCustomerEmail;
           } else if (selectedCustomerId) {
+            // FIX: Explicitly set ID to the Selected Customer
             targetUserId = selectedCustomerId;
             const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
             targetEmail = selectedCustomer?.email || '';
           }
       }
 
-      // 2. Create Order
+      // 3. Create Order
       const { data: newOrder, error: orderError } = await supabase
         .from('orders')
         .insert({ 
-            user_id: targetUserId, 
+            user_id: targetUserId, // Will be NULL for guest, or Customer ID
             status: 'New', 
             brand_id: selectedBrandId 
         })
@@ -305,7 +308,7 @@ export default function Dashboard() {
 
       if (orderError) throw orderError;
 
-      // 3. Create Job
+      // 4. Create Job Container
       const jobTitle = cart.length === 1 ? cart[0].title : `Order #${newOrder.id.substring(0,6).toUpperCase()}`;
       const totalQty = cart.reduce((acc, item) => acc + item.quantity, 0);
 
@@ -313,18 +316,18 @@ export default function Dashboard() {
         .from('jobs')
         .insert({
           order_id: newOrder.id,
-          user_id: targetUserId, 
-          guest_email: isNewCustomer ? targetEmail : null,
+          user_id: targetUserId, // <--- Correct assignment
+          guest_email: isNewCustomer ? targetEmail : null, // <--- Chase's email here
           title: jobTitle,
           quantity: totalQty,
           status: 'Pending Review',
-          created_by: user.id 
+          created_by: user.id // Track that Andrew created it
         })
         .select().single();
 
       if (jobError) throw jobError;
 
-      // 4. Process Items
+      // 5. Process Items
       for (const item of cart) {
         
         // A. Insert Item
@@ -372,7 +375,7 @@ export default function Dashboard() {
         });
       }
 
-      // 5. Send Email
+      // 6. Send Email (To Chase, not Andrew)
       const brandName = brandList.find(b => b.id === selectedBrandId)?.name || 'PrintHQ';
       if (targetEmail && newJob) {
          await sendOrderConfirmation(targetEmail, newJob.id, `${cart.length} Item(s) from ${brandName}`);
