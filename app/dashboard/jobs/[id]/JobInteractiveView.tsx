@@ -48,10 +48,10 @@ function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel
 // --- HELPER COMPONENT: ITEM DETAIL DRAWER (With Uploads) ---
 function ItemDetailDrawer({ 
   item, 
-  assets, // New: List of all assets to filter
+  assets, 
   onClose, 
   onUpdate,
-  onUpload // New: Function to handle uploads
+  onUpload 
 }: { 
   item: any, 
   assets: any[],
@@ -59,13 +59,14 @@ function ItemDetailDrawer({
   onUpdate: (id: string, data: any) => void,
   onUpload: (file: File, itemId: string) => Promise<void>
 }) {
+  // FIX: Using 'internal_notes' instead of 'notes' to match DB
   const [formData, setFormData] = useState({
     description: item.description || '',
     quantity: item.quantity || 0,
     paper_stock: item.paper_stock || '',
     size: item.size || '',
     ink_colors: item.ink_colors || '',
-    notes: item.internal_notes || ''
+    internal_notes: item.internal_notes || '' 
   });
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -152,8 +153,8 @@ function ItemDetailDrawer({
               <textarea 
                 className="w-full border p-2 rounded text-sm h-24" 
                 placeholder="Special finishing instructions..."
-                value={formData.notes}
-                onChange={e => setFormData({...formData, notes: e.target.value})}
+                value={formData.internal_notes}
+                onChange={e => setFormData({...formData, internal_notes: e.target.value})}
               />
            </div>
 
@@ -422,9 +423,11 @@ export default function JobInteractiveView({
 
   const handleUpdateItem = async (itemId: string, updates: any) => {
     setItems(items.map(i => i.id === itemId ? { ...i, ...updates } : i));
+    
     const { error } = await supabase.from('job_items').update(updates).eq('id', itemId);
     if (error) {
-      alert("Error saving item");
+      // NEW: Showing actual error message
+      alert("Error saving item: " + error.message);
     } else {
       logActivity('Item Updated', `Updated specs for ${updates.description || 'an item'}`);
     }
