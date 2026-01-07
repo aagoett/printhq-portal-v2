@@ -67,7 +67,7 @@ type PaperStock = {
 export default function Dashboard() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
-   
+    
   // --- STATE ---
   const [user, setUser] = useState<any>(null);
   const [role, setRole] = useState('customer');
@@ -77,31 +77,31 @@ export default function Dashboard() {
   const [staff, setStaff] = useState<Profile[]>([]); 
   const [stockLibrary, setStockLibrary] = useState<PaperStock[]>([]);
   const [brandList, setBrandList] = useState<Brand[]>([]);
-   
+    
   const [departmentTabs, setDepartmentTabs] = useState<string[]>(['My Queue', 'All']);
   const [activeTab, setActiveTab] = useState('All'); 
-   
+    
   const [showModal, setShowModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-   
+    
   // --- CART STATE ---
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedBrandId, setSelectedBrandId] = useState('');
-   
+    
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
   const [jobSize, setJobSize] = useState('');
   const [jobNotes, setJobNotes] = useState('');
-   
+    
   // PAPER STOCK LOGIC
   const [selectedStockId, setSelectedStockId] = useState('');
   const [customStockValue, setCustomStockValue] = useState('');
-   
+    
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [isNewCustomer, setIsNewCustomer] = useState(false);
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
-   
+    
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -134,18 +134,10 @@ export default function Dashboard() {
     if (!isInternal) jobQuery = jobQuery.eq('user_id', user.id);
     const { data: jobsData } = await jobQuery;
 
-    const { data: stepsData } = await supabase.from('job_steps').select('*').eq('status', 'Pending');
-
+    // Use job_items to determine status if available, otherwise fallback
+    // Simplification: We just show the main job status
     if (jobsData) {
-      const processedJobs = jobsData.map(j => {
-        const activeStep = stepsData?.find(s => s.job_id === j.id);
-        return {
-          ...j,
-          current_step: activeStep ? activeStep.department : 'Complete',
-          next_step_id: activeStep ? activeStep.id : null
-        };
-      });
-      setJobs(processedJobs);
+      setJobs(jobsData);
     }
 
     const { data: stockData } = await supabase.from('paper_stocks').select('*').order('name');
@@ -192,39 +184,6 @@ export default function Dashboard() {
     const staffName = staffMember ? (staffMember.first_name || staffMember.email) : 'Staff';
     setJobs(jobs.map(j => j.id === jobId ? { ...j, assigned_to: staffId, csr_name: staffName } : j));
     await supabase.from('jobs').update({ assigned_to: staffId, csr_name: staffName }).eq('id', jobId);
-  };
-
-  // --- FIXED: ROBUST STEP ADVANCEMENT ---
-  const handleQuickAdvance = async (job: Job) => {
-    if (!job.next_step_id) return;
-
-    // 1. Get info about the current step
-    const { data: currentStep } = await supabase.from('job_steps').select('step_order').eq('id', job.next_step_id).single();
-    if (!currentStep) return;
-
-    // 2. Mark current step complete
-    await supabase.from('job_steps').update({ status: 'Completed' }).eq('id', job.next_step_id);
-
-    // 3. Find the NEXT step (next highest order)
-    const { data: nextStep } = await supabase
-        .from('job_steps')
-        .select('*')
-        .eq('job_id', job.id)
-        .gt('step_order', currentStep.step_order)
-        .order('step_order', { ascending: true })
-        .limit(1)
-        .single();
-
-    if (nextStep) {
-        // 4a. Activate next step
-        await supabase.from('job_steps').update({ status: 'Pending' }).eq('id', nextStep.id);
-        await supabase.from('jobs').update({ status: nextStep.department }).eq('id', job.id);
-    } else {
-        // 4b. Job Done
-        await supabase.from('jobs').update({ status: 'Completed' }).eq('id', job.id);
-    }
-
-    fetchDashboardData();
   };
 
   // --- CART HANDLERS ---
@@ -284,30 +243,36 @@ export default function Dashboard() {
     setCart(cart.filter(item => item.id !== id));
   };
 
+  // --- UPDATED SUBMIT LOGIC (FIXED FOR CORRECT USER & ITEMS) ---
   const handleSubmitOrder = async () => {
     if (cart.length === 0) return alert("Cart is empty.");
     if (isNewCustomer && !newCustomerEmail.includes('@')) return alert("Invalid email.");
 
     setIsUploading(true);
     try {
-      let finalUserId = user?.id;
-      let finalEmail = user?.email;
+      // 1. Determine the REAL User (Chase, not Andrew)
+      let targetUserId = user?.id; // Default to logged in user
+      let targetEmail = user?.email;
       const isInternal = role === 'admin' || role === 'staff';
 
       if (isInternal) {
           if (isNewCustomer) {
-            finalEmail = newCustomerEmail;
+            // Guest User Logic
+            targetEmail = newCustomerEmail;
+            targetUserId = null; // No profile ID for guest
           } else if (selectedCustomerId) {
-            finalUserId = selectedCustomerId;
+            // Selected Existing User Logic
+            targetUserId = selectedCustomerId;
             const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
-            finalEmail = selectedCustomer?.email || '';
+            targetEmail = selectedCustomer?.email || '';
           }
       }
 
+      // 2. Create the Order Container (Header)
       const { data: newOrder, error: orderError } = await supabase
         .from('orders')
         .insert({ 
-            user_id: finalUserId, 
+            user_id: targetUserId, 
             status: 'New', 
             brand_id: selectedBrandId 
         })
@@ -315,49 +280,81 @@ export default function Dashboard() {
 
       if (orderError) throw orderError;
 
+      // 3. Create the JOB Container
+      // If single item, use its name. If multiple, use generic name.
+      const jobTitle = cart.length === 1 ? cart[0].title : `Order #${newOrder.id.substring(0,6).toUpperCase()}`;
+      const totalQty = cart.reduce((acc, item) => acc + item.quantity, 0);
+
+      const { data: newJob, error: jobError } = await supabase
+        .from('jobs')
+        .insert({
+          order_id: newOrder.id,
+          user_id: targetUserId, // <--- Assigns to Chase
+          guest_email: isNewCustomer ? targetEmail : null,
+          title: jobTitle,
+          quantity: totalQty,
+          status: 'Pending Review',
+          created_by: user.id // Track that Andrew created it
+        })
+        .select().single();
+
+      if (jobError) throw jobError;
+
+      // 4. Process Items (The "New Way" with Items & Assets)
       for (const item of cart) {
+        
+        // A. Insert the Line Item
+        const { data: newItem, error: itemError } = await supabase
+            .from('job_items')
+            .insert({
+                job_id: newJob.id,
+                description: item.title,
+                quantity: item.quantity,
+                paper_stock: item.paper_stock,
+                size: item.size,
+                internal_notes: item.notes,
+                status: 'Pending'
+            })
+            .select().single();
+
+        if (itemError) throw itemError;
+
+        // B. Handle File Upload (Linked to the ITEM, not the Job)
         const fileExt = item.file.name.split('.').pop();
-        const fileName = `${newOrder.id}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        const fileName = `${newJob.id}-${Math.random().toString(36).substring(7)}.${fileExt}`;
         const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, item.file);
         
         if (uploadError) console.error("File upload failed for " + item.title, uploadError);
 
-        const { data: newJob, error: jobError } = await supabase
-          .from('jobs')
-          .insert({
-            order_id: newOrder.id,
-            user_id: finalUserId, 
-            guest_email: isNewCustomer ? finalEmail : null,
-            title: item.title,
-            quantity: item.quantity,
-            size: item.size, 
-            notes: item.notes,
-            file_url: fileData?.path,
-            status: 'Pending Review',
-            paper_stock: item.paper_stock,
-            assigned_to: null, 
-            csr_name: null,
-          })
-          .select().single();
-
-        if (!jobError && newJob) {
-            await supabase.from('job_steps').insert({
+        // C. Create Asset Record (Linked to Item)
+        if (fileData) {
+            await supabase.from('job_assets').insert({
                 job_id: newJob.id,
-                department: 'Prepress',
-                step_order: 1,
-                status: 'Pending',
-                notes: 'Review files for print'
+                job_item_id: newItem.id, // <--- Crucial Link
+                uploader_id: user.id, // Andrew uploaded it
+                file_url: fileData.path,
+                file_name: item.file.name,
+                asset_type: 'source',
+                status: 'pending'
             });
         }
+
+        // D. Create Initial Step (Prepress)
+        await supabase.from('job_item_steps').insert({
+            job_item_id: newItem.id,
+            step_name: 'Prepress',
+            status: 'Pending',
+            is_internal: true
+        });
       }
 
+      // 5. Send Email (To the Target, not the Admin)
       const brandName = brandList.find(b => b.id === selectedBrandId)?.name || 'PrintHQ';
-
-      if (finalEmail && newOrder) {
-         await sendOrderConfirmation(finalEmail, newOrder.id, `${cart.length} Item(s) from ${brandName}`);
+      if (targetEmail && newJob) {
+         await sendOrderConfirmation(targetEmail, newJob.id, `${cart.length} Item(s) from ${brandName}`);
       }
       
-      alert("✅ Success! Your order has been received.");
+      alert("✅ Order Submitted Successfully!");
 
       setShowModal(false);
       setCart([]);
@@ -383,13 +380,13 @@ export default function Dashboard() {
     const now = new Date();
     due.setHours(23, 59, 59);
     now.setHours(0, 0, 0);
-     
+      
     const diff = (due.getTime() - now.getTime()) / (1000 * 3600 * 24);
 
     if (diff < 0) return { color: 'text-red-600 font-bold', label: 'Overdue' };
     if (diff < 1) return { color: 'text-red-600 font-bold', label: 'Today' };
     if (diff <= 3) return { color: 'text-orange-600 font-bold', label: due.toLocaleDateString('en-US', {month:'short', day:'numeric'}) };
-     
+      
     return { color: 'text-black font-medium', label: due.toLocaleDateString('en-US', {month:'short', day:'numeric'}) };
   };
 
@@ -410,7 +407,7 @@ export default function Dashboard() {
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
           <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 my-8 flex flex-col max-h-[90vh]">
-             <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 flex-shrink-0">
+              <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 flex-shrink-0">
               <div>
                 <h3 className="font-bold text-lg text-gray-900">New Production Order</h3>
                 <p className="text-xs text-gray-500">Group multiple jobs into one ticket.</p>
@@ -439,7 +436,7 @@ export default function Dashboard() {
                     )}
                   </div>
                 )}
-                 
+                  
                 <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
                   <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Company / Brand</label>
                   <select value={selectedBrandId} onChange={(e) => setSelectedBrandId(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 bg-white text-sm outline-none font-bold">
@@ -479,12 +476,12 @@ export default function Dashboard() {
               )}
 
               <div className="border-t border-gray-100 pt-6">
-                 <h4 className="font-bold text-gray-900 mb-4 flex items-center text-sm">
-                   <Plus size={16} className="mr-2 bg-black text-white rounded-full p-0.5" /> Add Item to Order
-                 </h4>
-                 
-                 <div className="space-y-4">
-                   {!currentFile ? (
+                  <h4 className="font-bold text-gray-900 mb-4 flex items-center text-sm">
+                    <Plus size={16} className="mr-2 bg-black text-white rounded-full p-0.5" /> Add Item to Order
+                  </h4>
+                  
+                  <div className="space-y-4">
+                    {!currentFile ? (
                       <div onClick={triggerFilePicker} className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center cursor-pointer hover:border-black hover:bg-gray-50 transition-all">
                         <UploadCloud className="mx-auto h-8 w-8 text-gray-400 mb-2" />
                         <p className="text-sm font-bold text-gray-600">Click to upload artwork</p>
@@ -570,7 +567,7 @@ export default function Dashboard() {
       {/* MAIN CONTENT */}
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-8 py-12">
-           
+            
           <div className="mb-8 flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">
@@ -693,15 +690,7 @@ export default function Dashboard() {
 
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
-                            {job.next_step_id && (
-                               <button 
-                                 onClick={() => handleQuickAdvance(job)} 
-                                 title={`Finish ${job.current_step}`}
-                                 className="text-gray-400 hover:text-green-600 transition-colors p-2 hover:bg-green-50 rounded-full"
-                               >
-                                 <ArrowRightCircle size={18} />
-                               </button>
-                            )}
+                            {/* Note: Quick Advance logic needs robust update for step ordering, kept simple link for now */}
                             <Link href={`/dashboard/jobs/${job.id}`} className="text-gray-400 hover:text-black transition-colors p-2 hover:bg-gray-100 rounded-full">
                                <ChevronRight size={20} />
                             </Link>
@@ -752,8 +741,8 @@ function StatusCard({ job, formatDate, dueStatus }: { job: Job, formatDate: (d: 
         </div>
         <h4 className="mt-4 text-lg font-bold text-gray-900 truncate">{job.title}</h4>
         <div className="mt-1 flex items-center justify-between">
-             <span className="text-sm text-gray-500">{job.quantity} units</span>
-             <span className="text-xs text-gray-400 flex items-center"><Clock size={12} className="mr-1" /> {formatDate(job.created_at)}</span>
+              <span className="text-sm text-gray-500">{job.quantity} units</span>
+              <span className="text-xs text-gray-400 flex items-center"><Clock size={12} className="mr-1" /> {formatDate(job.created_at)}</span>
         </div>
         
         <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
