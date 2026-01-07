@@ -83,6 +83,9 @@ export default function Dashboard() {
     
   const [showModal, setShowModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  
+  // Drag and Drop State
+  const [isDragging, setIsDragging] = useState(false);
     
   // --- CART STATE ---
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -134,8 +137,6 @@ export default function Dashboard() {
     if (!isInternal) jobQuery = jobQuery.eq('user_id', user.id);
     const { data: jobsData } = await jobQuery;
 
-    // Use job_items to determine status if available, otherwise fallback
-    // Simplification: We just show the main job status
     if (jobsData) {
       setJobs(jobsData);
     }
@@ -206,12 +207,38 @@ export default function Dashboard() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  // --- FILE HANDLING (CLICK & DRAG/DROP) ---
   const triggerFilePicker = () => fileInputRef.current?.click();
+  
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       setCurrentFile(file);
       if (!jobTitle) setJobTitle(file.name.split('.').slice(0, -1).join('.'));
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        setCurrentFile(file);
+        if (!jobTitle) setJobTitle(file.name.split('.').slice(0, -1).join('.'));
     }
   };
 
@@ -243,32 +270,30 @@ export default function Dashboard() {
     setCart(cart.filter(item => item.id !== id));
   };
 
-  // --- UPDATED SUBMIT LOGIC (FIXED FOR CORRECT USER & ITEMS) ---
+  // --- SUBMIT LOGIC ---
   const handleSubmitOrder = async () => {
     if (cart.length === 0) return alert("Cart is empty.");
     if (isNewCustomer && !newCustomerEmail.includes('@')) return alert("Invalid email.");
 
     setIsUploading(true);
     try {
-      // 1. Determine the REAL User (Chase, not Andrew)
-      let targetUserId = user?.id; // Default to logged in user
+      // 1. Determine the REAL User
+      let targetUserId = user?.id; 
       let targetEmail = user?.email;
       const isInternal = role === 'admin' || role === 'staff';
 
       if (isInternal) {
           if (isNewCustomer) {
-            // Guest User Logic
             targetEmail = newCustomerEmail;
-            targetUserId = null; // No profile ID for guest
+            targetUserId = null; 
           } else if (selectedCustomerId) {
-            // Selected Existing User Logic
             targetUserId = selectedCustomerId;
             const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
             targetEmail = selectedCustomer?.email || '';
           }
       }
 
-      // 2. Create the Order Container (Header)
+      // 2. Create Order
       const { data: newOrder, error: orderError } = await supabase
         .from('orders')
         .insert({ 
@@ -280,8 +305,7 @@ export default function Dashboard() {
 
       if (orderError) throw orderError;
 
-      // 3. Create the JOB Container
-      // If single item, use its name. If multiple, use generic name.
+      // 3. Create Job
       const jobTitle = cart.length === 1 ? cart[0].title : `Order #${newOrder.id.substring(0,6).toUpperCase()}`;
       const totalQty = cart.reduce((acc, item) => acc + item.quantity, 0);
 
@@ -289,21 +313,21 @@ export default function Dashboard() {
         .from('jobs')
         .insert({
           order_id: newOrder.id,
-          user_id: targetUserId, // <--- Assigns to Chase
+          user_id: targetUserId, 
           guest_email: isNewCustomer ? targetEmail : null,
           title: jobTitle,
           quantity: totalQty,
           status: 'Pending Review',
-          created_by: user.id // Track that Andrew created it
+          created_by: user.id 
         })
         .select().single();
 
       if (jobError) throw jobError;
 
-      // 4. Process Items (The "New Way" with Items & Assets)
+      // 4. Process Items
       for (const item of cart) {
         
-        // A. Insert the Line Item
+        // A. Insert Item
         const { data: newItem, error: itemError } = await supabase
             .from('job_items')
             .insert({
@@ -319,19 +343,19 @@ export default function Dashboard() {
 
         if (itemError) throw itemError;
 
-        // B. Handle File Upload (Linked to the ITEM, not the Job)
+        // B. Handle File Upload
         const fileExt = item.file.name.split('.').pop();
         const fileName = `${newJob.id}-${Math.random().toString(36).substring(7)}.${fileExt}`;
         const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, item.file);
         
         if (uploadError) console.error("File upload failed for " + item.title, uploadError);
 
-        // C. Create Asset Record (Linked to Item)
+        // C. Create Asset
         if (fileData) {
             await supabase.from('job_assets').insert({
                 job_id: newJob.id,
-                job_item_id: newItem.id, // <--- Crucial Link
-                uploader_id: user.id, // Andrew uploaded it
+                job_item_id: newItem.id,
+                uploader_id: user.id,
                 file_url: fileData.path,
                 file_name: item.file.name,
                 asset_type: 'source',
@@ -339,7 +363,7 @@ export default function Dashboard() {
             });
         }
 
-        // D. Create Initial Step (Prepress)
+        // D. Create Initial Step
         await supabase.from('job_item_steps').insert({
             job_item_id: newItem.id,
             step_name: 'Prepress',
@@ -348,7 +372,7 @@ export default function Dashboard() {
         });
       }
 
-      // 5. Send Email (To the Target, not the Admin)
+      // 5. Send Email
       const brandName = brandList.find(b => b.id === selectedBrandId)?.name || 'PrintHQ';
       if (targetEmail && newJob) {
          await sendOrderConfirmation(targetEmail, newJob.id, `${cart.length} Item(s) from ${brandName}`);
@@ -482,12 +506,21 @@ export default function Dashboard() {
                   
                   <div className="space-y-4">
                     {!currentFile ? (
-                      <div onClick={triggerFilePicker} className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center cursor-pointer hover:border-black hover:bg-gray-50 transition-all">
-                        <UploadCloud className="mx-auto h-8 w-8 text-gray-400 mb-2" />
-                        <p className="text-sm font-bold text-gray-600">Click to upload artwork</p>
+                      <div 
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                        onClick={triggerFilePicker} 
+                        className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 
+                          ${isDragging ? 'border-blue-500 bg-blue-50 scale-[1.02]' : 'border-gray-300 hover:border-black hover:bg-gray-50'}`}
+                      >
+                        <UploadCloud className={`mx-auto h-8 w-8 mb-2 ${isDragging ? 'text-blue-500' : 'text-gray-400'}`} />
+                        <p className={`text-sm font-bold ${isDragging ? 'text-blue-700' : 'text-gray-600'}`}>
+                          {isDragging ? 'Drop file here!' : 'Click or Drag artwork here'}
+                        </p>
                       </div>
                     ) : (
-                      <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl text-blue-900 border border-blue-100">
+                      <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl text-blue-900 border border-blue-100 animate-in fade-in slide-in-from-top-2">
                         <div className="flex items-center overflow-hidden">
                           <FileText size={20} className="mr-3 text-blue-600 flex-shrink-0" />
                           <p className="text-sm font-medium truncate">{currentFile.name}</p>
@@ -690,7 +723,6 @@ export default function Dashboard() {
 
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
-                            {/* Note: Quick Advance logic needs robust update for step ordering, kept simple link for now */}
                             <Link href={`/dashboard/jobs/${job.id}`} className="text-gray-400 hover:text-black transition-colors p-2 hover:bg-gray-100 rounded-full">
                                <ChevronRight size={20} />
                             </Link>
