@@ -1,10 +1,10 @@
-'use client'; 
+'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe
+  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe, ChevronDown
 } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
@@ -48,7 +48,8 @@ function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel
 // --- HELPER COMPONENT: ITEM DETAIL DRAWER ---
 function ItemDetailDrawer({ 
   item, 
-  assets, 
+  assets,
+  workflowOptions, // <--- NEW: Dynamic Options passed in
   onClose, 
   onUpdate,
   onUpload,
@@ -58,6 +59,7 @@ function ItemDetailDrawer({
 }: { 
   item: any, 
   assets: any[],
+  workflowOptions: any[],
   onClose: () => void, 
   onUpdate: (id: string, data: any) => void,
   onUpload: (file: File, itemId: string) => Promise<void>,
@@ -74,9 +76,9 @@ function ItemDetailDrawer({
     internal_notes: item.internal_notes || '' 
   });
   
-  // New Step State
-  const [newStep, setNewStep] = useState('');
-  const [isInternalStep, setIsInternalStep] = useState(true); // Default to internal (Hidden)
+  const [selectedStep, setSelectedStep] = useState('');
+  const [customStep, setCustomStep] = useState('');
+  const [isInternalStep, setIsInternalStep] = useState(true);
 
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -91,10 +93,15 @@ function ItemDetailDrawer({
 
   const handleAddStepSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newStep.trim()) return;
-    onAddStep(item.id, newStep, isInternalStep);
-    setNewStep('');
-    setIsInternalStep(true); // Reset to default
+    const finalStepName = selectedStep === 'Custom' ? customStep : selectedStep;
+    if (!finalStepName || finalStepName.trim() === '') return;
+
+    onAddStep(item.id, finalStepName, isInternalStep);
+    
+    // Reset
+    setSelectedStep('');
+    setCustomStep('');
+    setIsInternalStep(true);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -145,7 +152,7 @@ function ItemDetailDrawer({
               </div>
            </div>
 
-           {/* Section 2: Production Steps (UPDATED) */}
+           {/* Section 2: Production Steps (LIVE QUEUE SELECTOR) */}
            <div className="space-y-3">
               <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1 flex items-center gap-2">
                 <ListTodo size={14}/> Production Path
@@ -155,8 +162,7 @@ function ItemDetailDrawer({
                  {steps.length === 0 && <p className="text-[11px] text-gray-400 italic">No steps defined. Add one below.</p>}
                  {steps.map((step: any) => {
                    const isDone = step.status === 'Completed';
-                   // NEW: Visual Logic for Internal vs Public
-                   const isInternal = step.is_internal !== false; // Handle null as true (safe default)
+                   const isInternal = step.is_internal !== false; 
                    return (
                      <div key={step.id} className={`flex items-center gap-2 p-2 rounded border transition-all ${isDone ? 'bg-green-50 border-green-200' : isInternal ? 'bg-gray-50 border-gray-200' : 'bg-blue-50 border-blue-200'}`}>
                         <button 
@@ -181,18 +187,37 @@ function ItemDetailDrawer({
                  })}
               </div>
 
-              {/* Add Step Input */}
+              {/* Add Step Input - DYNAMIC SELECT */}
               <div className="pt-2 border-t border-gray-100">
                 <form onSubmit={handleAddStepSubmit} className="flex flex-col gap-2">
                    <div className="flex gap-2">
-                     <input 
-                       placeholder="Add step (e.g. Plate, Cut)..." 
-                       value={newStep}
-                       onChange={e => setNewStep(e.target.value)}
-                       className="flex-1 text-xs p-2 rounded border border-gray-300 focus:outline-none focus:border-black"
-                     />
-                     <button type="submit" className="bg-gray-900 text-white px-3 rounded text-xs font-bold hover:bg-black">Add</button>
+                     <select 
+                       value={selectedStep} 
+                       onChange={e => setSelectedStep(e.target.value)}
+                       className="flex-1 text-xs p-2 rounded border border-gray-300 focus:outline-none focus:border-black bg-white"
+                     >
+                        <option value="">+ Add Next Step...</option>
+                        {workflowOptions.map((queue) => (
+                            <optgroup key={queue.queue_name} label={queue.queue_name}>
+                                {queue.steps?.map((s: string) => <option key={s} value={s}>{s}</option>)}
+                            </optgroup>
+                        ))}
+                        <option value="Custom">Custom / Other...</option>
+                     </select>
+                     <button type="submit" disabled={!selectedStep} className="bg-gray-900 text-white px-3 rounded text-xs font-bold hover:bg-black disabled:opacity-50">Add</button>
                    </div>
+                   
+                   {/* Custom Input */}
+                   {selectedStep === 'Custom' && (
+                       <input 
+                         placeholder="Type custom step name..."
+                         value={customStep}
+                         onChange={e => setCustomStep(e.target.value)}
+                         className="w-full text-xs p-2 rounded border border-gray-300 focus:outline-none focus:border-black animate-in fade-in"
+                         autoFocus
+                       />
+                   )}
+
                    {/* INTERNAL TOGGLE */}
                    <label className="flex items-center gap-2 cursor-pointer select-none">
                       <div className={`w-3 h-3 border rounded flex items-center justify-center ${isInternalStep ? 'bg-gray-500 border-gray-600' : 'bg-white border-gray-300'}`}>
@@ -270,6 +295,7 @@ function ItemDetailDrawer({
 function JobItemsTable({ 
   items, 
   assets, 
+  workflowOptions,
   onAddItem, 
   onUpdateItem, 
   onItemUpload,
@@ -279,6 +305,7 @@ function JobItemsTable({
 }: { 
   items: any[], 
   assets: any[], 
+  workflowOptions: any[],
   onAddItem: (item: any) => void, 
   onUpdateItem: (id: string, data: any) => void,
   onItemUpload: (file: File, itemId: string) => Promise<void>,
@@ -287,7 +314,9 @@ function JobItemsTable({
   onDeleteStep: (stepId: string) => void
 }) {
   const [isAdding, setIsAdding] = useState(false);
-  const [editingItem, setEditingItem] = useState<any>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+
+  const editingItem = items.find(i => i.id === editingItemId);
 
   return (
     <>
@@ -296,7 +325,8 @@ function JobItemsTable({
         <ItemDetailDrawer 
           item={editingItem} 
           assets={assets}
-          onClose={() => setEditingItem(null)} 
+          workflowOptions={workflowOptions}
+          onClose={() => setEditingItemId(null)} 
           onUpdate={onUpdateItem}
           onUpload={onItemUpload}
           onAddStep={onAddStep}
@@ -348,7 +378,7 @@ function JobItemsTable({
                  const hasFiles = assets.some(a => a.job_item_id === item.id);
                  const steps = item.job_item_steps || [];
                  return (
-                <tr key={item.id} onClick={() => setEditingItem(item)} className="hover:bg-blue-50 transition-colors cursor-pointer group">
+                <tr key={item.id} onClick={() => setEditingItemId(item.id)} className="hover:bg-blue-50 transition-colors cursor-pointer group">
                   <td className="px-4 py-3 font-mono text-gray-400">{index + 1}</td>
                   <td className="px-4 py-3 font-bold text-gray-900">
                     <div className="flex items-center gap-2">
@@ -425,6 +455,9 @@ export default function JobInteractiveView({
   const [logs, setLogs] = useState(initialLogs); 
   const [assets, setAssets] = useState(initialAssets);
   
+  // NEW: State for Dynamic Settings
+  const [workflowOptions, setWorkflowOptions] = useState<any[]>([]);
+
   // UI State
   const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat');
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -464,8 +497,17 @@ export default function JobInteractiveView({
         const latestProof = assets.find((a: any) => a.asset_type === 'proof' && a.status !== 'archived');
         loadPreview(approved || latestProof || assets[0]);
     }
+    
+    // NEW: Fetch Workflow Settings on Load
+    fetchWorkflowQueues();
+
     return () => { supabase.removeChannel(channel); };
   }, [jobId]);
+
+  const fetchWorkflowQueues = async () => {
+    const { data } = await supabase.from('workflow_queues').select('*').order('rank', { ascending: true });
+    if (data) setWorkflowOptions(data);
+  };
 
   const refreshMessages = async () => {
     const { data } = await supabase.from('messages').select('*, profiles(email, first_name, role)').eq('job_id', jobId).order('created_at', { ascending: true });
@@ -762,7 +804,9 @@ export default function JobInteractiveView({
         {/* MIDDLE COL: MAIN PROOF STAGE */}
         <div className="col-span-12 lg:col-span-6 flex flex-col gap-4">
              <JobItemsTable 
-               items={items} assets={assets}
+               items={items} 
+               assets={assets}
+               workflowOptions={workflowOptions}
                onAddItem={handleAddItem} onUpdateItem={handleUpdateItem} onItemUpload={handleItemUpload}
                onAddStep={handleAddStep} onToggleStep={handleToggleStep} onDeleteStep={handleDeleteStep}
              />
