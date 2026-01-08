@@ -134,7 +134,15 @@ export default function Dashboard() {
         .select('*, orders(brands(name))') 
         .order('created_at', { ascending: false });
 
-    if (!isInternal) jobQuery = jobQuery.eq('user_id', user.id);
+    // FIX: Match by ID *OR* Email (Retroactive Guest Matching)
+    if (!isInternal) {
+      if (user.email) {
+        jobQuery = jobQuery.or(`user_id.eq.${user.id},guest_email.eq.${user.email}`);
+      } else {
+        jobQuery = jobQuery.eq('user_id', user.id);
+      }
+    }
+
     const { data: jobsData } = await jobQuery;
 
     if (jobsData) {
@@ -270,7 +278,7 @@ export default function Dashboard() {
     setCart(cart.filter(item => item.id !== id));
   };
 
-  // --- SUBMIT LOGIC (FIXED: Detaches Admin User for Guests) ---
+  // --- SUBMIT LOGIC ---
   const handleSubmitOrder = async () => {
     if (cart.length === 0) return alert("Cart is empty.");
     if (isNewCustomer && !newCustomerEmail.includes('@')) return alert("Invalid email.");
@@ -278,18 +286,16 @@ export default function Dashboard() {
     setIsUploading(true);
     try {
       // 1. Determine the REAL User
-      let targetUserId = user?.id; // Default to Logged in user
+      let targetUserId = user?.id; 
       let targetEmail = user?.email;
       const isInternal = role === 'admin' || role === 'staff';
 
       // 2. ADMIN OVERRIDE LOGIC
       if (isInternal) {
           if (isNewCustomer) {
-            // FIX: Explicitly set ID to NULL for guests
             targetUserId = null; 
             targetEmail = newCustomerEmail;
           } else if (selectedCustomerId) {
-            // FIX: Explicitly set ID to the Selected Customer
             targetUserId = selectedCustomerId;
             const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
             targetEmail = selectedCustomer?.email || '';
@@ -300,7 +306,7 @@ export default function Dashboard() {
       const { data: newOrder, error: orderError } = await supabase
         .from('orders')
         .insert({ 
-            user_id: targetUserId, // Will be NULL for guest, or Customer ID
+            user_id: targetUserId, 
             status: 'New', 
             brand_id: selectedBrandId 
         })
@@ -316,12 +322,12 @@ export default function Dashboard() {
         .from('jobs')
         .insert({
           order_id: newOrder.id,
-          user_id: targetUserId, // <--- Correct assignment
-          guest_email: isNewCustomer ? targetEmail : null, // <--- Chase's email here
+          user_id: targetUserId, 
+          guest_email: isNewCustomer ? targetEmail : null,
           title: jobTitle,
           quantity: totalQty,
           status: 'Pending Review',
-          created_by: user.id // Track that Andrew created it
+          created_by: user.id
         })
         .select().single();
 
@@ -375,7 +381,7 @@ export default function Dashboard() {
         });
       }
 
-      // 6. Send Email (To Chase, not Andrew)
+      // 6. Send Email
       const brandName = brandList.find(b => b.id === selectedBrandId)?.name || 'PrintHQ';
       if (targetEmail && newJob) {
          await sendOrderConfirmation(targetEmail, newJob.id, `${cart.length} Item(s) from ${brandName}`);
