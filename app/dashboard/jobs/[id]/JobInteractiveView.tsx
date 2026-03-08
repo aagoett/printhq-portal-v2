@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, CheckSquare, Megaphone,
@@ -46,22 +47,22 @@ function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel
 }
 
 // --- HELPER COMPONENT: ITEM DETAIL DRAWER ---
-function ItemDetailDrawer({ 
-  item, 
+function ItemDetailDrawer({
+  item,
   assets,
-  workflowOptions, // <--- NEW: Dynamic Options passed in
-  onClose, 
+  workflowOptions,
+  onClose,
   onUpdate,
   onUpload,
   onAddStep,
   onToggleStep,
   onDeleteStep
-}: { 
-  item: any, 
+}: {
+  item: any,
   assets: any[],
   workflowOptions: any[],
-  onClose: () => void, 
-  onUpdate: (id: string, data: any) => void,
+  onClose: () => void,
+  onUpdate: (id: string, data: any) => Promise<void>,
   onUpload: (file: File, itemId: string) => Promise<void>,
   onAddStep: (itemId: string, stepName: string, isInternal: boolean) => void,
   onToggleStep: (stepId: string, currentStatus: string) => void,
@@ -73,12 +74,14 @@ function ItemDetailDrawer({
     paper_stock: item.paper_stock || '',
     size: item.size || '',
     ink_colors: item.ink_colors || '',
-    internal_notes: item.internal_notes || '' 
+    internal_notes: item.internal_notes || ''
   });
-  
+
   const [selectedStep, setSelectedStep] = useState('');
   const [customStep, setCustomStep] = useState('');
   const [isInternalStep, setIsInternalStep] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [savedOk, setSavedOk] = useState(false);
 
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -86,9 +89,18 @@ function ItemDetailDrawer({
   const itemAssets = assets.filter(a => a.job_item_id === item.id);
   const steps = item.job_item_steps?.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) || [];
 
-  const handleSave = () => {
-    onUpdate(item.id, formData);
-    onClose();
+  const handleSave = async () => {
+    setIsSaving(true);
+    setSavedOk(false);
+    try {
+      await onUpdate(item.id, formData);
+      setSavedOk(true);
+      setTimeout(() => { setSavedOk(false); onClose(); }, 800);
+    } catch (err: any) {
+      alert('Save failed: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleAddStepSubmit = (e: React.FormEvent) => {
@@ -97,7 +109,7 @@ function ItemDetailDrawer({
     if (!finalStepName || finalStepName.trim() === '') return;
 
     onAddStep(item.id, finalStepName, isInternalStep);
-    
+
     // Reset
     setSelectedStep('');
     setCustomStep('');
@@ -121,10 +133,12 @@ function ItemDetailDrawer({
     <div className="fixed inset-0 z-50 flex justify-end">
       {/* Backdrop */}
       <div onClick={onClose} className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-opacity" />
-      
+
       {/* The Drawer */}
-      <div className="relative w-full max-w-md bg-white h-full shadow-2xl p-6 overflow-y-auto animate-in slide-in-from-right duration-200 border-l border-gray-200 flex flex-col">
-        <div className="flex justify-between items-start mb-6">
+      <div className="relative w-full max-w-md bg-white h-full shadow-2xl overflow-y-auto animate-in slide-in-from-right duration-200 border-l border-gray-200 flex flex-col">
+
+        {/* Header */}
+        <div className="flex justify-between items-start px-6 pt-6 pb-4">
            <div>
              <h2 className="text-xl font-bold text-gray-900">Item Details</h2>
              <p className="text-xs text-gray-400 font-mono uppercase">{item.id.split('-')[0]} • {item.description}</p>
@@ -132,7 +146,21 @@ function ItemDetailDrawer({
            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full"><X size={20} /></button>
         </div>
 
-        <div className="space-y-6 flex-1">
+        {/* PROMINENT NOTES — at the very top, before specs */}
+        <div className="mx-6 mb-4 bg-amber-50 border-2 border-amber-300 rounded-lg p-4">
+          <h3 className="text-xs font-black uppercase text-amber-800 mb-2 flex items-center gap-2">
+            <Lock size={13}/> Item Notes / Department Instructions
+          </h3>
+          <textarea
+            value={formData.internal_notes}
+            onChange={e => setFormData({...formData, internal_notes: e.target.value})}
+            placeholder="e.g. BINDERY: Score before fold. 3/16&quot; score 4.25&quot; from left edge..."
+            className="w-full h-24 bg-white border border-amber-300 rounded p-2 text-sm focus:outline-none focus:border-amber-500 resize-none"
+          />
+          <p className="text-[10px] text-amber-600 mt-1">Saved with item — visible to all departments.</p>
+        </div>
+
+        <div className="space-y-6 flex-1 px-6 pb-4">
            {/* Section 1: Basics */}
            <div className="space-y-4">
               <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1">General Info</h3>
@@ -152,26 +180,45 @@ function ItemDetailDrawer({
               </div>
            </div>
 
-           {/* Section 2: Production Steps (LIVE QUEUE SELECTOR) */}
+           {/* Section 2: Specs (moved up — size is important) */}
+           <div className="space-y-4">
+              <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1">Print Specs</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Flat Size</label>
+                    <input placeholder="e.g. 8.5 x 11" value={formData.size} onChange={e => setFormData({...formData, size: e.target.value})} className="w-full border p-2 rounded text-sm font-bold" />
+                </div>
+                <div>
+                    <label className="block text-xs font-bold text-gray-700 mb-1">Ink / Colors</label>
+                    <input placeholder="4/4, 4/0" value={formData.ink_colors} onChange={e => setFormData({...formData, ink_colors: e.target.value})} className="w-full border p-2 rounded text-sm" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Paper Stock</label>
+                <input placeholder="e.g. 100lb Gloss Cover" value={formData.paper_stock} onChange={e => setFormData({...formData, paper_stock: e.target.value})} className="w-full border p-2 rounded text-sm" />
+              </div>
+           </div>
+
+           {/* Section 3: Production Steps */}
            <div className="space-y-3">
               <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1 flex items-center gap-2">
                 <ListTodo size={14}/> Production Path
               </h3>
-              
+
               <div className="space-y-2">
                  {steps.length === 0 && <p className="text-[11px] text-gray-400 italic">No steps defined. Add one below.</p>}
                  {steps.map((step: any) => {
                    const isDone = step.status === 'Completed';
-                   const isInternal = step.is_internal !== false; 
+                   const isInternal = step.is_internal !== false;
                    return (
                      <div key={step.id} className={`flex items-center gap-2 p-2 rounded border transition-all ${isDone ? 'bg-green-50 border-green-200' : isInternal ? 'bg-gray-50 border-gray-200' : 'bg-blue-50 border-blue-200'}`}>
-                        <button 
+                        <button
                           onClick={() => onToggleStep(step.id, step.status)}
                           className={`flex-shrink-0 w-5 h-5 rounded border flex items-center justify-center transition-colors ${isDone ? 'bg-green-500 border-green-600 text-white' : 'bg-white border-gray-300 hover:border-black'}`}
                         >
                           {isDone && <CheckSquare size={12}/>}
                         </button>
-                        
+
                         <div className="flex-1 flex flex-col">
                            <span className={`text-xs font-bold ${isDone ? 'text-green-800 line-through opacity-70' : 'text-gray-800'}`}>
                              {step.step_name}
@@ -187,12 +234,12 @@ function ItemDetailDrawer({
                  })}
               </div>
 
-              {/* Add Step Input - DYNAMIC SELECT */}
+              {/* Add Step Input */}
               <div className="pt-2 border-t border-gray-100">
                 <form onSubmit={handleAddStepSubmit} className="flex flex-col gap-2">
                    <div className="flex gap-2">
-                     <select 
-                       value={selectedStep} 
+                     <select
+                       value={selectedStep}
                        onChange={e => setSelectedStep(e.target.value)}
                        className="flex-1 text-xs p-2 rounded border border-gray-300 focus:outline-none focus:border-black bg-white"
                      >
@@ -206,10 +253,9 @@ function ItemDetailDrawer({
                      </select>
                      <button type="submit" disabled={!selectedStep} className="bg-gray-900 text-white px-3 rounded text-xs font-bold hover:bg-black disabled:opacity-50">Add</button>
                    </div>
-                   
-                   {/* Custom Input */}
+
                    {selectedStep === 'Custom' && (
-                       <input 
+                       <input
                          placeholder="Type custom step name..."
                          value={customStep}
                          onChange={e => setCustomStep(e.target.value)}
@@ -218,7 +264,6 @@ function ItemDetailDrawer({
                        />
                    )}
 
-                   {/* INTERNAL TOGGLE */}
                    <label className="flex items-center gap-2 cursor-pointer select-none">
                       <div className={`w-3 h-3 border rounded flex items-center justify-center ${isInternalStep ? 'bg-gray-500 border-gray-600' : 'bg-white border-gray-300'}`}>
                          {isInternalStep && <CheckSquare size={10} className="text-white"/>}
@@ -232,32 +277,13 @@ function ItemDetailDrawer({
               </div>
            </div>
 
-           {/* Section 3: Print Specs */}
-           <div className="space-y-4">
-              <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1">Specs</h3>
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Paper Stock</label>
-                <input placeholder="e.g. 100lb Gloss Cover" value={formData.paper_stock} onChange={e => setFormData({...formData, paper_stock: e.target.value})} className="w-full border p-2 rounded text-sm" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">Flat Size</label>
-                    <input placeholder="8.5 x 11" value={formData.size} onChange={e => setFormData({...formData, size: e.target.value})} className="w-full border p-2 rounded text-sm" />
-                </div>
-                <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">Ink / Colors</label>
-                    <input placeholder="4/4, 4/0" value={formData.ink_colors} onChange={e => setFormData({...formData, ink_colors: e.target.value})} className="w-full border p-2 rounded text-sm" />
-                </div>
-              </div>
-           </div>
-
            {/* Section 4: Item Specific Files */}
            <div className="bg-blue-50 p-4 rounded border border-blue-100">
               <h3 className="text-xs font-bold uppercase text-blue-800 mb-3 flex items-center justify-between">
                 <span>Item Artwork</span>
                 <span className="text-[10px] bg-blue-200 px-1.5 rounded text-blue-800">{itemAssets.length}</span>
               </h3>
-              
+
               <div className="space-y-2 mb-3">
                  {itemAssets.length === 0 && <p className="text-[11px] text-blue-400 italic">No files linked to this specific item yet.</p>}
                  {itemAssets.map(asset => (
@@ -270,9 +296,9 @@ function ItemDetailDrawer({
               </div>
 
               <input ref={fileInputRef} type="file" onChange={handleFileChange} className="hidden" />
-              
-              <button 
-                onClick={() => fileInputRef.current?.click()} 
+
+              <button
+                onClick={() => fileInputRef.current?.click()}
                 disabled={isUploading}
                 className="w-full text-xs bg-white border border-blue-300 text-blue-700 px-3 py-2 rounded hover:bg-blue-100 font-bold flex items-center justify-center gap-2"
               >
@@ -281,9 +307,15 @@ function ItemDetailDrawer({
            </div>
         </div>
 
-        <div className="pt-4 mt-4 border-t sticky bottom-0 bg-white">
-          <button onClick={handleSave} className="w-full bg-black text-white py-3 rounded font-bold hover:bg-gray-800 shadow-lg">
-            Save Changes
+        <div className="px-6 py-4 border-t bg-white sticky bottom-0">
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            className={`w-full py-3 rounded font-bold shadow-lg transition-all text-sm flex items-center justify-center gap-2 ${
+              savedOk ? 'bg-green-600 text-white' : isSaving ? 'bg-gray-400 text-white' : 'bg-black text-white hover:bg-gray-800'
+            }`}
+          >
+            {savedOk ? <><CheckCircle size={16}/> Saved!</> : isSaving ? 'Saving...' : <><Save size={16}/> Save Changes</>}
           </button>
         </div>
       </div>
@@ -292,41 +324,48 @@ function ItemDetailDrawer({
 }
 
 // --- HELPER COMPONENT: PRODUCTION ITEMS TABLE ---
-function JobItemsTable({ 
-  items, 
-  assets, 
+function JobItemsTable({
+  items,
+  assets,
   workflowOptions,
-  onAddItem, 
-  onUpdateItem, 
+  onAddItem,
+  onUpdateItem,
   onItemUpload,
   onAddStep,
   onToggleStep,
-  onDeleteStep
-}: { 
-  items: any[], 
-  assets: any[], 
+  onDeleteStep,
+  onItemSelect
+}: {
+  items: any[],
+  assets: any[],
   workflowOptions: any[],
-  onAddItem: (item: any) => void, 
-  onUpdateItem: (id: string, data: any) => void,
+  onAddItem: (item: any) => void,
+  onUpdateItem: (id: string, data: any) => Promise<void>,
   onItemUpload: (file: File, itemId: string) => Promise<void>,
   onAddStep: (itemId: string, stepName: string, isInternal: boolean) => void,
   onToggleStep: (stepId: string, currentStatus: string) => void,
-  onDeleteStep: (stepId: string) => void
+  onDeleteStep: (stepId: string) => void,
+  onItemSelect: (itemId: string) => void
 }) {
   const [isAdding, setIsAdding] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
   const editingItem = items.find(i => i.id === editingItemId);
 
+  const handleRowClick = (itemId: string) => {
+    setEditingItemId(itemId);
+    onItemSelect(itemId);
+  };
+
   return (
     <>
       {/* DRAWER */}
       {editingItem && (
-        <ItemDetailDrawer 
-          item={editingItem} 
+        <ItemDetailDrawer
+          item={editingItem}
           assets={assets}
           workflowOptions={workflowOptions}
-          onClose={() => setEditingItemId(null)} 
+          onClose={() => setEditingItemId(null)}
           onUpdate={onUpdateItem}
           onUpload={onItemUpload}
           onAddStep={onAddStep}
@@ -347,11 +386,11 @@ function JobItemsTable({
              </button>
           </div>
         </div>
-        
+
         {isAdding && (
-          <AddItemForm 
-            onAdd={(item) => { onAddItem(item); setIsAdding(false); }} 
-            onCancel={() => setIsAdding(false)} 
+          <AddItemForm
+            onAdd={(item) => { onAddItem(item); setIsAdding(false); }}
+            onCancel={() => setIsAdding(false)}
           />
         )}
 
@@ -366,6 +405,7 @@ function JobItemsTable({
               <tr>
                 <th className="px-4 py-2 w-10">#</th>
                 <th className="px-4 py-2">Description</th>
+                <th className="px-3 py-2 w-28 text-center">Size</th>
                 <th className="px-4 py-2 w-24 text-right">Qty</th>
                 <th className="px-4 py-2">Stock</th>
                 <th className="px-4 py-2">Steps</th>
@@ -373,48 +413,74 @@ function JobItemsTable({
                 <th className="px-4 py-2 w-10"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50">
+            <tbody>
               {items.map((item, index) => {
                  const hasFiles = assets.some(a => a.job_item_id === item.id);
                  const steps = item.job_item_steps || [];
+                 const hasNotes = !!item.internal_notes?.trim();
                  return (
-                <tr key={item.id} onClick={() => setEditingItemId(item.id)} className="hover:bg-blue-50 transition-colors cursor-pointer group">
-                  <td className="px-4 py-3 font-mono text-gray-400">{index + 1}</td>
-                  <td className="px-4 py-3 font-bold text-gray-900">
-                    <div className="flex items-center gap-2">
-                      {item.description}
-                      {hasFiles && <Paperclip size={12} className="text-blue-500" />}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono text-gray-600">
-                    {item.quantity?.toLocaleString() || '-'}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600 text-xs">
-                    {item.paper_stock || '-'}
-                  </td>
-                  <td className="px-4 py-3">
-                     <div className="flex flex-wrap gap-1">
-                      {steps.map((step: any) => (
-                        <span key={step.id} className={`text-[9px] px-1.5 py-0.5 border rounded uppercase font-bold tracking-wider ${
-                           step.status === 'Completed' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-400 border-gray-200'
-                        }`}>
-                           {step.step_name}
-                        </span>
-                      ))}
-                      {steps.length === 0 && <span className="text-gray-300 italic text-[10px]">No steps</span>}
-                     </div>
-                  </td>
-                  <td className="px-4 py-3">
-                     <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${
-                       item.status === 'Completed' ? 'bg-green-50 text-green-800 border-green-200' : 'bg-yellow-50 text-yellow-800 border-yellow-200'
-                     }`}>
-                       {item.status || 'Pending'}
-                     </span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                      <Settings size={14} className="text-gray-300 group-hover:text-black transition-colors" />
-                  </td>
-                </tr>
+                <React.Fragment key={item.id}>
+                  <tr onClick={() => handleRowClick(item.id)} className={`hover:bg-blue-50 transition-colors cursor-pointer group border-t border-gray-100 ${hasNotes ? '' : ''}`}>
+                    <td className="px-4 py-3 font-mono text-gray-400 align-top">{index + 1}</td>
+                    <td className="px-4 py-3 align-top">
+                      <div className="font-bold text-gray-900 flex items-center gap-2 flex-wrap">
+                        {item.description}
+                        {hasFiles && <Paperclip size={12} className="text-blue-500" />}
+                        {hasNotes && (
+                          <span className="text-[9px] font-black uppercase tracking-wider bg-amber-400 text-amber-900 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                            <Lock size={8}/> Notes
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-center align-top">
+                      {item.size ? (
+                        <span className="font-black text-gray-900 text-sm">{item.size}</span>
+                      ) : (
+                        <span className="text-gray-300 text-xs italic">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono text-gray-600 align-top">
+                      {item.quantity?.toLocaleString() || '-'}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600 text-xs align-top">
+                      {item.paper_stock || '-'}
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                       <div className="flex flex-wrap gap-1">
+                        {steps.map((step: any) => (
+                          <span key={step.id} className={`text-[9px] px-1.5 py-0.5 border rounded uppercase font-bold tracking-wider ${
+                             step.status === 'Completed' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-400 border-gray-200'
+                          }`}>
+                             {step.step_name}
+                          </span>
+                        ))}
+                        {steps.length === 0 && <span className="text-gray-300 italic text-[10px]">No steps</span>}
+                       </div>
+                    </td>
+                    <td className="px-4 py-3 align-top">
+                       <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${
+                         item.status === 'Completed' ? 'bg-green-50 text-green-800 border-green-200' : 'bg-yellow-50 text-yellow-800 border-yellow-200'
+                       }`}>
+                         {item.status || 'Pending'}
+                       </span>
+                    </td>
+                    <td className="px-4 py-3 text-right align-top">
+                        <Settings size={14} className="text-gray-300 group-hover:text-black transition-colors" />
+                    </td>
+                  </tr>
+                  {/* Inline notes banner */}
+                  {hasNotes && (
+                    <tr onClick={() => handleRowClick(item.id)} className="cursor-pointer hover:bg-amber-100 transition-colors">
+                      <td colSpan={8} className="px-4 py-2 bg-amber-50 border-t border-amber-200">
+                        <div className="flex items-start gap-2">
+                          <Lock size={11} className="text-amber-600 mt-0.5 flex-shrink-0"/>
+                          <p className="text-xs font-semibold text-amber-800 whitespace-pre-wrap">{item.internal_notes}</p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               )})}
             </tbody>
           </table>
@@ -554,9 +620,18 @@ export default function JobInteractiveView({
   };
 
   const handleUpdateItem = async (itemId: string, updates: any) => {
-    setItems(items.map(i => i.id === itemId ? { ...i, ...updates } : i));
+    setItems(prev => prev.map(i => i.id === itemId ? { ...i, ...updates } : i));
     const { error } = await supabase.from('job_items').update(updates).eq('id', itemId);
-    if (error) alert("Error saving item: " + error.message);
+    if (error) throw new Error(error.message);
+    await refreshItems();
+  };
+
+  // Load the first asset linked to a given item into the preview panel
+  const handleItemSelect = (itemId: string) => {
+    const itemAsset = assets.find(a => a.job_item_id === itemId);
+    if (itemAsset) {
+      loadPreview(itemAsset);
+    }
   };
 
   const handleItemUpload = async (file: File, itemId: string) => {
@@ -810,12 +885,13 @@ export default function JobInteractiveView({
 
         {/* MIDDLE COL: MAIN PROOF STAGE */}
         <div className="col-span-12 lg:col-span-6 flex flex-col gap-4">
-             <JobItemsTable 
-               items={items} 
+             <JobItemsTable
+               items={items}
                assets={assets}
                workflowOptions={workflowOptions}
                onAddItem={handleAddItem} onUpdateItem={handleUpdateItem} onItemUpload={handleItemUpload}
                onAddStep={handleAddStep} onToggleStep={handleToggleStep} onDeleteStep={handleDeleteStep}
+               onItemSelect={handleItemSelect}
              />
 
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden min-h-[500px] relative ${isApprovedAsset ? 'border-green-400 ring-2 ring-green-100' : 'border-gray-200'}`}>
