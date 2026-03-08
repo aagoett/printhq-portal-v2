@@ -64,6 +64,7 @@ function JobItemsTable({
   onOpenProofModal,
   onPreviewItem,
   onUpdateStepNote,
+  getPublicUrl,
   onLogActivity,
   logs,
   userRole
@@ -82,6 +83,7 @@ function JobItemsTable({
   onOpenProofModal: (itemId?: string) => void,
   onPreviewItem: (itemId: string) => void,
   onUpdateStepNote: (stepId: string, note: string) => Promise<void>,
+  getPublicUrl: (path: string) => string,
   onLogActivity: (action: string, details: string, itemId?: string) => Promise<void>,
   logs: any[],
   userRole: string
@@ -109,6 +111,7 @@ function JobItemsTable({
           onReorderSteps={onReorderSteps}
           onOpenProofModal={onOpenProofModal}
           onUpdateStepNote={onUpdateStepNote}
+          getPublicUrl={getPublicUrl}
           onLogActivity={onLogActivity}
           logs={logs}
           userRole={userRole}
@@ -211,11 +214,18 @@ function JobItemsTable({
 
                       <div className="flex flex-wrap gap-1.5 pt-1">
                        {steps.map((step: any) => (
-                         <span key={step.id} className={`text-[10px] px-2 py-0.5 border rounded-md uppercase font-black tracking-widest ${
-                            step.status === 'Completed' ? 'bg-green-100 text-green-700 border-green-200 shadow-sm' : 'bg-white text-gray-400 border-gray-200'
-                         }`}>
-                            {step.status === 'Completed' ? '✓ ' : ''}{step.step_name}
-                         </span>
+                         <div key={step.id} className="flex flex-col gap-0.5">
+                           <span className={`text-[10px] px-2 py-0.5 border rounded-md uppercase font-black tracking-widest ${
+                              step.status === 'Completed' ? 'bg-green-100 text-green-700 border-green-200 shadow-sm' : 'bg-white text-gray-400 border-gray-200'
+                           }`}>
+                              {step.status === 'Completed' ? '✓ ' : ''}{step.step_name}
+                           </span>
+                           {step.notes && (
+                             <span className="text-[9px] text-gray-500 font-medium px-2 leading-tight max-w-[160px] truncate" title={step.notes}>
+                               {step.notes}
+                             </span>
+                           )}
+                         </div>
                        ))}
                       </div>
                     </div>
@@ -657,6 +667,11 @@ export default function JobInteractiveView({
     await supabase.from('messages').insert({ job_id: jobId, user_id: user.id, content: msg });
   };
 
+  const getPublicUrl = (path: string) => {
+    const { data } = supabase.storage.from('uploads').getPublicUrl(path);
+    return data.publicUrl;
+  };
+
   const handleUpdateStepNote = async (stepId: string, note: string) => {
     const { error } = await supabase.from('job_item_steps').update({ notes: note }).eq('id', stepId);
     if (error) {
@@ -852,6 +867,7 @@ export default function JobInteractiveView({
             onOpenProofModal={(itemId) => { setProofItemId(itemId); setShowUploadModal(true); }}
             onPreviewItem={handlePreviewItem}
             onUpdateStepNote={handleUpdateStepNote}
+            getPublicUrl={getPublicUrl}
             onLogActivity={logActivity}
             logs={logs}
             userRole={userRole}

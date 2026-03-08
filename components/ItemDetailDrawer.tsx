@@ -8,13 +8,13 @@ import {
 import { useState, useRef } from 'react';
 
 // --- HELPER COMPONENT: ITEM DETAIL DRAWER ---
-export default function ItemDetailDrawer({ 
-  item, 
+export default function ItemDetailDrawer({
+  item,
   assets,
-  workflowOptions, 
-  onClose, 
+  workflowOptions,
+  onClose,
   onUpdate,
-  onUpload, 
+  onUpload,
   onAddStep,
   onToggleStep,
   onDeleteStep,
@@ -23,8 +23,9 @@ export default function ItemDetailDrawer({
   onOpenProofModal,
   onLogActivity,
   onUpdateStepNote,
+  getPublicUrl,
   logs,
-  userRole 
+  userRole
 }: { 
   item: any, 
   assets: any[],
@@ -39,6 +40,7 @@ export default function ItemDetailDrawer({
   onMoveStep: (stepId: string, direction: 'up' | 'down') => void,
   onReorderSteps: (itemId: string, newSteps: any[]) => void,
   onOpenProofModal?: (itemId?: string) => void,
+  getPublicUrl?: (path: string) => string,
   onLogActivity: (action: string, details: string, itemId?: string) => Promise<void>,
   logs: any[],
   userRole: string
@@ -273,7 +275,11 @@ export default function ItemDetailDrawer({
                             </div>
 
                             {/* STEP SPECIFIC NOTES */}
-                            {!isDone && (
+                            {isDone ? (
+                              step.notes ? (
+                                <p className="text-[11px] text-green-700 bg-green-50 border border-green-100 rounded-xl px-2.5 py-1.5 font-medium leading-snug">{step.notes}</p>
+                              ) : null
+                            ) : (
                               <textarea
                                 placeholder={`Add instructions for ${step.step_name}...`}
                                 defaultValue={step.notes || ''}
@@ -381,18 +387,33 @@ export default function ItemDetailDrawer({
                      <p className="text-[11px] text-blue-400 font-bold italic">No files linked yet.</p>
                    </div>
                  )}
-                 {itemAssets.map(asset => (
-                   <div key={asset.id} className="bg-white p-3 rounded-xl border border-blue-100 flex items-center gap-3 shadow-sm hover:border-blue-300 transition-colors">
-                      <div className={`p-2 rounded-lg ${asset.asset_type === 'proof' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
-                        {asset.asset_type === 'proof' ? <ThumbsUp size={14}/> : <FileImage size={14}/>}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-black text-gray-900 truncate">{asset.file_name}</p>
-                        <p className="text-[9px] uppercase font-bold text-gray-400">{asset.asset_type}</p>
-                      </div>
-                      <ExternalLink size={14} className="text-gray-300" />
+                 {itemAssets.map(asset => {
+                   const fileUrl = getPublicUrl ? getPublicUrl(asset.file_url) : null;
+                   const isImage = /\.(png|jpg|jpeg|gif|webp|svg|pdf)$/i.test(asset.file_name || '');
+                   return (
+                   <div
+                     key={asset.id}
+                     onClick={() => fileUrl && window.open(fileUrl, '_blank')}
+                     className={`bg-white rounded-xl border border-blue-100 shadow-sm hover:border-blue-400 transition-colors overflow-hidden ${fileUrl ? 'cursor-pointer' : ''}`}
+                   >
+                     {isImage && fileUrl && (
+                       <div className="w-full h-28 bg-gray-100 overflow-hidden border-b border-blue-100">
+                         <img src={fileUrl} alt={asset.file_name} className="w-full h-full object-contain" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                       </div>
+                     )}
+                     <div className="flex items-center gap-3 p-3">
+                       <div className={`p-2 rounded-lg flex-shrink-0 ${asset.asset_type === 'proof' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                         {asset.asset_type === 'proof' ? <ThumbsUp size={14}/> : <FileImage size={14}/>}
+                       </div>
+                       <div className="flex-1 min-w-0">
+                         <p className="text-xs font-black text-gray-900 truncate">{asset.file_name}</p>
+                         <p className="text-[9px] uppercase font-bold text-gray-400">{asset.asset_type}</p>
+                       </div>
+                       {fileUrl && <ExternalLink size={14} className="text-blue-400 flex-shrink-0" />}
+                     </div>
                    </div>
-                 ))}
+                   );
+                 })}
               </div>
               <input ref={fileInputRef} type="file" onChange={handleFileChange} className="hidden" />
            </div>
