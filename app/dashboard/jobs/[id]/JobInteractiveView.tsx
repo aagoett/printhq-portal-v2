@@ -49,12 +49,12 @@ import ItemDetailDrawer from '@/components/ItemDetailDrawer';
 
 
 // --- HELPER COMPONENT: PRODUCTION ITEMS TABLE ---
-function JobItemsTable({ 
-  items, 
-  assets, 
+function JobItemsTable({
+  items,
+  assets,
   workflowOptions,
-  onAddItem, 
-  onUpdateItem, 
+  onAddItem,
+  onUpdateItem,
   onItemUpload,
   onAddStep,
   onToggleStep,
@@ -62,14 +62,15 @@ function JobItemsTable({
   onMoveStep,
   onReorderSteps,
   onOpenProofModal,
+  onPreviewItem,
   onLogActivity,
   logs,
-  userRole 
-}: { 
-  items: any[], 
-  assets: any[], 
+  userRole
+}: {
+  items: any[],
+  assets: any[],
   workflowOptions: any[],
-  onAddItem: (item: any) => void, 
+  onAddItem: (item: any) => void,
   onUpdateItem: (id: string, data: any) => void,
   onItemUpload: (file: File, itemId: string) => Promise<void>,
   onAddStep: (itemId: string, stepName: string, isInternal: boolean) => void,
@@ -78,9 +79,10 @@ function JobItemsTable({
   onMoveStep: (stepId: string, direction: 'up' | 'down') => void,
   onReorderSteps: (itemId: string, newSteps: any[]) => void,
   onOpenProofModal: (itemId?: string) => void,
+  onPreviewItem: (itemId: string) => void,
   onLogActivity: (action: string, details: string, itemId?: string) => Promise<void>,
   logs: any[],
-  userRole: string 
+  userRole: string
 }) {
   const [isAdding, setIsAdding] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -151,7 +153,7 @@ function JobItemsTable({
                  const hasFiles = assets.some(a => a.job_item_id === item.id);
                  const steps = item.job_item_steps || [];
                  return (
-                <tr key={item.id} onClick={() => setEditingItemId(item.id)} className="hover:bg-blue-50/50 transition-all cursor-pointer group">
+                <tr key={item.id} onClick={() => { setEditingItemId(item.id); onPreviewItem(item.id); }} className="hover:bg-blue-50/50 transition-all cursor-pointer group">
                   <td className="px-6 py-6 align-top">
                      <span className="text-xl font-black text-gray-100 group-hover:text-blue-200 transition-colors font-mono">{String(index + 1).padStart(2, '0')}</span>
                   </td>
@@ -583,6 +585,18 @@ export default function JobInteractiveView({
       }
   };
 
+  // Load best asset for a line item into the preview panel:
+  // priority: approved proof > pending proof > any source file
+  const handlePreviewItem = (itemId: string) => {
+      const itemAssets = assets.filter((a: any) => a.job_item_id === itemId);
+      const best =
+          itemAssets.find((a: any) => a.asset_type === 'proof' && a.status === 'approved') ||
+          itemAssets.find((a: any) => a.asset_type === 'proof' && a.status !== 'archived') ||
+          itemAssets.find((a: any) => a.asset_type === 'source') ||
+          itemAssets[0];
+      if (best) loadPreview(best);
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setUploadFile(e.target.files[0]);
@@ -833,15 +847,24 @@ export default function JobInteractiveView({
             onMoveStep={handleMoveStep}
             onReorderSteps={handleReorderSteps}
             onOpenProofModal={(itemId) => { setProofItemId(itemId); setShowUploadModal(true); }}
+            onPreviewItem={handlePreviewItem}
             onLogActivity={logActivity}
             logs={logs}
-            userRole={userRole} 
+            userRole={userRole}
           />
 
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden min-h-[500px] relative ${isApprovedAsset ? 'border-green-400 ring-2 ring-green-100' : 'border-gray-200'}`}>
                 <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                         {isApprovedAsset ? <span className="bg-green-600 text-white text-xs font-bold px-2 py-1 rounded flex items-center gap-1"><CheckCircle size={12}/> PRODUCTION FILE</span> : <span className="text-xs font-bold uppercase text-gray-500">Preview Mode</span>}
+                        {currentAsset?.job_item_id && (() => {
+                            const linkedItem = items.find((i: any) => i.id === currentAsset.job_item_id);
+                            return linkedItem ? (
+                                <span className="text-[10px] font-black bg-blue-100 text-blue-700 px-2 py-0.5 rounded border border-blue-200 uppercase tracking-widest">
+                                    {linkedItem.description}
+                                </span>
+                            ) : null;
+                        })()}
                         <span className="text-xs text-gray-400">| {currentAsset?.file_name}</span>
                     </div>
                     <div className="flex items-center gap-2">
