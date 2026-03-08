@@ -1,15 +1,15 @@
 'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
-import { 
-  UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
-  Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, 
-  Briefcase, Plus, ShoppingCart, Clock, ChevronRight, Layers, Ruler
+import {
+  UploadCloud, FileText, Settings, LogOut, LayoutDashboard,
+  Loader2, X, Scissors, User, Trash2, Filter,
+  Briefcase, Plus, ShoppingCart, Clock, ChevronRight, Ruler,
+  Receipt, Building2, TrendingUp, CheckCircle2, DollarSign
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-// Use the new name and the @ alias so it always finds the right spot
 import { sendOrderConfirmation } from '../server-actions';
 
 // --- TYPES ---
@@ -79,7 +79,8 @@ export default function Dashboard() {
   const [brandList, setBrandList] = useState<Brand[]>([]);
     
   const [departmentTabs, setDepartmentTabs] = useState<string[]>(['My Queue', 'All']);
-  const [activeTab, setActiveTab] = useState('All'); 
+  const [activeTab, setActiveTab] = useState('All');
+  const [brandFilter, setBrandFilter] = useState(''); // '' = All brands
     
   const [showModal, setShowModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -105,10 +106,10 @@ export default function Dashboard() {
   const [isNewCustomer, setIsNewCustomer] = useState(false);
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
     
-  const supabase = createBrowserClient(
+  const supabase = useMemo(() => createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  ), []);
 
   useEffect(() => {
     fetchDashboardData();
@@ -428,9 +429,13 @@ export default function Dashboard() {
   const isInternal = role === 'admin' || role === 'staff';
 
   const filteredJobs = jobs.filter(job => {
-    if (activeTab === 'All') return true;
-    if (activeTab === 'My Queue') return job.assigned_to === user?.id; 
-    return job.current_step === activeTab;
+    const matchesBrand = !brandFilter || job.orders?.brands?.name === brandList.find(b => b.id === brandFilter)?.name;
+    const matchesTab = activeTab === 'All'
+      ? true
+      : activeTab === 'My Queue'
+        ? job.assigned_to === user?.id
+        : job.current_step === activeTab;
+    return matchesBrand && matchesTab;
   });
 
   return (
@@ -598,7 +603,11 @@ export default function Dashboard() {
         <nav className="flex-1 space-y-1 px-4 py-6">
           <NavItem icon={<LayoutDashboard size={20} />} label={isInternal ? "Shop Floor" : "My Jobs"} href="/dashboard" active />
           {isInternal && <NavItem icon={<User size={20} />} label="Customers" href="/dashboard/customers" />}
-          {!isInternal && <NavItem icon={<FileText size={20} />} label="Quote History" href="/dashboard/history" />}
+          {isInternal && <NavItem icon={<Receipt size={20} />} label="Invoices" href="/dashboard/invoices" />}
+          {isInternal && <NavItem icon={<FileText size={20} />} label="Quotes" href="/dashboard/quotes" />}
+          {isInternal && <NavItem icon={<DollarSign size={20} />} label="Pricing" href="/dashboard/pricing" />}
+          {!isInternal && <NavItem icon={<FileText size={20} />} label="Quote History" href="/dashboard/quotes" />}
+          {role === 'admin' && <NavItem icon={<Building2 size={20} />} label="Brands" href="/dashboard/brands" />}
           <NavItem icon={<Settings size={20} />} label="Settings" href="/dashboard/settings" />
         </nav>
         <div className="p-4 border-t border-gray-100">
@@ -625,19 +634,65 @@ export default function Dashboard() {
             <button onClick={handleOpenNewOrder} className="rounded-full bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-gray-800 shadow-lg transition-transform hover:scale-105">+ New Order</button>
           </div>
 
+          {isInternal && (() => {
+            const statJobs = jobs;
+            const pending   = statJobs.filter(j => j.status === 'Pending Review').length;
+            const inProd    = statJobs.filter(j => j.status === 'In Production').length;
+            const complete  = statJobs.filter(j => j.status === 'Complete').length;
+            const overdue   = statJobs.filter(j => {
+              if (!j.due_date) return false;
+              return new Date(j.due_date) < new Date();
+            }).length;
+            return (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-3">
+                  <div className="p-2 bg-amber-50 rounded-lg text-amber-600"><Clock size={18}/></div>
+                  <div><p className="text-2xl font-black text-gray-900">{pending}</p><p className="text-xs text-gray-500 font-bold uppercase">Pending Review</p></div>
+                </div>
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-3">
+                  <div className="p-2 bg-blue-50 rounded-lg text-blue-600"><TrendingUp size={18}/></div>
+                  <div><p className="text-2xl font-black text-gray-900">{inProd}</p><p className="text-xs text-gray-500 font-bold uppercase">In Production</p></div>
+                </div>
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-3">
+                  <div className="p-2 bg-green-50 rounded-lg text-green-600"><CheckCircle2 size={18}/></div>
+                  <div><p className="text-2xl font-black text-gray-900">{complete}</p><p className="text-xs text-gray-500 font-bold uppercase">Complete</p></div>
+                </div>
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-3">
+                  <div className="p-2 bg-red-50 rounded-lg text-red-600"><Briefcase size={18}/></div>
+                  <div><p className="text-2xl font-black text-gray-900">{overdue}</p><p className="text-xs text-gray-500 font-bold uppercase">Overdue</p></div>
+                </div>
+              </div>
+            );
+          })()}
+
           {isInternal && (
-            <div className="mb-6 flex gap-2 overflow-x-auto pb-2">
-              {departmentTabs.map((dept) => (
-                <button 
-                  key={dept}
-                  onClick={() => setActiveTab(dept)}
-                  className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors flex items-center
-                    ${activeTab === dept ? 'bg-black text-white' : 'bg-white text-gray-500 border border-gray-200 hover:border-black hover:text-black'}`}
-                >
-                  {dept === 'My Queue' && <Briefcase size={14} className="mr-2" />}
-                  {dept}
-                </button>
-              ))}
+            <div className="mb-4 flex items-center justify-between gap-4">
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {departmentTabs.map((dept) => (
+                  <button
+                    key={dept}
+                    onClick={() => setActiveTab(dept)}
+                    className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors flex items-center
+                      ${activeTab === dept ? 'bg-black text-white' : 'bg-white text-gray-500 border border-gray-200 hover:border-black hover:text-black'}`}
+                  >
+                    {dept === 'My Queue' && <Briefcase size={14} className="mr-2" />}
+                    {dept}
+                  </button>
+                ))}
+              </div>
+              {brandList.length > 1 && (
+                <div className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2 bg-white flex-shrink-0">
+                  <Building2 size={14} className="text-gray-400" />
+                  <select
+                    value={brandFilter}
+                    onChange={e => setBrandFilter(e.target.value)}
+                    className="text-sm text-gray-700 outline-none bg-transparent font-medium"
+                  >
+                    <option value="">All Companies</option>
+                    {brandList.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
           )}
 
