@@ -63,10 +63,21 @@ export default function ItemDetailDrawer({
 
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [savingStepIds, setSavingStepIds] = useState<Set<string>>(new Set());
+  const [savedStepIds, setSavedStepIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const itemAssets = assets.filter(a => a.job_item_id === item.id);
   const steps = item.job_item_steps?.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) || [];
+
+  const handleSaveStepNote = async (stepId: string) => {
+    if (!onUpdateStepNote) return;
+    setSavingStepIds(prev => new Set(prev).add(stepId));
+    await onUpdateStepNote(stepId, stepNotes[stepId] ?? '');
+    setSavingStepIds(prev => { const n = new Set(prev); n.delete(stepId); return n; });
+    setSavedStepIds(prev => new Set(prev).add(stepId));
+    setTimeout(() => setSavedStepIds(prev => { const n = new Set(prev); n.delete(stepId); return n; }), 2000);
+  };
 
   // Controlled state for step notes so they save via the main Save button
   const [stepNotes, setStepNotes] = useState<Record<string, string>>(
@@ -293,12 +304,25 @@ export default function ItemDetailDrawer({
                                 <p className="text-[11px] text-green-700 bg-green-50 border border-green-100 rounded-xl px-2.5 py-1.5 font-medium leading-snug">{stepNotes[step.id]}</p>
                               ) : null
                             ) : (
-                              <textarea
-                                placeholder={`Add instructions for ${step.step_name}...`}
-                                value={stepNotes[step.id] ?? ''}
-                                onChange={(e) => setStepNotes(prev => ({ ...prev, [step.id]: e.target.value }))}
-                                className="w-full text-[11px] p-2.5 rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-4 focus:ring-blue-50/50 outline-none bg-gray-50/30 min-h-[50px] transition-all font-medium text-gray-700"
-                              />
+                              <div className="flex gap-1.5 items-start">
+                                <textarea
+                                  placeholder={`Add note for ${step.step_name}...`}
+                                  value={stepNotes[step.id] ?? ''}
+                                  onChange={(e) => setStepNotes(prev => ({ ...prev, [step.id]: e.target.value }))}
+                                  className="flex-1 text-[11px] p-2.5 rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-4 focus:ring-blue-50/50 outline-none bg-gray-50/30 min-h-[50px] transition-all font-medium text-gray-700 resize-none"
+                                />
+                                <button
+                                  onClick={() => handleSaveStepNote(step.id)}
+                                  disabled={savingStepIds.has(step.id) || !(stepNotes[step.id] ?? '').trim()}
+                                  className={`flex-shrink-0 mt-0.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg transition-all uppercase tracking-widest shadow-sm disabled:opacity-30 ${
+                                    savedStepIds.has(step.id)
+                                      ? 'bg-green-500 text-white'
+                                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                                  }`}
+                                >
+                                  {savingStepIds.has(step.id) ? '...' : savedStepIds.has(step.id) ? '✓' : 'Save'}
+                                </button>
+                              </div>
                             )}
                          </div>
 

@@ -214,18 +214,16 @@ function JobItemsTable({
 
                       <div className="flex flex-wrap gap-1.5 pt-1">
                        {steps.map((step: any) => (
-                         <div key={step.id} className="flex flex-col gap-0.5">
-                           <span className={`text-[10px] px-2 py-0.5 border rounded-md uppercase font-black tracking-widest ${
+                         <span
+                           key={step.id}
+                           title={step.notes || undefined}
+                           className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 border rounded-md uppercase font-black tracking-widest ${
                               step.status === 'Completed' ? 'bg-green-100 text-green-700 border-green-200 shadow-sm' : 'bg-white text-gray-400 border-gray-200'
-                           }`}>
-                              {step.status === 'Completed' ? '✓ ' : ''}{step.step_name}
-                           </span>
-                           {step.notes && (
-                             <span className="text-[9px] text-gray-500 font-medium px-2 leading-tight max-w-[160px] truncate" title={step.notes}>
-                               {step.notes}
-                             </span>
-                           )}
-                         </div>
+                           }`}
+                         >
+                           {step.status === 'Completed' ? '✓ ' : ''}{step.step_name}
+                           {step.notes && <MessageSquare size={9} className={step.status === 'Completed' ? 'text-green-500' : 'text-blue-400'} />}
+                         </span>
                        ))}
                       </div>
                     </div>
