@@ -18,7 +18,7 @@ export default async function DashboardJobPage({ params }: { params: { id: strin
     .select(`
       *,
       orders (brand),
-      profiles:user_id (first_name, last_name, email, company, phone)
+      profiles!user_id (first_name, last_name, email, company, phone)
     `)
     .eq('id', params.id)
     .single();
