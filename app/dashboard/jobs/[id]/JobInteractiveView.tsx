@@ -63,6 +63,7 @@ function JobItemsTable({
   onReorderSteps,
   onOpenProofModal,
   onPreviewItem,
+  onUpdateStepNote,
   onLogActivity,
   logs,
   userRole
@@ -80,6 +81,7 @@ function JobItemsTable({
   onReorderSteps: (itemId: string, newSteps: any[]) => void,
   onOpenProofModal: (itemId?: string) => void,
   onPreviewItem: (itemId: string) => void,
+  onUpdateStepNote: (stepId: string, note: string) => Promise<void>,
   onLogActivity: (action: string, details: string, itemId?: string) => Promise<void>,
   logs: any[],
   userRole: string
@@ -106,9 +108,10 @@ function JobItemsTable({
           onMoveStep={onMoveStep}
           onReorderSteps={onReorderSteps}
           onOpenProofModal={onOpenProofModal}
+          onUpdateStepNote={onUpdateStepNote}
           onLogActivity={onLogActivity}
           logs={logs}
-          userRole={userRole} 
+          userRole={userRole}
         />
       )}
 
@@ -848,6 +851,7 @@ export default function JobInteractiveView({
             onReorderSteps={handleReorderSteps}
             onOpenProofModal={(itemId) => { setProofItemId(itemId); setShowUploadModal(true); }}
             onPreviewItem={handlePreviewItem}
+            onUpdateStepNote={handleUpdateStepNote}
             onLogActivity={logActivity}
             logs={logs}
             userRole={userRole}
