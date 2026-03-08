@@ -4,9 +4,9 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe, ChevronDown, ArrowUp, ArrowDown, ExternalLink, FilePlus
+  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe, ChevronDown, ArrowUp, ArrowDown, ExternalLink, FilePlus, ChevronRight, MapPin
 } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 // Fix: Use relative path (3 dots) for Dashboard folder
 import { sendProofNotification } from '../../../server-actions'; 
@@ -90,6 +90,9 @@ function JobItemsTable({
 }) {
   const [isAdding, setIsAdding] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [addingStepForItem, setAddingStepForItem] = useState<string | null>(null);
+  const [newStepName, setNewStepName] = useState('');
+  const [newStepInternal, setNewStepInternal] = useState(false);
 
   const editingItem = items.find(i => i.id === editingItemId);
 
@@ -159,7 +162,8 @@ function JobItemsTable({
                  const hasFiles = assets.some(a => a.job_item_id === item.id);
                  const steps = item.job_item_steps || [];
                  return (
-                <tr key={item.id} onClick={() => { setEditingItemId(item.id); onPreviewItem(item.id); }} className="hover:bg-blue-50/50 transition-all cursor-pointer group">
+                <React.Fragment key={item.id}>
+                <tr onClick={() => { setEditingItemId(item.id); onPreviewItem(item.id); }} className="hover:bg-blue-50/50 transition-all cursor-pointer group">
                   <td className="px-6 py-6 align-top">
                      <span className="text-xl font-black text-gray-100 group-hover:text-blue-200 transition-colors font-mono">{String(index + 1).padStart(2, '0')}</span>
                   </td>
@@ -212,20 +216,12 @@ function JobItemsTable({
                         );
                       })()}
 
-                      <div className="flex flex-wrap gap-1.5 pt-1">
-                       {steps.map((step: any) => (
-                         <span
-                           key={step.id}
-                           title={step.notes || undefined}
-                           className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 border rounded-md uppercase font-black tracking-widest ${
-                              step.status === 'Completed' ? 'bg-green-100 text-green-700 border-green-200 shadow-sm' : 'bg-white text-gray-400 border-gray-200'
-                           }`}
-                         >
-                           {step.status === 'Completed' ? '✓ ' : ''}{step.step_name}
-                           {step.notes && <MessageSquare size={9} className={step.status === 'Completed' ? 'text-green-500' : 'text-blue-400'} />}
-                         </span>
-                       ))}
-                      </div>
+                      {steps.length > 0 && (
+                        <div className="flex items-center gap-1 pt-1">
+                          <MapPin size={10} className="text-gray-300 flex-shrink-0" />
+                          <span className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-300">{steps.filter((s: any) => s.status === 'Completed').length}/{steps.length} steps done</span>
+                        </div>
+                      )}
                     </div>
                   </td>
                   <td className="px-6 py-6 text-right align-top">
@@ -283,6 +279,94 @@ function JobItemsTable({
                       </div>
                   </td>
                 </tr>
+                {/* ── PRODUCTION PATH ROW ── */}
+                <tr key={`path-${item.id}`} className="bg-gradient-to-r from-gray-50/80 to-white border-b border-gray-100">
+                  <td colSpan={5} className="pl-16 pr-6 pb-4 pt-2">
+                    <div className="flex items-center gap-2 overflow-x-auto pb-1 min-h-[52px]">
+                      {steps.length === 0 && (
+                        <span className="text-[10px] italic text-gray-300 mr-2">No production path — add a step to start the map</span>
+                      )}
+                      {steps.map((step: any, si: number) => {
+                        const isDone = step.status === 'Completed';
+                        const isCancelled = step.status === 'Cancelled';
+                        const isActive = !isDone && !isCancelled && step.status !== 'Pending';
+                        const dateStr = isDone && (step.updated_at || step.completed_at)
+                          ? new Date(step.updated_at || step.completed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                          : null;
+                        return (
+                          <React.Fragment key={step.id}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onToggleStep(step.id, step.status); }}
+                              title={`Click to advance: ${step.status}`}
+                              className={`flex-shrink-0 flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl border-2 cursor-pointer transition-all hover:scale-105 hover:shadow-md
+                                ${isDone ? 'bg-green-50 border-green-400 shadow-sm shadow-green-100'
+                                  : isActive ? 'bg-blue-50 border-blue-400 shadow-md shadow-blue-100 ring-2 ring-blue-200 ring-offset-1'
+                                  : isCancelled ? 'bg-red-50 border-red-200 opacity-50'
+                                  : 'bg-white border-gray-200 hover:border-gray-300'}`}
+                            >
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black mb-0.5
+                                ${isDone ? 'bg-green-500 text-white' : isActive ? 'bg-blue-500 text-white' : isCancelled ? 'bg-red-200 text-red-600' : 'bg-gray-100 text-gray-400'}`}>
+                                {isDone ? '✓' : isCancelled ? '✗' : si + 1}
+                              </div>
+                              <span className={`text-[9px] font-black uppercase tracking-wide leading-tight text-center max-w-[80px] truncate
+                                ${isDone ? 'text-green-700' : isActive ? 'text-blue-700' : isCancelled ? 'text-red-400' : 'text-gray-500'}`}>
+                                {step.step_name}
+                              </span>
+                              <span className={`text-[7px] uppercase tracking-widest font-bold
+                                ${isDone ? 'text-green-500' : isActive ? 'text-blue-400' : isCancelled ? 'text-red-300' : 'text-gray-300'}`}>
+                                {step.status}
+                              </span>
+                              {dateStr && <span className="text-[7px] text-green-500 font-bold mt-0.5">{dateStr}</span>}
+                              {step.notes && <MessageSquare size={8} className={`mt-0.5 ${isDone ? 'text-green-400' : 'text-blue-300'}`} />}
+                            </button>
+                            {si < steps.length - 1 && (
+                              <ChevronRight size={14} className={`flex-shrink-0 ${isDone ? 'text-green-300' : 'text-gray-200'}`} />
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                      {steps.length > 0 && <ChevronRight size={14} className="flex-shrink-0 text-gray-200" />}
+                      {/* Inline add step */}
+                      {addingStepForItem === item.id ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault(); e.stopPropagation();
+                            if (newStepName.trim()) {
+                              onAddStep(item.id, newStepName.trim(), newStepInternal);
+                              setNewStepName('');
+                              setAddingStepForItem(null);
+                            }
+                          }}
+                          onClick={e => e.stopPropagation()}
+                          className="flex items-center gap-1.5 bg-blue-50 border-2 border-blue-300 rounded-xl px-2.5 py-1.5 flex-shrink-0 shadow-sm"
+                        >
+                          <input
+                            autoFocus
+                            value={newStepName}
+                            onChange={e => setNewStepName(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Escape') { setAddingStepForItem(null); setNewStepName(''); }}}
+                            placeholder="Step name..."
+                            className="text-[10px] font-bold bg-transparent outline-none w-28 placeholder:text-blue-300 text-blue-900"
+                          />
+                          <label onClick={e => e.stopPropagation()} className="flex items-center gap-1 text-[8px] font-black uppercase text-blue-400 cursor-pointer flex-shrink-0">
+                            <input type="checkbox" checked={newStepInternal} onChange={e => setNewStepInternal(e.target.checked)} className="w-2.5 h-2.5" />
+                            Int
+                          </label>
+                          <button type="submit" className="text-[9px] font-black text-white bg-blue-600 px-2 py-0.5 rounded-lg uppercase tracking-widest hover:bg-blue-700 flex-shrink-0">Add</button>
+                          <button type="button" onClick={(e) => { e.stopPropagation(); setAddingStepForItem(null); setNewStepName(''); }} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={10}/></button>
+                        </form>
+                      ) : (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setAddingStepForItem(item.id); setNewStepInternal(false); setNewStepName(''); }}
+                          className="flex-shrink-0 flex items-center gap-1 text-[9px] font-black text-gray-400 hover:text-blue-600 border-2 border-dashed border-gray-200 hover:border-blue-300 rounded-xl px-3 py-2 transition-all uppercase tracking-widest hover:bg-blue-50"
+                        >
+                          <Plus size={10} /> Add Step
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+                </React.Fragment>
               )})}
             </tbody>
           </table>
@@ -524,13 +608,20 @@ export default function JobInteractiveView({
     const statusOptions = ['Pending', 'In Production', 'To Bindery', 'In Bindery', 'Bindery Complete', 'Completed', 'Cancelled'];
     const currentIndex = statusOptions.indexOf(currentStatus);
     const newStatus = currentIndex === statusOptions.length - 1 ? statusOptions[0] : statusOptions[currentIndex + 1];
+    const now = new Date().toISOString();
 
     setItems(current => current.map(i => ({
       ...i,
-      job_item_steps: i.job_item_steps?.map((s: any) => s.id === stepId ? { ...s, status: newStatus } : s)
+      job_item_steps: i.job_item_steps?.map((s: any) =>
+        s.id === stepId
+          ? { ...s, status: newStatus, updated_at: now, ...(newStatus === 'Completed' ? { completed_at: now } : {}) }
+          : s
+      )
     })));
 
-    await supabase.from('job_item_steps').update({ status: newStatus }).eq('id', stepId);
+    const updatePayload: any = { status: newStatus, updated_at: now };
+    if (newStatus === 'Completed') updatePayload.completed_at = now;
+    await supabase.from('job_item_steps').update(updatePayload).eq('id', stepId);
 
     // After toggle, sync the parent item status
     const item = items.find(i => i.job_item_steps?.some((s: any) => s.id === stepId));
