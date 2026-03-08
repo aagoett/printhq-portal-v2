@@ -1,9 +1,9 @@
 'use client';
 
-import { 
-  X, MessageSquare, ListTodo, ArrowUp, ArrowDown, 
-  CheckSquare, Globe, Lock, Trash2, FileImage, 
-  UploadCloud, Plus, ThumbsUp, ExternalLink, Save 
+import {
+  X, MessageSquare, ListTodo, ArrowUp, ArrowDown,
+  CheckSquare, Globe, Lock, Trash2, FileImage,
+  UploadCloud, Plus, ThumbsUp, ExternalLink, Save, Pencil
 } from 'lucide-react';
 import { useState, useRef } from 'react';
 
@@ -64,33 +64,40 @@ export default function ItemDetailDrawer({
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [savingStepIds, setSavingStepIds] = useState<Set<string>>(new Set());
-  const [savedStepIds, setSavedStepIds] = useState<Set<string>>(new Set());
+  const [editingNoteIds, setEditingNoteIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const itemAssets = assets.filter(a => a.job_item_id === item.id);
   const steps = item.job_item_steps?.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) || [];
 
-  const handleSaveStepNote = async (stepId: string) => {
-    if (!onUpdateStepNote) return;
-    setSavingStepIds(prev => new Set(prev).add(stepId));
-    await onUpdateStepNote(stepId, stepNotes[stepId] ?? '');
-    setSavingStepIds(prev => { const n = new Set(prev); n.delete(stepId); return n; });
-    setSavedStepIds(prev => new Set(prev).add(stepId));
-    setTimeout(() => setSavedStepIds(prev => { const n = new Set(prev); n.delete(stepId); return n; }), 2000);
-  };
-
-  // Controlled state for step notes so they save via the main Save button
+  // stepNotes[id] = draft text in textarea
+  // persistedNotes[id] = what's actually saved in DB
   const [stepNotes, setStepNotes] = useState<Record<string, string>>(
     () => Object.fromEntries(steps.map((s: any) => [s.id, s.notes || '']))
   );
+  const [persistedNotes, setPersistedNotes] = useState<Record<string, string>>(
+    () => Object.fromEntries(steps.map((s: any) => [s.id, s.notes || '']))
+  );
+
+  const handleSaveStepNote = async (stepId: string) => {
+    if (!onUpdateStepNote) return;
+    setSavingStepIds(prev => new Set(prev).add(stepId));
+    const note = stepNotes[stepId] ?? '';
+    await onUpdateStepNote(stepId, note);
+    setPersistedNotes(prev => ({ ...prev, [stepId]: note }));
+    setEditingNoteIds(prev => { const n = new Set(prev); n.delete(stepId); return n; });
+    setSavingStepIds(prev => { const n = new Set(prev); n.delete(stepId); return n; });
+  };
 
   const handleSave = async () => {
     setIsSaving(true);
     onUpdate(item.id, formData);
-    // Save any changed step notes
+    // Save any step notes that are being edited but not yet saved
     if (onUpdateStepNote) {
-      const changed = steps.filter((s: any) => (stepNotes[s.id] ?? '') !== (s.notes || ''));
-      await Promise.all(changed.map((s: any) => onUpdateStepNote!(s.id, stepNotes[s.id] ?? '')));
+      const unsaved = steps.filter((s: any) =>
+        editingNoteIds.has(s.id) && (stepNotes[s.id] ?? '') !== (persistedNotes[s.id] ?? '')
+      );
+      await Promise.all(unsaved.map((s: any) => onUpdateStepNote!(s.id, stepNotes[s.id] ?? '')));
     }
     setIsSaving(false);
     onClose();
@@ -299,31 +306,68 @@ export default function ItemDetailDrawer({
                             </div>
 
                             {/* STEP SPECIFIC NOTES */}
-                            {isDone ? (
-                              stepNotes[step.id] ? (
-                                <p className="text-[11px] text-green-700 bg-green-50 border border-green-100 rounded-xl px-2.5 py-1.5 font-medium leading-snug">{stepNotes[step.id]}</p>
-                              ) : null
-                            ) : (
-                              <div className="flex gap-1.5 items-start">
-                                <textarea
-                                  placeholder={`Add note for ${step.step_name}...`}
-                                  value={stepNotes[step.id] ?? ''}
-                                  onChange={(e) => setStepNotes(prev => ({ ...prev, [step.id]: e.target.value }))}
-                                  className="flex-1 text-[11px] p-2.5 rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-4 focus:ring-blue-50/50 outline-none bg-gray-50/30 min-h-[50px] transition-all font-medium text-gray-700 resize-none"
-                                />
-                                <button
-                                  onClick={() => handleSaveStepNote(step.id)}
-                                  disabled={savingStepIds.has(step.id) || !(stepNotes[step.id] ?? '').trim()}
-                                  className={`flex-shrink-0 mt-0.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg transition-all uppercase tracking-widest shadow-sm disabled:opacity-30 ${
-                                    savedStepIds.has(step.id)
-                                      ? 'bg-green-500 text-white'
-                                      : 'bg-blue-600 text-white hover:bg-blue-700'
-                                  }`}
-                                >
-                                  {savingStepIds.has(step.id) ? '...' : savedStepIds.has(step.id) ? '✓' : 'Save'}
-                                </button>
-                              </div>
-                            )}
+                            {(() => {
+                              const saved = persistedNotes[step.id] || '';
+                              const isEditing = editingNoteIds.has(step.id);
+                              const isSavingThis = savingStepIds.has(step.id);
+
+                              // Completed step: show saved note read-only
+                              if (isDone) {
+                                return saved ? (
+                                  <p className="text-[11px] text-green-700 bg-green-50 border border-green-100 rounded-xl px-2.5 py-1.5 font-medium leading-snug">{saved}</p>
+                                ) : null;
+                              }
+
+                              // Has a saved note and not in edit mode: show read-only block
+                              if (saved && !isEditing) {
+                                return (
+                                  <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5">
+                                    <MessageSquare size={12} className="text-blue-500 mt-0.5 flex-shrink-0" />
+                                    <p className="flex-1 text-[11px] text-blue-900 font-medium leading-snug">{saved}</p>
+                                    <button
+                                      onClick={() => setEditingNoteIds(prev => new Set(prev).add(step.id))}
+                                      className="flex-shrink-0 text-blue-400 hover:text-blue-700 transition-colors"
+                                      title="Edit note"
+                                    >
+                                      <Pencil size={12} />
+                                    </button>
+                                  </div>
+                                );
+                              }
+
+                              // No saved note or in edit mode: show textarea + save/cancel
+                              return (
+                                <div className="flex flex-col gap-1.5">
+                                  <textarea
+                                    autoFocus={isEditing}
+                                    placeholder={`Add note for ${step.step_name}...`}
+                                    value={stepNotes[step.id] ?? ''}
+                                    onChange={(e) => setStepNotes(prev => ({ ...prev, [step.id]: e.target.value }))}
+                                    className="w-full text-[11px] p-2.5 rounded-xl border border-blue-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-50/50 outline-none bg-white min-h-[50px] transition-all font-medium text-gray-700 resize-none"
+                                  />
+                                  <div className="flex gap-1.5 justify-end">
+                                    {isEditing && (
+                                      <button
+                                        onClick={() => {
+                                          setStepNotes(prev => ({ ...prev, [step.id]: saved }));
+                                          setEditingNoteIds(prev => { const n = new Set(prev); n.delete(step.id); return n; });
+                                        }}
+                                        className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-all"
+                                      >
+                                        Cancel
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => handleSaveStepNote(step.id)}
+                                      disabled={isSavingThis || !(stepNotes[step.id] ?? '').trim()}
+                                      className="text-[10px] font-black px-3 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-30 transition-all uppercase tracking-widest shadow-sm"
+                                    >
+                                      {isSavingThis ? 'Saving...' : 'Save Note'}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })()}
                          </div>
 
                          <button onClick={() => onDeleteStep(step.id)} className="text-gray-300 hover:text-red-600 p-2 rounded-xl hover:bg-red-50 transition-colors"><Trash2 size={16}/></button>
