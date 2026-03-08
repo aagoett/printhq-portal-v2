@@ -279,90 +279,125 @@ function JobItemsTable({
                       </div>
                   </td>
                 </tr>
-                {/* ── PRODUCTION PATH ROW ── */}
-                <tr key={`path-${item.id}`} className="bg-gradient-to-r from-gray-50/80 to-white border-b border-gray-100">
-                  <td colSpan={5} className="pl-16 pr-6 pb-4 pt-2">
-                    <div className="flex items-center gap-2 overflow-x-auto pb-1 min-h-[52px]">
+                {/* ── PRODUCTION PATH ROW (VERTICAL TIMELINE) ── */}
+                <tr key={`path-${item.id}`} className="bg-gradient-to-b from-gray-50/60 to-white border-b border-gray-100">
+                  <td colSpan={5} className="pl-20 pr-8 pb-5 pt-1">
+                    <div className="flex flex-col" onClick={e => e.stopPropagation()}>
                       {steps.length === 0 && (
-                        <span className="text-[10px] italic text-gray-300 mr-2">No production path — add a step to start the map</span>
+                        <p className="text-[10px] italic text-gray-300 py-2">No production path — add a department below to begin</p>
                       )}
                       {steps.map((step: any, si: number) => {
                         const isDone = step.status === 'Completed';
                         const isCancelled = step.status === 'Cancelled';
                         const isActive = !isDone && !isCancelled && step.status !== 'Pending';
-                        const dateStr = isDone && (step.updated_at || step.completed_at)
-                          ? new Date(step.updated_at || step.completed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                        const isLast = si === steps.length - 1;
+                        const dateStr = (step.updated_at || step.completed_at)
+                          ? new Date(step.updated_at || step.completed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
                           : null;
                         return (
-                          <React.Fragment key={step.id}>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); onToggleStep(step.id, step.status); }}
-                              title={`Click to advance: ${step.status}`}
-                              className={`flex-shrink-0 flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl border-2 cursor-pointer transition-all hover:scale-105 hover:shadow-md
-                                ${isDone ? 'bg-green-50 border-green-400 shadow-sm shadow-green-100'
-                                  : isActive ? 'bg-blue-50 border-blue-400 shadow-md shadow-blue-100 ring-2 ring-blue-200 ring-offset-1'
-                                  : isCancelled ? 'bg-red-50 border-red-200 opacity-50'
-                                  : 'bg-white border-gray-200 hover:border-gray-300'}`}
-                            >
-                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black mb-0.5
-                                ${isDone ? 'bg-green-500 text-white' : isActive ? 'bg-blue-500 text-white' : isCancelled ? 'bg-red-200 text-red-600' : 'bg-gray-100 text-gray-400'}`}>
+                          <div key={step.id} className="flex items-stretch gap-0">
+                            {/* Timeline spine */}
+                            <div className="flex flex-col items-center w-8 flex-shrink-0">
+                              {/* Dot */}
+                              <button
+                                onClick={() => onToggleStep(step.id, step.status)}
+                                title={`Click to advance: ${step.status}`}
+                                className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black flex-shrink-0 mt-3 transition-all hover:scale-110 z-10 shadow-sm
+                                  ${isDone ? 'bg-green-500 text-white shadow-green-200'
+                                    : isActive ? 'bg-blue-500 text-white shadow-blue-200 ring-2 ring-blue-300 ring-offset-1'
+                                    : isCancelled ? 'bg-red-200 text-red-500'
+                                    : 'bg-gray-200 text-gray-400 hover:bg-gray-300'}`}
+                              >
                                 {isDone ? '✓' : isCancelled ? '✗' : si + 1}
+                              </button>
+                              {/* Connector line */}
+                              {!isLast && (
+                                <div className={`w-0.5 flex-1 my-0.5 ${isDone ? 'bg-green-300' : 'bg-gray-200'}`} />
+                              )}
+                            </div>
+                            {/* Step content */}
+                            <div className={`flex-1 ml-3 py-2.5 ${!isLast ? 'mb-0' : ''}`}>
+                              <div className="flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-[11px] font-black uppercase tracking-widest
+                                    ${isDone ? 'text-green-700' : isActive ? 'text-blue-700' : isCancelled ? 'text-red-400 line-through' : 'text-gray-600'}`}>
+                                    {step.step_name}
+                                  </span>
+                                  {step.notes && <MessageSquare size={10} className={isDone ? 'text-green-400' : 'text-blue-300'} />}
+                                  {step.is_internal && <Lock size={9} className="text-gray-300" />}
+                                </div>
+                                <div className="flex items-center gap-3 flex-shrink-0">
+                                  <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full
+                                    ${isDone ? 'bg-green-100 text-green-600'
+                                      : isActive ? 'bg-blue-100 text-blue-600'
+                                      : isCancelled ? 'bg-red-50 text-red-400'
+                                      : 'bg-gray-100 text-gray-400'}`}>
+                                    {step.status}
+                                  </span>
+                                  {dateStr && (
+                                    <span className={`text-[9px] font-bold ${isDone ? 'text-green-500' : 'text-gray-400'}`}>
+                                      {dateStr}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                              <span className={`text-[9px] font-black uppercase tracking-wide leading-tight text-center max-w-[80px] truncate
-                                ${isDone ? 'text-green-700' : isActive ? 'text-blue-700' : isCancelled ? 'text-red-400' : 'text-gray-500'}`}>
-                                {step.step_name}
-                              </span>
-                              <span className={`text-[7px] uppercase tracking-widest font-bold
-                                ${isDone ? 'text-green-500' : isActive ? 'text-blue-400' : isCancelled ? 'text-red-300' : 'text-gray-300'}`}>
-                                {step.status}
-                              </span>
-                              {dateStr && <span className="text-[7px] text-green-500 font-bold mt-0.5">{dateStr}</span>}
-                              {step.notes && <MessageSquare size={8} className={`mt-0.5 ${isDone ? 'text-green-400' : 'text-blue-300'}`} />}
-                            </button>
-                            {si < steps.length - 1 && (
-                              <ChevronRight size={14} className={`flex-shrink-0 ${isDone ? 'text-green-300' : 'text-gray-200'}`} />
-                            )}
-                          </React.Fragment>
+                              {step.notes && (
+                                <p className="text-[10px] text-gray-400 mt-1 font-medium italic">{step.notes}</p>
+                              )}
+                            </div>
+                          </div>
                         );
                       })}
-                      {steps.length > 0 && <ChevronRight size={14} className="flex-shrink-0 text-gray-200" />}
-                      {/* Inline add step */}
-                      {addingStepForItem === item.id ? (
-                        <form
-                          onSubmit={(e) => {
-                            e.preventDefault(); e.stopPropagation();
-                            if (newStepName.trim()) {
-                              onAddStep(item.id, newStepName.trim(), newStepInternal);
-                              setNewStepName('');
-                              setAddingStepForItem(null);
-                            }
-                          }}
-                          onClick={e => e.stopPropagation()}
-                          className="flex items-center gap-1.5 bg-blue-50 border-2 border-blue-300 rounded-xl px-2.5 py-1.5 flex-shrink-0 shadow-sm"
-                        >
-                          <input
-                            autoFocus
-                            value={newStepName}
-                            onChange={e => setNewStepName(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Escape') { setAddingStepForItem(null); setNewStepName(''); }}}
-                            placeholder="Step name..."
-                            className="text-[10px] font-bold bg-transparent outline-none w-28 placeholder:text-blue-300 text-blue-900"
-                          />
-                          <label onClick={e => e.stopPropagation()} className="flex items-center gap-1 text-[8px] font-black uppercase text-blue-400 cursor-pointer flex-shrink-0">
-                            <input type="checkbox" checked={newStepInternal} onChange={e => setNewStepInternal(e.target.checked)} className="w-2.5 h-2.5" />
-                            Int
-                          </label>
-                          <button type="submit" className="text-[9px] font-black text-white bg-blue-600 px-2 py-0.5 rounded-lg uppercase tracking-widest hover:bg-blue-700 flex-shrink-0">Add</button>
-                          <button type="button" onClick={(e) => { e.stopPropagation(); setAddingStepForItem(null); setNewStepName(''); }} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={10}/></button>
-                        </form>
-                      ) : (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setAddingStepForItem(item.id); setNewStepInternal(false); setNewStepName(''); }}
-                          className="flex-shrink-0 flex items-center gap-1 text-[9px] font-black text-gray-400 hover:text-blue-600 border-2 border-dashed border-gray-200 hover:border-blue-300 rounded-xl px-3 py-2 transition-all uppercase tracking-widest hover:bg-blue-50"
-                        >
-                          <Plus size={10} /> Add Step
-                        </button>
-                      )}
+
+                      {/* Add Department — dropdown from Settings only */}
+                      <div className="flex items-center gap-0 mt-2 ml-1">
+                        <div className="flex flex-col items-center w-6 flex-shrink-0 mr-5">
+                          <div className="w-5 h-5 rounded-full border-2 border-dashed border-gray-300 flex items-center justify-center">
+                            <Plus size={9} className="text-gray-400" />
+                          </div>
+                        </div>
+                        {addingStepForItem === item.id ? (
+                          <form
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              if (newStepName.trim()) {
+                                onAddStep(item.id, newStepName.trim(), newStepInternal);
+                                setNewStepName('');
+                                setAddingStepForItem(null);
+                              }
+                            }}
+                            className="flex items-center gap-2"
+                          >
+                            <select
+                              autoFocus
+                              value={newStepName}
+                              onChange={e => setNewStepName(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Escape') { setAddingStepForItem(null); setNewStepName(''); }}}
+                              className="text-[10px] font-bold bg-white border border-blue-300 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-blue-200 text-blue-900 min-w-[160px]"
+                            >
+                              <option value="">Select department...</option>
+                              {workflowOptions.map((queue: any) => (
+                                <optgroup key={queue.queue_name} label={queue.queue_name}>
+                                  {queue.steps?.map((s: string) => <option key={s} value={s}>{s}</option>)}
+                                </optgroup>
+                              ))}
+                            </select>
+                            <label className="flex items-center gap-1 text-[8px] font-black uppercase text-gray-400 cursor-pointer flex-shrink-0">
+                              <input type="checkbox" checked={newStepInternal} onChange={e => setNewStepInternal(e.target.checked)} className="w-2.5 h-2.5" />
+                              Internal
+                            </label>
+                            <button type="submit" disabled={!newStepName} className="text-[9px] font-black text-white bg-blue-600 px-2.5 py-1 rounded-lg uppercase tracking-widest hover:bg-blue-700 disabled:opacity-30 flex-shrink-0">Add</button>
+                            <button type="button" onClick={() => { setAddingStepForItem(null); setNewStepName(''); }} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X size={11}/></button>
+                          </form>
+                        ) : (
+                          <button
+                            onClick={() => { setAddingStepForItem(item.id); setNewStepInternal(true); setNewStepName(''); }}
+                            className="text-[9px] font-black text-gray-400 hover:text-blue-600 transition-colors uppercase tracking-widest"
+                          >
+                            + Add Department
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </td>
                 </tr>

@@ -55,7 +55,6 @@ export default function ItemDetailDrawer({
   });
   
   const [selectedStep, setSelectedStep] = useState('');
-  const [customStep, setCustomStep] = useState('');
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
   const [isInternalStep, setIsInternalStep] = useState(true);
   const [itemNote, setItemNote] = useState('');
@@ -105,14 +104,12 @@ export default function ItemDetailDrawer({
 
   const handleAddStepSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const finalStepName = selectedStep === 'Custom' ? customStep : selectedStep;
-    if (!finalStepName || finalStepName.trim() === '') return;
+    if (!selectedStep || selectedStep.trim() === '') return;
 
-    onAddStep(item.id, finalStepName, isInternalStep);
-    
+    onAddStep(item.id, selectedStep, isInternalStep);
+
     // Reset
     setSelectedStep('');
-    setCustomStep('');
     setIsInternalStep(true);
   };
 
@@ -391,21 +388,10 @@ export default function ItemDetailDrawer({
                                 {queue.steps?.map((s: string) => <option key={s} value={s}>{s}</option>)}
                             </optgroup>
                         ))}
-                        <option value="Custom">Custom / Other...</option>
                      </select>
                      <button type="submit" disabled={!selectedStep} className="bg-black text-white px-4 rounded-lg text-xs font-bold hover:bg-gray-800 transition-colors disabled:opacity-30">ADD</button>
                    </div>
                    
-                   {/* Custom Input */}
-                   {selectedStep === 'Custom' && (
-                       <input 
-                         placeholder="Type custom step name..."
-                         value={customStep}
-                         onChange={e => setCustomStep(e.target.value)}
-                         className="w-full text-xs p-2 rounded border border-gray-300 focus:outline-none focus:border-black animate-in fade-in"
-                         autoFocus
-                       />
-                   )}
 
                    {/* INTERNAL TOGGLE */}
                    <label className="flex items-center gap-2 cursor-pointer select-none">
