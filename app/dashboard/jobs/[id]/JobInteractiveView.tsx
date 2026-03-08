@@ -2,7 +2,7 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { 
-  ArrowLeft, Send, FileText, Download, Scissors, CheckSquare, Megaphone,
+  ArrowLeft, Send, FileText, Download, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
   Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe, ChevronDown
 } from 'lucide-react';
@@ -463,6 +463,7 @@ export default function JobInteractiveView({
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadMessage, setUploadMessage] = useState('');
+  const [selectedProofItemId, setSelectedProofItemId] = useState<string>('');
   const [isUploading, setIsUploading] = useState(false);
   const [newMessage, setNewMessage] = useState('');
   const [internalNotes, setInternalNotes] = useState(initialJob.internal_notes || '');
@@ -519,6 +520,11 @@ export default function JobInteractiveView({
     if (data) setAssets(data);
   };
 
+  const refreshItems = async () => {
+    const { data } = await supabase.from('job_items').select('*, job_item_steps(*)').eq('job_id', jobId).order('created_at', { ascending: true });
+    if (data) setItems(data);
+  };
+
   const logActivity = async (action: string, details: string) => {
       await supabase.from('job_logs').insert({ job_id: jobId, user_id: user.id, action, details });
   };
@@ -543,6 +549,7 @@ export default function JobInteractiveView({
     } else {
       setItems(current => current.map(i => i.id === tempId ? { ...data, job_item_steps: [] } : i));
       logActivity('Item Added', `Added production item: ${newItem.description}`);
+      refreshItems();
     }
   };
 
@@ -646,14 +653,22 @@ export default function JobInteractiveView({
       const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
       if (error) { alert(error.message); setIsUploading(false); return; }
 
-      await supabase.from('job_assets').update({ status: 'archived' }).eq('job_id', jobId).eq('asset_type', 'proof').eq('status', 'pending');
-      const { data: newAsset } = await supabase.from('job_assets').insert({
+      // Archive previous pending proofs for the same scope (item or job-wide)
+      let archiveQuery = supabase.from('job_assets').update({ status: 'archived' }).eq('job_id', jobId).eq('asset_type', 'proof').eq('status', 'pending');
+      if (selectedProofItemId) archiveQuery = archiveQuery.eq('job_item_id', selectedProofItemId);
+      else archiveQuery = archiveQuery.is('job_item_id', null);
+      await archiveQuery;
+
+      const insertPayload: any = {
           job_id: jobId, uploader_id: user.id, file_url: data?.path, file_name: uploadFile.name, asset_type: 'proof', status: 'pending'
-      }).select().single();
+      };
+      if (selectedProofItemId) insertPayload.job_item_id = selectedProofItemId;
+
+      const { data: newAsset } = await supabase.from('job_assets').insert(insertPayload).select().single();
       await sendProofNotification(jobId, data?.path || '', uploadMessage);
-      
+
       if (newAsset) { await refreshAssets(); loadPreview(newAsset); }
-      setIsUploading(false); setShowUploadModal(false); setUploadFile(null); setUploadMessage('');
+      setIsUploading(false); setShowUploadModal(false); setUploadFile(null); setUploadMessage(''); setSelectedProofItemId('');
   };
 
   const handleApproveProof = async (assetId: string) => {
@@ -672,15 +687,9 @@ export default function JobInteractiveView({
   const handleSaveNotes = async () => {
       setIsSaving(true);
       await supabase.from('jobs').update({ internal_notes: internalNotes }).eq('id', jobId);
-      setIsSaving(false); alert('Notes saved.');
-  };
-
-  const toggleFinishingOption = async (optionName: string) => {
-      const currentOptions = job.finishing_options || [];
-      const newOptions = currentOptions.includes(optionName) 
-        ? currentOptions.filter((o: string) => o !== optionName) : [...currentOptions, optionName];
-      setJob({ ...job, finishing_options: newOptions });
-      await supabase.from('jobs').update({ finishing_options: newOptions }).eq('id', jobId);
+      await logActivity('Note Added', internalNotes.substring(0, 100));
+      setIsSaving(false);
+      setInternalNotes('');
   };
 
   const getCountdown = () => {
@@ -713,6 +722,15 @@ export default function JobInteractiveView({
                         <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
                         <UploadCloud className={`mx-auto h-10 w-10 mb-2 ${uploadFile ? 'text-green-600' : 'text-gray-400'}`} />
                         {uploadFile ? <p className="font-bold text-green-700 text-sm truncate">{uploadFile.name}</p> : <p className="text-sm font-bold text-gray-600">Click to Select File</p>}
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Proof For</label>
+                        <select value={selectedProofItemId} onChange={e => setSelectedProofItemId(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2 text-sm bg-white">
+                            <option value="">Entire Job (all items)</option>
+                            {items.map(item => (
+                                <option key={item.id} value={item.id}>{item.description}</option>
+                            ))}
+                        </select>
                     </div>
                     <div>
                         <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Message to Customer</label>
@@ -770,17 +788,6 @@ export default function JobInteractiveView({
                     <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">Customer</span><span className="font-bold">{job.profiles?.first_name || 'Guest'}</span></div>
                     <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">Total Qty</span><span className="font-bold">{job.quantity}</span></div>
                     <div className="flex justify-between items-center pt-2"><span className="text-gray-500">Due Date</span><div className={`text-[10px] px-2 py-0.5 rounded font-bold ${countdown.color} text-white`}>{countdown.text}</div></div>
-                </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <h3 className="text-xs font-bold uppercase text-gray-400 mb-3 flex items-center gap-2"><Scissors size={14}/> Finishing</h3>
-                <div className="flex flex-wrap gap-2">
-                    {serviceList.map((service) => (
-                        <button key={service.id} onClick={() => toggleFinishingOption(service.name)} className={`px-3 py-1.5 rounded text-xs font-bold border transition-all flex items-center gap-2 ${job.finishing_options?.includes(service.name) ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
-                            {job.finishing_options?.includes(service.name) && <CheckSquare size={12} />} {service.name}
-                        </button>
-                    ))}
                 </div>
             </div>
 
