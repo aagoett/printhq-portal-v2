@@ -27,6 +27,7 @@ type JobItem = {
     id: string;
     step_name: string;
     status: string;
+    notes?: string;
   }[];
 };
 
@@ -234,16 +235,23 @@ export default function BinderyDashboard() {
                       </td>
                       <td className="px-6 py-4 font-mono font-bold">{item.quantity}</td>
                       <td className="px-6 py-4">
-                        <div className="flex flex-col gap-1">
+                        <div className="flex flex-col gap-1.5">
                           {item.job_item_steps?.map((step: any) => (
-                             <span key={step.id} className={`text-[9px] px-1.5 py-0.5 border rounded uppercase font-bold tracking-wider inline-block w-max ${
-                               step.status === 'Completed' ? 'bg-green-100 text-green-700 border-green-200' : 
-                               step.step_name.toLowerCase().includes('bindery') || step.step_name.toLowerCase().includes('fold') || step.step_name.toLowerCase().includes('cut') 
-                                ? 'bg-indigo-100 text-indigo-700 border-indigo-200' 
-                                : 'bg-gray-100 text-gray-400 border-gray-200'
-                             }`}>
-                                {step.status === 'Completed' ? '✓ ' : ''}{step.step_name}
-                             </span>
+                             <div key={step.id} className="flex flex-col gap-0.5">
+                               <span className={`text-[9px] px-1.5 py-0.5 border rounded uppercase font-bold tracking-wider inline-block w-max ${
+                                 step.status === 'Completed' ? 'bg-green-100 text-green-700 border-green-200' :
+                                 step.step_name.toLowerCase().includes('bindery') || step.step_name.toLowerCase().includes('fold') || step.step_name.toLowerCase().includes('cut')
+                                  ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
+                                  : 'bg-gray-100 text-gray-400 border-gray-200'
+                               }`}>
+                                  {step.status === 'Completed' ? '✓ ' : ''}{step.step_name}
+                               </span>
+                               {step.notes && (
+                                 <span className="text-[10px] text-gray-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-1 leading-snug max-w-[180px] font-medium">
+                                   {step.notes}
+                                 </span>
+                               )}
+                             </div>
                           ))}
                           {(!item.job_item_steps || item.job_item_steps.length === 0) && <span className="text-gray-300 italic text-[10px]">No path</span>}
                         </div>

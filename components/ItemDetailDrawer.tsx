@@ -62,13 +62,26 @@ export default function ItemDetailDrawer({
   const [isPostingItemNote, setIsPostingItemNote] = useState(false);
 
   const [isUploading, setIsUploading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const itemAssets = assets.filter(a => a.job_item_id === item.id);
   const steps = item.job_item_steps?.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) || [];
 
-  const handleSave = () => {
+  // Controlled state for step notes so they save via the main Save button
+  const [stepNotes, setStepNotes] = useState<Record<string, string>>(
+    () => Object.fromEntries(steps.map((s: any) => [s.id, s.notes || '']))
+  );
+
+  const handleSave = async () => {
+    setIsSaving(true);
     onUpdate(item.id, formData);
+    // Save any changed step notes
+    if (onUpdateStepNote) {
+      const changed = steps.filter((s: any) => (stepNotes[s.id] ?? '') !== (s.notes || ''));
+      await Promise.all(changed.map((s: any) => onUpdateStepNote!(s.id, stepNotes[s.id] ?? '')));
+    }
+    setIsSaving(false);
     onClose();
   };
 
@@ -276,14 +289,14 @@ export default function ItemDetailDrawer({
 
                             {/* STEP SPECIFIC NOTES */}
                             {isDone ? (
-                              step.notes ? (
-                                <p className="text-[11px] text-green-700 bg-green-50 border border-green-100 rounded-xl px-2.5 py-1.5 font-medium leading-snug">{step.notes}</p>
+                              stepNotes[step.id] ? (
+                                <p className="text-[11px] text-green-700 bg-green-50 border border-green-100 rounded-xl px-2.5 py-1.5 font-medium leading-snug">{stepNotes[step.id]}</p>
                               ) : null
                             ) : (
                               <textarea
                                 placeholder={`Add instructions for ${step.step_name}...`}
-                                defaultValue={step.notes || ''}
-                                onBlur={(e) => onUpdateStepNote && onUpdateStepNote(step.id, e.target.value)}
+                                value={stepNotes[step.id] ?? ''}
+                                onChange={(e) => setStepNotes(prev => ({ ...prev, [step.id]: e.target.value }))}
                                 className="w-full text-[11px] p-2.5 rounded-xl border border-gray-200 focus:border-blue-400 focus:ring-4 focus:ring-blue-50/50 outline-none bg-gray-50/30 min-h-[50px] transition-all font-medium text-gray-700"
                               />
                             )}
@@ -422,9 +435,10 @@ export default function ItemDetailDrawer({
         <div className="pt-4 mt-4 border-t px-2">
            <button
              onClick={handleSave}
-             className="w-full bg-black text-white font-bold py-3 rounded-xl hover:bg-gray-800 transition-colors shadow-lg flex items-center justify-center gap-2"
+             disabled={isSaving}
+             className="w-full bg-black text-white font-bold py-3 rounded-xl hover:bg-gray-800 transition-colors shadow-lg flex items-center justify-center gap-2 disabled:opacity-60"
            >
-             <Save size={18}/> Save Changes
+             <Save size={18}/> {isSaving ? 'Saving...' : 'Save Changes'}
            </button>
         </div>
       </div>
