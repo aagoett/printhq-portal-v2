@@ -12,14 +12,9 @@ export default async function DashboardJobPage({ params }: { params: { id: strin
   }
 
   // 2. Fetch Job (Safe Query)
-  // I removed 'due_date' from orders() because that likely caused the crash
   const { data: job, error } = await supabase
     .from('jobs')
-    .select(`
-      *,
-      orders (brand),
-      profiles!user_id (first_name, last_name, email, company, phone)
-    `)
+    .select('*, orders (brand)')
     .eq('id', params.id)
     .single();
 
@@ -41,6 +36,16 @@ export default async function DashboardJobPage({ params }: { params: { id: strin
      return <div className="p-12">Job not found (ID exists, but no data returned).</div>;
   }
   // -----------------------
+
+  // 2b. Fetch customer profile separately (no FK constraint from jobs.user_id to profiles)
+  if (job.user_id) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('first_name, last_name, email, company, phone')
+      .eq('id', job.user_id)
+      .single();
+    (job as any).profiles = profile ?? null;
+  }
 
   // 3. Fetch Extras (Parallel)
   const [servicesRes, assetsRes, messagesRes, logsRes, itemsRes] = await Promise.all([
