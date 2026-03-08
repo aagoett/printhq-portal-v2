@@ -4,13 +4,17 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
   Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, 
-  Briefcase, Plus, ShoppingCart, Clock, ChevronRight, Layers, Ruler
+  Briefcase, Plus, ShoppingCart, Clock, ChevronRight, Layers, Ruler,
+  ArrowUpDown, ArrowUp, ArrowDown, ExternalLink, Calculator
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
+import React from 'react';
 import Link from 'next/link';
 // Use the new name and the @ alias so it always finds the right spot
 import { sendOrderConfirmation } from '../server-actions';
+import ItemDetailDrawer from '@/components/ItemDetailDrawer';
+
 
 // --- TYPES ---
 type Job = {
@@ -32,6 +36,7 @@ type Job = {
   brand?: string; 
   orders?: { brands?: { name: string } }; 
   order_id?: string; 
+  job_items?: any[];
 };
 
 type Profile = {
@@ -105,6 +110,15 @@ export default function Dashboard() {
   const [isNewCustomer, setIsNewCustomer] = useState(false);
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
     
+  // --- ITEM PRODUCTION STATE ---
+  const [workflowOptions, setWorkflowOptions] = useState<any[]>([]);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [jobAssets, setJobAssets] = useState<any[]>([]);
+  const [jobLogs, setJobLogs] = useState<any[]>([]);
+    
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>({ key: 'timeline', direction: 'desc' });
+
+
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -127,12 +141,20 @@ export default function Dashboard() {
       
     const userRole = profile?.role || 'customer';
     setRole(userRole);
+
+    // Redirect Bindery users to their specialized dashboard
+    if (userRole === 'bindery') {
+      router.push('/bindery');
+      return;
+    }
+
     const isInternal = userRole === 'admin' || userRole === 'staff';
 
     let jobQuery = supabase
         .from('jobs')
-        .select('*, orders(brands(name))') 
+        .select('*, orders(brands(name)), job_items(*, job_item_steps(*))') 
         .order('created_at', { ascending: false });
+
 
     // FIX: Match by ID *OR* Email (Retroactive Guest Matching)
     if (!isInternal) {
@@ -178,7 +200,12 @@ export default function Dashboard() {
       } else {
         setActiveTab('My Queue'); 
       }
+
+      // Fetch additional production data
+      const { data: qData } = await supabase.from('workflow_queues').select('*').order('rank');
+      if (qData) setWorkflowOptions(qData);
     }
+
     setLoading(false);
   };
 
@@ -194,6 +221,99 @@ export default function Dashboard() {
     setJobs(jobs.map(j => j.id === jobId ? { ...j, assigned_to: staffId, csr_name: staffName } : j));
     await supabase.from('jobs').update({ assigned_to: staffId, csr_name: staffName }).eq('id', jobId);
   };
+
+  // --- PRODUCTION HANDLERS ---
+  const handleOpenItemDrawer = async (itemId: string) => {
+    setEditingItemId(itemId);
+    // Fetch assets and logs for this item
+    const item = jobs.flatMap(j => j.job_items || []).find(i => i.id === itemId);
+    if (!item) return;
+
+    const { data: assets } = await supabase.from('job_assets').select('*, profiles(email)').eq('job_id', item.job_id).order('created_at', { ascending: false });
+    if (assets) setJobAssets(assets);
+
+    const { data: logs } = await supabase.from('job_logs').select('*, profiles(email)').eq('job_id', item.job_id).order('created_at', { ascending: false });
+    if (logs) setJobLogs(logs);
+  };
+
+  const handleCompleteItemStep = async (item: any, currentStepName: string) => {
+    if (!confirm(`Mark "${currentStepName}" as DONE for ${item.description}?`)) return;
+
+    // 1. Find the step record
+    const step = item.job_item_steps?.find((s: any) => s.step_name === currentStepName && s.status !== 'Completed');
+    if (!step) return alert("Step not found or already completed.");
+
+    // 2. Update the step to Completed
+    const { error: stepErr } = await supabase.from('job_item_steps').update({ status: 'Completed' }).eq('id', step.id);
+    if (stepErr) return alert(stepErr.message);
+
+    // 3. Determine next status
+    const allSteps = item.job_item_steps || [];
+    // Sort steps by created_at to determine sequence (matching JobInteractiveView logic)
+    const sortedSteps = [...allSteps].sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    
+    // Find the next step after the one we just completed
+    const currentIndex = sortedSteps.findIndex(s => s.id === step.id);
+    const nextStep = sortedSteps[currentIndex + 1];
+    
+    const newStatus = nextStep ? nextStep.step_name : 'Completed';
+
+    // 4. Update parent item status
+    const { error: itemErr } = await supabase.from('job_items').update({ status: newStatus }).eq('id', item.id);
+    if (itemErr) return alert(itemErr.message);
+
+    // 5. Log activity
+    await supabase.from('job_logs').insert({
+        job_id: item.job_id,
+        user_id: user.id,
+        action: 'Step Completed',
+        details: `Completed ${currentStepName}. Next: ${newStatus}`,
+        job_item_id: item.id
+    });
+
+    // 6. Refresh data
+    fetchDashboardData();
+  };
+
+  const handleUpdateItem = async (itemId: string, updates: any) => {
+      const { error } = await supabase.from('job_items').update(updates).eq('id', itemId);
+      if (error) alert(error.message);
+      fetchDashboardData();
+  };
+
+  const handleAddStep = async (itemId: string, stepName: string, isInternal: boolean) => {
+      const { error } = await supabase.from('job_item_steps').insert({ job_item_id: itemId, step_name: stepName, status: 'Pending', is_internal: isInternal });
+      if (error) alert(error.message);
+      fetchDashboardData();
+  };
+
+  const handleToggleStep = async (stepId: string, currentStatus: string) => {
+      const statusOptions = ['Pending', 'Completed'];
+      const newStatus = currentStatus === 'Completed' ? 'Pending' : 'Completed';
+      await supabase.from('job_item_steps').update({ status: newStatus }).eq('id', stepId);
+      // We should also sync the item status here for consistency
+      fetchDashboardData();
+  };
+
+  const handleDeleteStep = async (stepId: string) => {
+      await supabase.from('job_item_steps').delete().eq('id', stepId);
+      fetchDashboardData();
+  };
+
+  const onItemUpload = async (file: File, itemId: string) => {
+      const item = jobs.flatMap(j => j.job_items || []).find(i => i.id === itemId);
+      if (!item) return;
+      const storageName = `${item.job_id}-item-${itemId.substring(0,4)}-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage.from('uploads').upload(storageName, file);
+      if (uploadError) throw uploadError;
+
+      await supabase.from('job_assets').insert({
+          job_id: item.job_id, job_item_id: itemId, uploader_id: user.id, file_url: uploadData.path,
+          file_name: file.name, asset_type: 'source', status: 'pending'
+      });
+      fetchDashboardData();
+  };
+
 
   // --- CART HANDLERS ---
   const handleOpenNewOrder = () => {
@@ -423,6 +543,64 @@ export default function Dashboard() {
     return { color: 'text-black font-medium', label: due.toLocaleDateString('en-US', {month:'short', day:'numeric'}) };
   };
 
+  const requestSort = (key: string) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  const getSortedJobs = (jobsToSort: Job[]) => {
+    if (!sortConfig) return jobsToSort;
+
+    return [...jobsToSort].sort((a, b) => {
+      let aVal: any;
+      let bVal: any;
+
+      switch (sortConfig.key) {
+        case 'timeline':
+          aVal = new Date(a.created_at).getTime();
+          bVal = new Date(b.created_at).getTime();
+          break;
+        case 'customer':
+          const aProfile = customers.find(c => c.id === a.user_id);
+          aVal = (aProfile ? (aProfile.first_name || aProfile.email) : (a.guest_email || 'Guest')).toLowerCase();
+          const bProfile = customers.find(c => c.id === b.user_id);
+          bVal = (bProfile ? (bProfile.first_name || bProfile.email) : (b.guest_email || 'Guest')).toLowerCase();
+          break;
+        case 'details':
+          aVal = a.title.toLowerCase();
+          bVal = b.title.toLowerCase();
+          break;
+        case 'size':
+          aVal = (a.size || '').toLowerCase();
+          bVal = (b.size || '').toLowerCase();
+          break;
+        case 'stock':
+          aVal = (a.paper_stock || '').toLowerCase();
+          bVal = (b.paper_stock || '').toLowerCase();
+          break;
+        case 'station':
+          aVal = (a.current_step || 'Processing').toLowerCase();
+          bVal = (b.current_step || 'Processing').toLowerCase();
+          break;
+        case 'team':
+          const aStaff = staff.find(s => s.id === a.assigned_to);
+          aVal = (aStaff ? (aStaff.first_name || aStaff.email) : 'Unassigned').toLowerCase();
+          const bStaff = staff.find(s => s.id === b.assigned_to);
+          bVal = (bStaff ? (bStaff.first_name || bStaff.email) : 'Unassigned').toLowerCase();
+          break;
+        default:
+          return 0;
+      }
+
+      if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+  };
+
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
 
   const isInternal = role === 'admin' || role === 'staff';
@@ -430,12 +608,44 @@ export default function Dashboard() {
   const filteredJobs = jobs.filter(job => {
     if (activeTab === 'All') return true;
     if (activeTab === 'My Queue') return job.assigned_to === user?.id; 
-    return job.current_step === activeTab;
+    
+    // SMART FILTER: Match by Main Job Station OR by any child Item Status
+    const hasMatchingItem = job.job_items?.some((item: any) => item.status === activeTab);
+    return job.current_step === activeTab || hasMatchingItem;
   });
+
+  const sortedFilteredJobs = getSortedJobs(filteredJobs);
 
   return (
     <div className="flex h-screen bg-gray-50 relative">
       <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+
+      {/* ITEM DETAIL DRAWER */}
+      {editingItemId && (() => {
+          const item = jobs.flatMap(j => j.job_items || []).find(i => i.id === editingItemId);
+          if (!item) return null;
+          return (
+            <ItemDetailDrawer 
+                item={item}
+                assets={jobAssets}
+                workflowOptions={workflowOptions}
+                onClose={() => setEditingItemId(null)}
+                onUpdate={handleUpdateItem}
+                onUpload={onItemUpload}
+                onAddStep={handleAddStep}
+                onToggleStep={handleToggleStep}
+                onDeleteStep={handleDeleteStep}
+                onMoveStep={async () => {}} // Not yet implemented on dashboard
+                onReorderSteps={async () => {}} // Not yet implemented on dashboard
+                onLogActivity={async (action, details, itemId) => {
+                    await supabase.from('job_logs').insert({ job_id: item.job_id, user_id: user.id, action, details, job_item_id: itemId });
+                    handleOpenItemDrawer(item.id); // Refresh logs
+                }}
+                logs={jobLogs}
+                userRole={role}
+            />
+          );
+      })()}
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
@@ -597,8 +807,10 @@ export default function Dashboard() {
         </div>
         <nav className="flex-1 space-y-1 px-4 py-6">
           <NavItem icon={<LayoutDashboard size={20} />} label={isInternal ? "Shop Floor" : "My Jobs"} href="/dashboard" active />
+          {isInternal && <NavItem icon={<Calculator size={20} />} label="Estimator" href="/dashboard/pricing/estimator" />}
+          <NavItem icon={<FileText size={20} />} label="Quotes" href="/dashboard/quotes" />
+          {isInternal && <NavItem icon={<Briefcase size={20} />} label="Invoices" href="/dashboard/invoices" />}
           {isInternal && <NavItem icon={<User size={20} />} label="Customers" href="/dashboard/customers" />}
-          {!isInternal && <NavItem icon={<FileText size={20} />} label="Quote History" href="/dashboard/history" />}
           <NavItem icon={<Settings size={20} />} label="Settings" href="/dashboard/settings" />
         </nav>
         <div className="p-4 border-t border-gray-100">
@@ -648,10 +860,10 @@ export default function Dashboard() {
                   <Filter size={16} className="mr-2 text-gray-400" /> 
                   {activeTab}
                 </h3>
-                <div className="text-xs font-bold bg-gray-200 px-2 py-1 rounded text-gray-600">{filteredJobs.length} Jobs</div>
+                <div className="text-xs font-bold bg-gray-200 px-2 py-1 rounded text-gray-600">{sortedFilteredJobs.length} Jobs</div>
               </div>
 
-              {filteredJobs.length === 0 ? (
+              {sortedFilteredJobs.length === 0 ? (
                 <div className="p-12 text-center text-gray-400 flex flex-col items-center">
                    <Scissors size={48} className="mb-4 opacity-20" />
                    <p>No jobs found in {activeTab}.</p>
@@ -660,25 +872,55 @@ export default function Dashboard() {
                 <table className="w-full text-left text-sm">
                   <thead className="bg-gray-50 text-gray-500 uppercase font-medium">
                     <tr>
-                      <th className="px-6 py-3 w-32">Timeline</th>
-                      <th className="px-6 py-3 w-48">Customer</th> 
-                      <th className="px-6 py-3">Job Details</th>
-                      <th className="px-6 py-3 w-32">Station</th>
-                      <th className="px-6 py-3 w-40">Team</th>
-                      <th className="px-6 py-3 w-32 text-right">Actions</th>
+                      <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('timeline')}>
+                        <div className="flex items-center gap-1">
+                          Timeline {sortConfig?.key === 'timeline' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
+                        </div>
+                      </th>
+                      <th className="px-6 py-3 w-48 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('customer')}>
+                        <div className="flex items-center gap-1">
+                          Customer {sortConfig?.key === 'customer' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
+                        </div>
+                      </th> 
+                      <th className="px-6 py-3 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('details')}>
+                        <div className="flex items-center gap-1">
+                          Job Details {sortConfig?.key === 'details' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
+                        </div>
+                      </th>
+                      <th className="px-6 py-3 w-24 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('size')}>
+                        <div className="flex items-center gap-1">
+                          Size {sortConfig?.key === 'size' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
+                        </div>
+                      </th>
+                      <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('stock')}>
+                        <div className="flex items-center gap-1">
+                          Stock {sortConfig?.key === 'stock' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
+                        </div>
+                      </th>
+                      <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('station')}>
+                        <div className="flex items-center gap-1">
+                          Station {sortConfig?.key === 'station' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
+                        </div>
+                      </th>
+                      <th className="px-6 py-3 w-40 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('team')}>
+                        <div className="flex items-center gap-1">
+                          Team {sortConfig?.key === 'team' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
+                        </div>
+                      </th>
+                      <th className="px-6 py-3 w-20 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {filteredJobs.map((job: any) => {
+                    {sortedFilteredJobs.map((job: any) => {
                       const dueStatus = getDueStatus(job.due_date);
                       
                       const customerProfile = customers.find(c => c.id === job.user_id);
                       const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
-                      
-                      const brandName = job.orders?.brands?.name || 'PrintHQ';
-                      
-                      return (
-                      <tr key={job.id} className="hover:bg-gray-50 transition-colors group">
+                                            const brandName = job.orders?.brands?.name || 'PrintHQ';
+                       
+                       return (
+                       <React.Fragment key={job.id}>
+                       <tr className="hover:bg-gray-50 transition-colors group">
                         
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex flex-col gap-1">
@@ -705,8 +947,15 @@ export default function Dashboard() {
                           </Link>
                           <div className="flex items-center gap-2 mt-1">
                             <span className="font-mono text-[10px] text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span>
-                            {job.size && <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-500 font-bold flex items-center gap-1"><Ruler size={8}/> {job.size}</span>}
                           </div>
+                        </td>
+
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-xs font-medium text-gray-700">{job.size || 'N/A'}</div>
+                        </td>
+
+                        <td className="px-6 py-4">
+                          <div className="text-xs text-gray-500 truncate max-w-[120px]" title={job.paper_stock}>{job.paper_stock || 'N/A'}</div>
                         </td>
 
                         <td className="px-6 py-4">
@@ -725,22 +974,84 @@ export default function Dashboard() {
                              {staff.map(s => (
                                <option key={s.id} value={s.id}>
                                  {s.first_name || s.email?.split('@')[0]}
-                               </option>
-                             ))}
-                           </select>
-                        </td>
-
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <Link href={`/dashboard/jobs/${job.id}`} className="text-gray-400 hover:text-black transition-colors p-2 hover:bg-gray-100 rounded-full">
-                               <ChevronRight size={20} />
-                            </Link>
-                          </div>
-                        </td>
-
-                      </tr>
-                      );
-                    })}
+                                </option>
+                              ))}
+                            </select>
+                         </td>
+ 
+                         <td className="px-6 py-4 text-right">
+                           <div className="flex items-center justify-end gap-2">
+                             <Link href={`/dashboard/jobs/${job.id}`} className="text-gray-400 hover:text-black transition-colors p-2 hover:bg-gray-100 rounded-full">
+                                <ChevronRight size={20} />
+                             </Link>
+                           </div>
+                         </td>
+ 
+                       </tr>
+ 
+                       {/* ITEM SUB-ROWS (PHASE 3.12/3.14) */}
+                       {job.job_items && job.job_items.length > 0 && job.job_items
+                         .filter((item: any) => {
+                           if (activeTab === 'All' || activeTab === 'My Queue') return true;
+                           return item.status === activeTab;
+                         })
+                         .map((item: any) => {
+                           const isDeptMatch = activeTab !== 'All' && activeTab !== 'My Queue' && item.status === activeTab;
+                           return (
+                          <tr key={item.id} className={`border-b border-gray-100/50 transition-colors ${isDeptMatch ? 'bg-yellow-400/10' : 'bg-gray-50/30'}`}>
+                            <td className="px-6 py-2"></td>
+                            <td className="px-6 py-2"></td>
+                            <td className="px-6 py-2">
+                              <div className={`flex items-center gap-3 pl-4 border-l-2 ${isDeptMatch ? 'border-yellow-400' : 'border-blue-100'}`}>
+                                <button 
+                                  onClick={() => handleOpenItemDrawer(item.id)}
+                                  className="flex flex-col text-left hover:opacity-75 transition-opacity"
+                                >
+                                  <span className={`text-[11px] font-black uppercase tracking-tight ${isDeptMatch ? 'text-yellow-900' : 'text-gray-700'}`}>{item.description}</span>
+                                  <span className="text-[9px] text-gray-400 font-bold uppercase">{item.quantity?.toLocaleString()} units</span>
+                                </button>
+                              </div>
+                            </td>
+                            <td className="px-6 py-2">
+                              <span className="text-xs text-gray-500">{item.size || 'N/A'}</span>
+                            </td>
+                            <td className="px-6 py-2">
+                              <div className="text-[10px] text-gray-400 truncate max-w-[120px]" title={item.paper_stock}>{item.paper_stock || 'N/A'}</div>
+                            </td>
+                            <td className="px-6 py-2">
+                              <div className="flex items-center gap-2">
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
+                                    item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' 
+                                    : isDeptMatch ? 'bg-yellow-400 text-yellow-900 border-yellow-500 shadow-sm'
+                                    : 'bg-blue-50 text-blue-700 border-blue-200'
+                                }`}>
+                                    {item.status || 'Pending'}
+                                </span>
+                                
+                                {isDeptMatch && (
+                                    <button 
+                                        onClick={() => handleCompleteItemStep(item, activeTab)}
+                                        className="bg-green-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-sm hover:bg-green-700 transition-colors uppercase"
+                                    >
+                                        Mark Done
+                                    </button>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-6 py-2"></td>
+                            <td className="px-6 py-2">
+                                <div className="flex justify-end">
+                                    <button onClick={() => handleOpenItemDrawer(item.id)} className="text-gray-300 hover:text-black">
+                                        <ExternalLink size={14} />
+                                    </button>
+                                </div>
+                            </td>
+                          </tr>
+                        );
+                        })}
+                       </React.Fragment>
+                       );
+                     })}
                   </tbody>
                 </table>
               )}

@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe, ChevronDown
+  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe, ChevronDown, ArrowUp, ArrowDown, ExternalLink, FilePlus
 } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
@@ -45,251 +45,8 @@ function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel
   );
 }
 
-// --- HELPER COMPONENT: ITEM DETAIL DRAWER ---
-function ItemDetailDrawer({ 
-  item, 
-  assets,
-  workflowOptions, // <--- NEW: Dynamic Options passed in
-  onClose, 
-  onUpdate,
-  onUpload,
-  onAddStep,
-  onToggleStep,
-  onDeleteStep
-}: { 
-  item: any, 
-  assets: any[],
-  workflowOptions: any[],
-  onClose: () => void, 
-  onUpdate: (id: string, data: any) => void,
-  onUpload: (file: File, itemId: string) => Promise<void>,
-  onAddStep: (itemId: string, stepName: string, isInternal: boolean) => void,
-  onToggleStep: (stepId: string, currentStatus: string) => void,
-  onDeleteStep: (stepId: string) => void
-}) {
-  const [formData, setFormData] = useState({
-    description: item.description || '',
-    quantity: item.quantity || 0,
-    paper_stock: item.paper_stock || '',
-    size: item.size || '',
-    ink_colors: item.ink_colors || '',
-    internal_notes: item.internal_notes || '' 
-  });
-  
-  const [selectedStep, setSelectedStep] = useState('');
-  const [customStep, setCustomStep] = useState('');
-  const [isInternalStep, setIsInternalStep] = useState(true);
+import ItemDetailDrawer from '@/components/ItemDetailDrawer';
 
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const itemAssets = assets.filter(a => a.job_item_id === item.id);
-  const steps = item.job_item_steps?.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) || [];
-
-  const handleSave = () => {
-    onUpdate(item.id, formData);
-    onClose();
-  };
-
-  const handleAddStepSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const finalStepName = selectedStep === 'Custom' ? customStep : selectedStep;
-    if (!finalStepName || finalStepName.trim() === '') return;
-
-    onAddStep(item.id, finalStepName, isInternalStep);
-    
-    // Reset
-    setSelectedStep('');
-    setCustomStep('');
-    setIsInternalStep(true);
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setIsUploading(true);
-      try {
-        await onUpload(e.target.files[0], item.id);
-      } catch (err) {
-        alert("Upload failed.");
-      }
-      setIsUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      {/* Backdrop */}
-      <div onClick={onClose} className="absolute inset-0 bg-black/20 backdrop-blur-sm transition-opacity" />
-      
-      {/* The Drawer */}
-      <div className="relative w-full max-w-md bg-white h-full shadow-2xl p-6 overflow-y-auto animate-in slide-in-from-right duration-200 border-l border-gray-200 flex flex-col">
-        <div className="flex justify-between items-start mb-6">
-           <div>
-             <h2 className="text-xl font-bold text-gray-900">Item Details</h2>
-             <p className="text-xs text-gray-400 font-mono uppercase">{item.id.split('-')[0]} • {item.description}</p>
-           </div>
-           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full"><X size={20} /></button>
-        </div>
-
-        <div className="space-y-6 flex-1">
-           {/* Section 1: Basics */}
-           <div className="space-y-4">
-              <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1">General Info</h3>
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Description / Name</label>
-                <input value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full border p-2 rounded text-sm font-bold" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">Quantity</label>
-                    <input type="number" value={formData.quantity} onChange={e => setFormData({...formData, quantity: parseInt(e.target.value)})} className="w-full border p-2 rounded text-sm" />
-                </div>
-                <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">Status</label>
-                    <div className="p-2 bg-gray-100 rounded text-sm text-gray-500">{item.status}</div>
-                </div>
-              </div>
-           </div>
-
-           {/* Section 2: Production Steps (LIVE QUEUE SELECTOR) */}
-           <div className="space-y-3">
-              <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1 flex items-center gap-2">
-                <ListTodo size={14}/> Production Path
-              </h3>
-              
-              <div className="space-y-2">
-                 {steps.length === 0 && <p className="text-[11px] text-gray-400 italic">No steps defined. Add one below.</p>}
-                 {steps.map((step: any) => {
-                   const isDone = step.status === 'Completed';
-                   const isInternal = step.is_internal !== false; 
-                   return (
-                     <div key={step.id} className={`flex items-center gap-2 p-2 rounded border transition-all ${isDone ? 'bg-green-50 border-green-200' : isInternal ? 'bg-gray-50 border-gray-200' : 'bg-blue-50 border-blue-200'}`}>
-                        <button 
-                          onClick={() => onToggleStep(step.id, step.status)}
-                          className={`flex-shrink-0 w-5 h-5 rounded border flex items-center justify-center transition-colors ${isDone ? 'bg-green-500 border-green-600 text-white' : 'bg-white border-gray-300 hover:border-black'}`}
-                        >
-                          {isDone && <CheckSquare size={12}/>}
-                        </button>
-                        
-                        <div className="flex-1 flex flex-col">
-                           <span className={`text-xs font-bold ${isDone ? 'text-green-800 line-through opacity-70' : 'text-gray-800'}`}>
-                             {step.step_name}
-                           </span>
-                           <span className="text-[9px] flex items-center gap-1 text-gray-400 uppercase font-bold">
-                              {isInternal ? <><Lock size={8}/> Internal</> : <><Globe size={8} className="text-blue-500"/> Customer Visible</>}
-                           </span>
-                        </div>
-
-                        <button onClick={() => onDeleteStep(step.id)} className="text-gray-300 hover:text-red-500"><X size={14}/></button>
-                     </div>
-                   );
-                 })}
-              </div>
-
-              {/* Add Step Input - DYNAMIC SELECT */}
-              <div className="pt-2 border-t border-gray-100">
-                <form onSubmit={handleAddStepSubmit} className="flex flex-col gap-2">
-                   <div className="flex gap-2">
-                     <select 
-                       value={selectedStep} 
-                       onChange={e => setSelectedStep(e.target.value)}
-                       className="flex-1 text-xs p-2 rounded border border-gray-300 focus:outline-none focus:border-black bg-white"
-                     >
-                        <option value="">+ Add Next Step...</option>
-                        {workflowOptions.map((queue) => (
-                            <optgroup key={queue.queue_name} label={queue.queue_name}>
-                                {queue.steps?.map((s: string) => <option key={s} value={s}>{s}</option>)}
-                            </optgroup>
-                        ))}
-                        <option value="Custom">Custom / Other...</option>
-                     </select>
-                     <button type="submit" disabled={!selectedStep} className="bg-gray-900 text-white px-3 rounded text-xs font-bold hover:bg-black disabled:opacity-50">Add</button>
-                   </div>
-                   
-                   {/* Custom Input */}
-                   {selectedStep === 'Custom' && (
-                       <input 
-                         placeholder="Type custom step name..."
-                         value={customStep}
-                         onChange={e => setCustomStep(e.target.value)}
-                         className="w-full text-xs p-2 rounded border border-gray-300 focus:outline-none focus:border-black animate-in fade-in"
-                         autoFocus
-                       />
-                   )}
-
-                   {/* INTERNAL TOGGLE */}
-                   <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <div className={`w-3 h-3 border rounded flex items-center justify-center ${isInternalStep ? 'bg-gray-500 border-gray-600' : 'bg-white border-gray-300'}`}>
-                         {isInternalStep && <CheckSquare size={10} className="text-white"/>}
-                      </div>
-                      <input type="checkbox" checked={isInternalStep} onChange={e => setIsInternalStep(e.target.checked)} className="hidden" />
-                      <span className="text-[10px] uppercase font-bold text-gray-500 flex items-center gap-1">
-                        {isInternalStep ? <><Lock size={10}/> Internal Only (Hidden)</> : <><Globe size={10}/> Customer Can See</>}
-                      </span>
-                   </label>
-                </form>
-              </div>
-           </div>
-
-           {/* Section 3: Print Specs */}
-           <div className="space-y-4">
-              <h3 className="text-xs font-bold uppercase text-gray-500 border-b pb-1">Specs</h3>
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Paper Stock</label>
-                <input placeholder="e.g. 100lb Gloss Cover" value={formData.paper_stock} onChange={e => setFormData({...formData, paper_stock: e.target.value})} className="w-full border p-2 rounded text-sm" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">Flat Size</label>
-                    <input placeholder="8.5 x 11" value={formData.size} onChange={e => setFormData({...formData, size: e.target.value})} className="w-full border p-2 rounded text-sm" />
-                </div>
-                <div>
-                    <label className="block text-xs font-bold text-gray-700 mb-1">Ink / Colors</label>
-                    <input placeholder="4/4, 4/0" value={formData.ink_colors} onChange={e => setFormData({...formData, ink_colors: e.target.value})} className="w-full border p-2 rounded text-sm" />
-                </div>
-              </div>
-           </div>
-
-           {/* Section 4: Item Specific Files */}
-           <div className="bg-blue-50 p-4 rounded border border-blue-100">
-              <h3 className="text-xs font-bold uppercase text-blue-800 mb-3 flex items-center justify-between">
-                <span>Item Artwork</span>
-                <span className="text-[10px] bg-blue-200 px-1.5 rounded text-blue-800">{itemAssets.length}</span>
-              </h3>
-              
-              <div className="space-y-2 mb-3">
-                 {itemAssets.length === 0 && <p className="text-[11px] text-blue-400 italic">No files linked to this specific item yet.</p>}
-                 {itemAssets.map(asset => (
-                   <div key={asset.id} className="bg-white p-2 rounded border border-blue-200 flex items-center gap-2">
-                      <FileImage size={14} className="text-blue-500"/>
-                      <span className="text-xs font-bold text-gray-700 truncate flex-1">{asset.file_name}</span>
-                      <span className="text-[9px] uppercase font-bold text-gray-400">Linked</span>
-                   </div>
-                 ))}
-              </div>
-
-              <input ref={fileInputRef} type="file" onChange={handleFileChange} className="hidden" />
-              
-              <button 
-                onClick={() => fileInputRef.current?.click()} 
-                disabled={isUploading}
-                className="w-full text-xs bg-white border border-blue-300 text-blue-700 px-3 py-2 rounded hover:bg-blue-100 font-bold flex items-center justify-center gap-2"
-              >
-                 {isUploading ? 'Uploading...' : <><UploadCloud size={14}/> Upload Art for this Item</>}
-              </button>
-           </div>
-        </div>
-
-        <div className="pt-4 mt-4 border-t sticky bottom-0 bg-white">
-          <button onClick={handleSave} className="w-full bg-black text-white py-3 rounded font-bold hover:bg-gray-800 shadow-lg">
-            Save Changes
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // --- HELPER COMPONENT: PRODUCTION ITEMS TABLE ---
 function JobItemsTable({ 
@@ -301,7 +58,13 @@ function JobItemsTable({
   onItemUpload,
   onAddStep,
   onToggleStep,
-  onDeleteStep
+  onDeleteStep,
+  onMoveStep,
+  onReorderSteps,
+  onOpenProofModal,
+  onLogActivity,
+  logs,
+  userRole 
 }: { 
   items: any[], 
   assets: any[], 
@@ -311,7 +74,13 @@ function JobItemsTable({
   onItemUpload: (file: File, itemId: string) => Promise<void>,
   onAddStep: (itemId: string, stepName: string, isInternal: boolean) => void,
   onToggleStep: (stepId: string, currentStatus: string) => void,
-  onDeleteStep: (stepId: string) => void
+  onDeleteStep: (stepId: string) => void,
+  onMoveStep: (stepId: string, direction: 'up' | 'down') => void,
+  onReorderSteps: (itemId: string, newSteps: any[]) => void,
+  onOpenProofModal: (itemId?: string) => void,
+  onLogActivity: (action: string, details: string, itemId?: string) => Promise<void>,
+  logs: any[],
+  userRole: string 
 }) {
   const [isAdding, setIsAdding] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -332,6 +101,12 @@ function JobItemsTable({
           onAddStep={onAddStep}
           onToggleStep={onToggleStep}
           onDeleteStep={onDeleteStep}
+          onMoveStep={onMoveStep}
+          onReorderSteps={onReorderSteps}
+          onOpenProofModal={onOpenProofModal}
+          onLogActivity={onLogActivity}
+          logs={logs}
+          userRole={userRole} 
         />
       )}
 
@@ -362,15 +137,13 @@ function JobItemsTable({
         ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
-            <thead className="bg-white text-xs text-gray-500 font-bold uppercase border-b border-gray-100">
+            <thead className="bg-gray-50/50 text-[10px] text-gray-400 font-bold uppercase border-b border-gray-100">
               <tr>
-                <th className="px-4 py-2 w-10">#</th>
-                <th className="px-4 py-2">Description</th>
-                <th className="px-4 py-2 w-24 text-right">Qty</th>
-                <th className="px-4 py-2">Stock</th>
-                <th className="px-4 py-2">Steps</th>
-                <th className="px-4 py-2 w-24">Status</th>
-                <th className="px-4 py-2 w-10"></th>
+                <th className="px-6 py-4 w-12">#</th>
+                <th className="px-6 py-4">Item Details</th>
+                <th className="px-6 py-4 w-32 text-right">Production Qty</th>
+                <th className="px-6 py-4">Status</th>
+                <th className="px-6 py-4 w-12"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -378,41 +151,123 @@ function JobItemsTable({
                  const hasFiles = assets.some(a => a.job_item_id === item.id);
                  const steps = item.job_item_steps || [];
                  return (
-                <tr key={item.id} onClick={() => setEditingItemId(item.id)} className="hover:bg-blue-50 transition-colors cursor-pointer group">
-                  <td className="px-4 py-3 font-mono text-gray-400">{index + 1}</td>
-                  <td className="px-4 py-3 font-bold text-gray-900">
-                    <div className="flex items-center gap-2">
-                      {item.description}
-                      {hasFiles && <Paperclip size={12} className="text-blue-500" />}
+                <tr key={item.id} onClick={() => setEditingItemId(item.id)} className="hover:bg-blue-50/50 transition-all cursor-pointer group">
+                  <td className="px-6 py-6 align-top">
+                     <span className="text-xl font-black text-gray-100 group-hover:text-blue-200 transition-colors font-mono">{String(index + 1).padStart(2, '0')}</span>
+                  </td>
+                  <td className="px-6 py-6 align-top">
+                    <div className="flex flex-col gap-3">
+                      <div className="flex flex-col gap-1">
+                        {item.size && <span className="text-[10px] font-black text-blue-600 ml-0.5 uppercase tracking-[0.15em] mb-1">{item.size}</span>}
+                        <div className="flex items-center gap-3">
+                          <h4 className="text-lg font-black text-gray-900 tracking-tight leading-none uppercase">{item.description}</h4>
+                          {hasFiles && <Paperclip size={14} className="text-blue-500" />}
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-4 text-xs font-bold text-gray-500 uppercase tracking-tighter">
+                         <span className="flex items-center gap-1.5"><Layers size={12}/> {item.paper_stock || 'TBD STOCK'}</span>
+                         <span className="flex items-center gap-1.5"> {item.ink_colors || 'CMYK'}</span>
+                      </div>
+
+                      {/* PRIMARY PERSISTENT NOTE */}
+                      {item.internal_notes && (
+                        <div className="text-[11px] bg-yellow-400/10 text-yellow-800 p-3 rounded-lg border border-yellow-200 flex items-start gap-2 font-black leading-relaxed max-w-xl shadow-inner uppercase tracking-tight">
+                          <Lock size={14} className="mt-0.5 flex-shrink-0 text-yellow-600"/> 
+                          <div>
+                            <span className="block text-[9px] opacity-70 mb-1 tracking-widest">Main Production Note:</span>
+                            {item.internal_notes}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* MULTIPLE LOGGED NOTES / ACTIVITY */}
+                      {(() => {
+                        const itemLogs = logs
+                          .filter(l => l.job_item_id === item.id || (l.details && l.details.includes(`ITEM:${item.id}`)))
+                          .filter(l => l.action === 'Item Update' || l.action === 'Item Added');
+                        
+                        if (itemLogs.length === 0) return null;
+
+                        return (
+                          <div className="flex flex-col gap-2 max-w-xl">
+                            {itemLogs.map((log) => (
+                              <div key={log.id} className="text-[10px] bg-blue-50/50 text-blue-900 px-3 py-2 rounded-lg border border-blue-100 flex items-start gap-2 font-medium">
+                                <MessageSquare size={12} className="mt-0.5 flex-shrink-0 text-blue-400"/>
+                                <div>
+                                  <span className="text-[8px] font-black opacity-50 block uppercase mb-0.5">{new Date(log.created_at).toLocaleDateString()}</span>
+                                  {log.details}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                       {steps.map((step: any) => (
+                         <span key={step.id} className={`text-[10px] px-2 py-0.5 border rounded-md uppercase font-black tracking-widest ${
+                            step.status === 'Completed' ? 'bg-green-100 text-green-700 border-green-200 shadow-sm' : 'bg-white text-gray-400 border-gray-200'
+                         }`}>
+                            {step.status === 'Completed' ? '✓ ' : ''}{step.step_name}
+                         </span>
+                       ))}
+                      </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-right font-mono text-gray-600">
-                    {item.quantity?.toLocaleString() || '-'}
+                  <td className="px-6 py-6 text-right align-top">
+                    <div className="flex flex-col items-end">
+                      <span className="text-2xl font-black text-gray-900 font-mono tracking-tighter">
+                        {item.quantity?.toLocaleString() || '0'}
+                      </span>
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">TOTAL PIECES</span>
+                    </div>
                   </td>
-                  <td className="px-4 py-3 text-gray-600 text-xs">
-                    {item.paper_stock || '-'}
-                  </td>
-                  <td className="px-4 py-3">
-                     <div className="flex flex-wrap gap-1">
-                      {steps.map((step: any) => (
-                        <span key={step.id} className={`text-[9px] px-1.5 py-0.5 border rounded uppercase font-bold tracking-wider ${
-                           step.status === 'Completed' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-400 border-gray-200'
-                        }`}>
-                           {step.step_name}
-                        </span>
-                      ))}
-                      {steps.length === 0 && <span className="text-gray-300 italic text-[10px]">No steps</span>}
-                     </div>
-                  </td>
-                  <td className="px-4 py-3">
-                     <span className={`text-[10px] font-bold px-2 py-1 rounded-full border ${
-                       item.status === 'Completed' ? 'bg-green-50 text-green-800 border-green-200' : 'bg-yellow-50 text-yellow-800 border-yellow-200'
-                     }`}>
-                       {item.status || 'Pending'}
-                     </span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                      <Settings size={14} className="text-gray-300 group-hover:text-black transition-colors" />
+                  <td className="px-6 py-6 align-top">
+                      <select 
+                        value={item.status || 'Pending'}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => onUpdateItem(item.id, { status: e.target.value })}
+                        className={`text-[11px] font-black px-3 py-1.5 rounded-lg border-2 cursor-pointer focus:outline-none focus:ring-4 focus:ring-black/5 uppercase tracking-widest transition-all
+                        ${item.status === 'Completed' ? 'bg-green-600 text-white border-green-700' 
+                          : item.status === 'Pending' ? 'bg-gray-100 text-gray-500 border-gray-200'
+                          : 'bg-blue-600 text-white border-blue-700'}
+                        `}
+                      >
+                         <option value="Pending">Pending</option>
+                         {/* DYNAMIC STEPS AS STATUS OPTIONS */}
+                         {steps.map((s: any) => (
+                            <option key={s.id} value={s.step_name}>{s.step_name}</option>
+                         ))}
+                         <option value="Completed">Completed</option>
+                         <option value="Cancelled">Cancelled</option>
+                      </select>
+                   </td>
+                  <td className="px-6 py-6 text-right align-top">
+                      <div className="flex items-center justify-end gap-2">
+                         {(() => {
+                            const itemAssets = assets.filter(a => a.job_item_id === item.id);
+                            const hasProof = itemAssets.some(a => a.asset_type === 'proof');
+                            const isApproved = itemAssets.some(a => a.asset_type === 'proof' && a.status === 'approved');
+                            
+                            return (
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); onOpenProofModal(item.id); }}
+                                className={`flex items-center gap-1.5 text-[10px] px-2.5 py-1.5 rounded-lg font-black transition-all shadow-sm uppercase tracking-widest border-2
+                                  ${isApproved ? 'bg-green-100 text-green-700 border-green-200' : 
+                                    hasProof ? 'bg-purple-100 text-purple-700 border-purple-200' : 
+                                    'bg-purple-600 text-white border-purple-700 hover:bg-purple-700 shadow-purple-100'}
+                                `}
+                              >
+                                {isApproved ? <CheckCircle size={12}/> : <Plus size={12} />}
+                                {isApproved ? 'Approved' : hasProof ? 'Sent / Send Another' : 'Proof'}
+                              </button>
+                            );
+                         })()}
+                         <div className="p-2 hover:bg-gray-100 rounded-full transition-colors inline-block">
+                           <Settings size={18} className="text-gray-300 group-hover:text-black transition-colors" />
+                         </div>
+                      </div>
                   </td>
                 </tr>
               )})}
@@ -454,6 +309,7 @@ export default function JobInteractiveView({
   const [messages, setMessages] = useState(initialMessages);
   const [logs, setLogs] = useState(initialLogs); 
   const [assets, setAssets] = useState(initialAssets);
+  const [userRole, setUserRole] = useState('customer');
   
   // NEW: State for Dynamic Settings
   const [workflowOptions, setWorkflowOptions] = useState<any[]>([]);
@@ -461,6 +317,7 @@ export default function JobInteractiveView({
   // UI State
   const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat');
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [proofItemId, setProofItemId] = useState<string | undefined>();
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadMessage, setUploadMessage] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -500,9 +357,15 @@ export default function JobInteractiveView({
     
     // NEW: Fetch Workflow Settings on Load
     fetchWorkflowQueues();
+    fetchUserRole();
 
     return () => { supabase.removeChannel(channel); };
   }, [jobId]);
+
+  const fetchUserRole = async () => {
+    const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+    if (data?.role) setUserRole(data.role);
+  };
 
   const fetchWorkflowQueues = async () => {
     const { data } = await supabase.from('workflow_queues').select('*').order('rank', { ascending: true });
@@ -510,17 +373,29 @@ export default function JobInteractiveView({
   };
 
   const refreshMessages = async () => {
-    const { data } = await supabase.from('messages').select('*, profiles(email, first_name, role)').eq('job_id', jobId).order('created_at', { ascending: true });
+    const { data } = await supabase.from('messages').select('*, profiles(email)').eq('job_id', jobId).order('created_at', { ascending: true });
     if (data) setMessages(data);
   };
 
   const refreshAssets = async () => {
-    const { data } = await supabase.from('job_assets').select('*, profiles(first_name, email)').eq('job_id', jobId).order('created_at', { ascending: false });
+    const { data } = await supabase.from('job_assets').select('*, profiles(email)').eq('job_id', jobId).order('created_at', { ascending: false });
     if (data) setAssets(data);
   };
 
-  const logActivity = async (action: string, details: string) => {
-      await supabase.from('job_logs').insert({ job_id: jobId, user_id: user.id, action, details });
+  const refreshLogs = async () => {
+    const { data } = await supabase.from('job_logs').select('*, profiles(email)').eq('job_id', jobId).order('created_at', { ascending: false });
+    if (data) setLogs(data);
+  };
+
+  const logActivity = async (action: string, details: string, itemId?: string) => {
+      await supabase.from('job_logs').insert({ 
+        job_id: jobId, 
+        user_id: user.id, 
+        action, 
+        details,
+        job_item_id: itemId || null 
+      });
+      await Promise.all([refreshLogs(), refreshMessages()]);
   };
 
   // --- ITEM CRUD OPERATIONS ---
@@ -542,14 +417,19 @@ export default function JobInteractiveView({
       setItems(items);
     } else {
       setItems(current => current.map(i => i.id === tempId ? { ...data, job_item_steps: [] } : i));
-      logActivity('Item Added', `Added production item: ${newItem.description}`);
+      logActivity('Item Added', `Added production item: ${newItem.description}`, data.id);
     }
   };
 
-  const handleUpdateItem = async (itemId: string, updates: any) => {
-    setItems(items.map(i => i.id === itemId ? { ...i, ...updates } : i));
-    const { error } = await supabase.from('job_items').update(updates).eq('id', itemId);
+  const handleUpdateItem = async (id: string, updates: any) => {
+    setItems(current => current.map(i => i.id === id ? { ...i, ...updates } : i));
+    const { error } = await supabase.from('job_items').update(updates).eq('id', id);
     if (error) alert("Error saving item: " + error.message);
+  };
+
+  const handleUpdateJob = async (id: string, updates: any) => {
+      setJob({ ...job, ...updates });
+      await supabase.from('jobs').update(updates).eq('id', id);
   };
 
   const handleItemUpload = async (file: File, itemId: string) => {
@@ -564,7 +444,28 @@ export default function JobInteractiveView({
       if (dbError) throw dbError;
 
       await refreshAssets();
-      await logActivity('Asset Linked', `Uploaded ${file.name} to item.`);
+      await logActivity('Asset Linked', `Uploaded ${file.name} to item.`, itemId);
+  };
+
+  // --- ITEM STATUS SYNCING (PHASE 3.10) ---
+  const syncItemStatus = async (itemId: string, currentSteps: any[]) => {
+    // Find first non-completed step
+    const firstActive = currentSteps.find((s: any) => s.status !== 'Completed');
+    let newStatus = 'Pending';
+    
+    if (firstActive) {
+      newStatus = firstActive.step_name;
+    } else if (currentSteps.length > 0 && currentSteps.every((s: any) => s.status === 'Completed')) {
+      // If all steps are completed, then the item is completed
+      newStatus = 'Completed';
+    }
+
+    setItems(current => current.map(item => {
+      if (item.id === itemId) return { ...item, status: newStatus };
+      return item;
+    }));
+
+    await supabase.from('job_items').update({ status: newStatus }).eq('id', itemId);
   };
 
   // --- STEP OPERATIONS (UPDATED FOR INTERNAL/EXTERNAL) ---
@@ -597,18 +498,61 @@ export default function JobInteractiveView({
         }
         return i;
        }));
+       // After adding, sync the parent item status
+       const item = items.find(i => i.id === itemId);
+       if (item) {
+         const updatedSteps = [...(item.job_item_steps || []), data];
+         await syncItemStatus(item.id, updatedSteps);
+       }
     }
   };
 
   const handleToggleStep = async (stepId: string, currentStatus: string) => {
-    const newStatus = currentStatus === 'Completed' ? 'Pending' : 'Completed';
-    
+    const statusOptions = ['Pending', 'In Production', 'To Bindery', 'In Bindery', 'Bindery Complete', 'Completed', 'Cancelled'];
+    const currentIndex = statusOptions.indexOf(currentStatus);
+    const newStatus = currentIndex === statusOptions.length - 1 ? statusOptions[0] : statusOptions[currentIndex + 1];
+
     setItems(current => current.map(i => ({
       ...i,
       job_item_steps: i.job_item_steps?.map((s: any) => s.id === stepId ? { ...s, status: newStatus } : s)
     })));
 
     await supabase.from('job_item_steps').update({ status: newStatus }).eq('id', stepId);
+
+    // After toggle, sync the parent item status
+    const item = items.find(i => i.job_item_steps?.some((s: any) => s.id === stepId));
+    if (item) {
+      const updatedSteps = item.job_item_steps.map((s: any) => s.id === stepId ? { ...s, status: newStatus } : s);
+      await syncItemStatus(item.id, updatedSteps);
+    }
+  };
+
+  const handleMoveStep = async (stepId: string, direction: 'up' | 'down') => {
+    setItems(current => current.map(item => {
+      if (!item.job_item_steps) return item;
+      const index = item.job_item_steps.findIndex((s: any) => s.id === stepId);
+      if (index === -1) return item;
+      
+      const newSteps = [...item.job_item_steps];
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      
+      if (targetIndex >= 0 && targetIndex < newSteps.length) {
+        [newSteps[index], newSteps[targetIndex]] = [newSteps[targetIndex], newSteps[index]];
+        const syncedItem = { ...item, job_item_steps: newSteps };
+        syncItemStatus(item.id, newSteps); // Fire and forget sync
+        return syncedItem;
+      }
+      return item;
+    }));
+  };
+
+  const handleReorderSteps = async (itemId: string, newSteps: any[]) => {
+    setItems(current => current.map(item => {
+      if (item.id === itemId) return { ...item, job_item_steps: newSteps };
+      return item;
+    }));
+    await syncItemStatus(itemId, newSteps);
+    // Note: To persist this properly across sessions, we would need to update 'created_at' or a 'sort_order' column for EACH step.
   };
 
   const handleDeleteStep = async (stepId: string) => {
@@ -618,6 +562,12 @@ export default function JobInteractiveView({
     })));
 
     await supabase.from('job_item_steps').delete().eq('id', stepId);
+    
+    const item = items.find(i => i.job_item_steps?.some((s: any) => s.id === stepId));
+    if (item) {
+      const remainingSteps = item.job_item_steps.filter((s: any) => s.id !== stepId);
+      await syncItemStatus(item.id, remainingSteps);
+    }
   };
 
   // --- GENERAL APP LOGIC ---
@@ -642,18 +592,39 @@ export default function JobInteractiveView({
   const handleSubmitProof = async () => {
       if (!uploadFile || !user) return;
       setIsUploading(true);
-      const fileName = `${jobId}-proof-${Math.random().toString(36).substring(7)}.${uploadFile.name.split('.').pop()}`;
+      const fileName = `${jobId}-proof-${Math.random().toString(36).substring(7)}${proofItemId ? `-item-${proofItemId.substring(0,4)}` : ''}.${uploadFile.name.split('.').pop()}`;
       const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
       if (error) { alert(error.message); setIsUploading(false); return; }
 
-      await supabase.from('job_assets').update({ status: 'archived' }).eq('job_id', jobId).eq('asset_type', 'proof').eq('status', 'pending');
+      // Archive previous proofs for this SPECIFIC item OR global
+      const updateQuery = supabase.from('job_assets')
+        .update({ status: 'archived' })
+        .eq('job_id', jobId)
+        .eq('asset_type', 'proof')
+        .eq('status', 'pending');
+      
+      if (proofItemId) {
+          updateQuery.eq('job_item_id', proofItemId);
+      } else {
+          updateQuery.is('job_item_id', null);
+      }
+      await updateQuery;
+
       const { data: newAsset } = await supabase.from('job_assets').insert({
-          job_id: jobId, uploader_id: user.id, file_url: data?.path, file_name: uploadFile.name, asset_type: 'proof', status: 'pending'
+          job_id: jobId, 
+          job_item_id: proofItemId || null,
+          uploader_id: user.id, 
+          file_url: data?.path, 
+          file_name: uploadFile.name, 
+          asset_type: 'proof', 
+          status: 'pending'
       }).select().single();
-      await sendProofNotification(jobId, data?.path || '', uploadMessage);
+
+      const itemDesc = proofItemId ? items.find(i => i.id === proofItemId)?.description : 'Main Job';
+      await sendProofNotification(jobId, data?.path || '', `${uploadMessage} (Item: ${itemDesc})`);
       
       if (newAsset) { await refreshAssets(); loadPreview(newAsset); }
-      setIsUploading(false); setShowUploadModal(false); setUploadFile(null); setUploadMessage('');
+      setIsUploading(false); setShowUploadModal(false); setUploadFile(null); setUploadMessage(''); setProofItemId(undefined);
   };
 
   const handleApproveProof = async (assetId: string) => {
@@ -669,10 +640,32 @@ export default function JobInteractiveView({
     await supabase.from('messages').insert({ job_id: jobId, user_id: user.id, content: msg });
   };
 
+  const handleUpdateStepNote = async (stepId: string, note: string) => {
+    const { error } = await supabase.from('job_item_steps').update({ notes: note }).eq('id', stepId);
+    if (error) {
+      console.error('Error updating step note:', error);
+      alert('Failed to save step note');
+    } else {
+      // Refresh steps locally
+      const updatedSteps = steps.map((s: any) => s.id === stepId ? { ...s, notes: note } : s);
+      // Assuming steps is stateful; if not, you may need to refetch.
+    }
+  };
+
   const handleSaveNotes = async () => {
+      if (!internalNotes.trim()) return;
       setIsSaving(true);
-      await supabase.from('jobs').update({ internal_notes: internalNotes }).eq('id', jobId);
-      setIsSaving(false); alert('Notes saved.');
+      
+      // Save to database ('notes' column is what's displayed at top)
+      const { error } = await supabase.from('jobs').update({ notes: internalNotes }).eq('id', jobId);
+      if (error) {
+        alert("Error saving notes: " + error.message);
+      } else {
+        setJob({ ...job, notes: internalNotes });
+        await logActivity('Job Notes Updated', 'Production notes were updated.');
+      }
+      
+      setIsSaving(false); 
   };
 
   const toggleFinishingOption = async (optionName: string) => {
@@ -716,7 +709,18 @@ export default function JobInteractiveView({
                     </div>
                     <div>
                         <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Message to Customer</label>
-                        <textarea value={uploadMessage} onChange={(e) => setUploadMessage(e.target.value)} placeholder="e.g. Check spelling..." className="w-full border border-gray-300 rounded-lg p-3 text-sm h-24 resize-none"/>
+                        <textarea value={uploadMessage} onChange={(e) => setUploadMessage(e.target.value)} placeholder="e.g. Check spelling..." className="w-full border border-gray-300 rounded-lg p-3 text-sm h-20 resize-none"/>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Target Line Item (Optional)</label>
+                        <select 
+                            value={proofItemId || ''} 
+                            onChange={(e) => setProofItemId(e.target.value || undefined)}
+                            className="w-full border border-gray-300 rounded-lg p-2 text-sm bg-white"
+                        >
+                            <option value="">-- Apply to Entire Job --</option>
+                            {items.map(i => <option key={i.id} value={i.id}>{i.description} ({i.size})</option>)}
+                        </select>
                     </div>
                     <button onClick={handleSubmitProof} disabled={!uploadFile || isUploading} className={`w-full py-3 rounded-xl font-bold text-white transition-all ${!uploadFile || isUploading ? 'bg-gray-300' : 'bg-black hover:bg-gray-800'}`}>
                         {isUploading ? 'Sending...' : 'Send Proof'}
@@ -736,7 +740,15 @@ export default function JobInteractiveView({
                 <p className="text-xs font-mono text-gray-400 mt-1">#{jobId.substring(0,8).toUpperCase()} • {job.orders?.brand}</p>
               </div>
           </div>
-          <div className={`px-4 py-1 rounded-md text-white font-bold uppercase text-xs flex items-center bg-gray-900`}>{job.status || 'Pending'}</div>
+          <div className="flex items-center gap-3">
+            <Link 
+              href={`/dashboard/invoices/new?jobId=${jobId}`} 
+              className="px-4 py-1.5 bg-emerald-600 text-white rounded-md font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm"
+            >
+              <FilePlus size={14}/> Generate Invoice
+            </Link>
+            <div className={`px-4 py-1.5 rounded-md text-white font-bold uppercase text-[10px] flex items-center bg-gray-900 border border-gray-700`}>{job.status || 'Pending'}</div>
+          </div>
         </div>
       </div>
 
@@ -761,55 +773,69 @@ export default function JobInteractiveView({
 
       {/* MAIN LAYOUT */}
       <div className="flex-1 max-w-[1920px] mx-auto w-full p-4 grid grid-cols-12 gap-4">
-        
-        {/* LEFT COL: SPECS */}
-        <div className="col-span-12 lg:col-span-3 space-y-4">
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <h3 className="text-xs font-bold uppercase text-gray-400 mb-4 flex items-center gap-2"><Layers size={14}/> Job Specs</h3>
-                <div className="space-y-3 text-sm">
-                    <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">Customer</span><span className="font-bold">{job.profiles?.first_name || 'Guest'}</span></div>
-                    <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">Total Qty</span><span className="font-bold">{job.quantity}</span></div>
-                    <div className="flex justify-between items-center pt-2"><span className="text-gray-500">Due Date</span><div className={`text-[10px] px-2 py-0.5 rounded font-bold ${countdown.color} text-white`}>{countdown.text}</div></div>
-                </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-                <h3 className="text-xs font-bold uppercase text-gray-400 mb-3 flex items-center gap-2"><Scissors size={14}/> Finishing</h3>
-                <div className="flex flex-wrap gap-2">
-                    {serviceList.map((service) => (
-                        <button key={service.id} onClick={() => toggleFinishingOption(service.name)} className={`px-3 py-1.5 rounded text-xs font-bold border transition-all flex items-center gap-2 ${job.finishing_options?.includes(service.name) ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
-                            {job.finishing_options?.includes(service.name) && <CheckSquare size={12} />} {service.name}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
-            <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-4">
-                <h3 className="text-xs font-bold uppercase text-yellow-700 mb-2 flex items-center gap-2"><Lock size={14}/> Internal Notes</h3>
-                <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private production notes..." className="w-full h-24 bg-white border border-yellow-300 rounded p-2 text-sm focus:outline-none mb-2"/>
-                <button onClick={handleSaveNotes} disabled={isSaving} className="w-full bg-yellow-400 text-yellow-900 text-xs font-bold py-1.5 rounded hover:bg-yellow-500 flex items-center justify-center gap-2"><Save size={12}/> Save Notes</button>
-            </div>
-
-             <div className="bg-blue-50 rounded-lg border border-blue-100 p-4">
-                <h3 className="text-xs font-bold uppercase text-blue-800 mb-2 flex items-center gap-2"><FileText size={14}/> Original Asset</h3>
-                {originalAsset ? (
-                    <div onClick={() => loadPreview(originalAsset)} className="flex items-center gap-3 p-2 bg-white rounded border border-blue-200 cursor-pointer hover:border-blue-400 transition-all">
-                        <div className="bg-blue-100 p-2 rounded text-blue-600"><FileImage size={20}/></div>
-                        <div className="overflow-hidden"><p className="text-xs font-bold text-gray-900 truncate w-32">{originalAsset.file_name}</p><p className="text-[10px] text-gray-500">Click to view</p></div>
+             {/* LEFT COL: ASSETS & INFO */}
+        <div className="col-span-12 lg:col-span-2 space-y-4">
+             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-4 tracking-widest flex items-center gap-2"><Layers size={14}/> SUMMARY</h3>
+                <div className="space-y-4">
+                    <div>
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Customer</p>
+                        <p className="text-sm font-bold text-gray-900 truncate">{job.profiles?.email?.split('@')[0] || 'Guest'}</p>
                     </div>
-                ) : <p className="text-xs text-blue-400 italic">No source file found.</p>}
+                    <div>
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Timeline</p>
+                        <div className="mt-1 flex flex-col gap-1.5">
+                            <div className={`text-[10px] px-2 py-1 rounded font-bold inline-block w-max ${countdown.color} text-white`}>{countdown.text}</div>
+                            <input 
+                              type="date" 
+                              value={job.due_date ? job.due_date.substring(0, 10) : ''} 
+                              onChange={(e) => handleUpdateJob(job.id, { due_date: e.target.value })}
+                              className="text-[10px] font-bold border rounded p-1 w-full bg-white focus:outline-none focus:border-black"
+                            />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+             <div className="bg-blue-50 rounded-xl border border-blue-100 p-4">
+                <h3 className="text-[10px] font-bold uppercase text-blue-800 mb-2 flex items-center gap-2 tracking-widest"><FileText size={14}/> SOURCE</h3>
+                {originalAsset ? (
+                    <div onClick={() => loadPreview(originalAsset)} className="flex items-center gap-3 p-2 bg-white rounded-lg border border-blue-200 cursor-pointer hover:border-blue-400 transition-all shadow-sm">
+                        <div className="bg-blue-100 p-2 rounded text-blue-600"><FileImage size={20}/></div>
+                        <div className="overflow-hidden">
+                            <p className="text-[10px] font-bold text-gray-900 truncate w-32">{originalAsset.file_name}</p>
+                            <p className="text-[9px] text-blue-400 font-bold uppercase">View File</p>
+                        </div>
+                    </div>
+                ) : <p className="text-[10px] text-blue-400 italic">No source file.</p>}
             </div>
         </div>
 
-        {/* MIDDLE COL: MAIN PROOF STAGE */}
-        <div className="col-span-12 lg:col-span-6 flex flex-col gap-4">
+        {/* MIDDLE COL: MAIN PRODUCTION HUB */}
+        <div className="col-span-12 lg:col-span-7 flex flex-col gap-4">
+             <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-6">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xs font-bold uppercase text-yellow-700 flex items-center gap-2"><Lock size={16}/> Global Job Notes</h3>
+                    <button onClick={handleSaveNotes} disabled={isSaving} className="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-3 py-1.5 rounded hover:bg-yellow-500 flex items-center gap-2 shadow-sm uppercase tracking-wider"><Save size={12}/> Save Global Notes</button>
+                </div>
+                <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private production notes for the whole job..." className="w-full h-24 bg-white border border-yellow-300 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 transition-all"/>
+             </div>
+
              <JobItemsTable 
                items={items} 
                assets={assets}
                workflowOptions={workflowOptions}
                onAddItem={handleAddItem} onUpdateItem={handleUpdateItem} onItemUpload={handleItemUpload}
-               onAddStep={handleAddStep} onToggleStep={handleToggleStep} onDeleteStep={handleDeleteStep}
-             />
+               onAddStep={handleAddStep}
+            onToggleStep={handleToggleStep}
+            onDeleteStep={handleDeleteStep}
+            onMoveStep={handleMoveStep}
+            onReorderSteps={handleReorderSteps}
+            onOpenProofModal={(itemId) => { setProofItemId(itemId); setShowUploadModal(true); }}
+            onLogActivity={logActivity}
+            logs={logs}
+            userRole={userRole} 
+          />
 
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden min-h-[500px] relative ${isApprovedAsset ? 'border-green-400 ring-2 ring-green-100' : 'border-gray-200'}`}>
                 <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
@@ -867,7 +893,7 @@ export default function JobInteractiveView({
                             {messages.map((msg) => (
                                 <div key={msg.id} className={`flex flex-col ${msg.user_id === user?.id ? 'items-end' : 'items-start'}`}>
                                     <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${msg.user_id === user?.id ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
-                                    <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.first_name}</span>
+                                    <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.email?.split('@')[0]}</span>
                                 </div>
                             ))}
                             <div ref={messagesEndRef} />

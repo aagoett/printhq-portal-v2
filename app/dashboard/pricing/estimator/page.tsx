@@ -19,9 +19,14 @@ export default function AutoEstimatorPage() {
   // --- DATA ---
   const [papers, setPapers] = useState<any[]>([]);
   const [presses, setPresses] = useState<any[]>([]);
+  const [finishing, setFinishing] = useState<any[]>([]);
+  const [mailing, setMailing] = useState<any[]>([]);
   const [estimates, setEstimates] = useState<any[]>([]);
   const [winner, setWinner] = useState<any>(null);
   
+  const [selectedFinishingIds, setSelectedFinishingIds] = useState<string[]>([]);
+  const [selectedMailingId, setSelectedMailingId] = useState<string | null>(null);
+
   const [isSaving, setIsSaving] = useState(false);
 
   const supabase = createBrowserClient(
@@ -37,17 +42,21 @@ export default function AutoEstimatorPage() {
     if (selectedPaperId && finishW > 0 && finishH > 0 && quantity > 0) {
         calculateBestRoute();
     }
-  }, [finishW, finishH, quantity, selectedPaperId]);
+  }, [finishW, finishH, quantity, selectedPaperId, selectedFinishingIds, selectedMailingId]);
 
   const fetchInventory = async () => {
     const { data: pData } = await supabase.from('pricing_components').select('*').eq('type', 'paper').order('name');
     const { data: mData } = await supabase.from('pricing_components').select('*').in('type', ['press_digital', 'press_offset']);
+    const { data: fData } = await supabase.from('pricing_components').select('*').eq('type', 'finishing').order('name');
+    const { data: mailData } = await supabase.from('pricing_components').select('*').eq('type', 'mailing').order('name');
 
     if (pData) {
         setPapers(pData);
         if (pData.length > 0) setSelectedPaperId(pData[0].id);
     }
     if (mData) setPresses(mData);
+    if (fData) setFinishing(fData);
+    if (mailData) setMailing(mailData);
   };
 
   const calculateNUp = (parentW: number, parentH: number, itemW: number, itemH: number) => {
@@ -69,6 +78,38 @@ export default function AutoEstimatorPage() {
       const paperCost = sheetsWithWaste * paper.cost_amount;
       const paperPrice = sheetsWithWaste * paper.price_amount;
 
+      // Calculate Finishing
+      let totalFinishingCost = 0;
+      let totalFinishingPrice = 0;
+      const selectedFinishes = finishing.filter(f => selectedFinishingIds.includes(f.id));
+      selectedFinishes.forEach(f => {
+          if (f.cost_unit === 'per_sheet') {
+              totalFinishingCost += sheetsWithWaste * f.cost_amount;
+              totalFinishingPrice += sheetsWithWaste * f.price_amount;
+          } else {
+              totalFinishingCost += f.cost_amount;
+              totalFinishingPrice += f.price_amount;
+          }
+      });
+
+      // Calculate Mailing
+      let totalMailingCost = 0;
+      let totalMailingPrice = 0;
+      let mailDetail = '';
+      if (selectedMailingId) {
+          const mail = mailing.find(m => m.id === selectedMailingId);
+          if (mail) {
+              if (mail.cost_unit === 'per_piece' || mail.cost_unit === 'per_item') {
+                  totalMailingCost = quantity * mail.cost_amount;
+                  totalMailingPrice = quantity * mail.price_amount;
+              } else {
+                  totalMailingCost = mail.cost_amount;
+                  totalMailingPrice = mail.price_amount;
+              }
+              mailDetail = mail.name;
+          }
+      }
+
       presses.forEach(press => {
           if (paper.parent_sheet_width > press.max_sheet_width && press.max_sheet_width > 0) return;
 
@@ -81,18 +122,33 @@ export default function AutoEstimatorPage() {
               pressPrice = sheetsWithWaste * press.price_amount;
               detail = `Click: $${press.price_amount}/sheet`;
           } else {
-              const platePrice = 50; 
-              const runPrice = (sheetsWithWaste / 1000) * press.price_amount; 
-              pressPrice = platePrice + runPrice;
+              // Time-based Presstime calculation
+              const setupHr = (press.setup_minutes || 0) / 60;
+              const runHr = sheetsWithWaste / (press.run_speed_per_hour || 5000);
+              const totalHr = setupHr + runHr;
               
-              const plateCost = 15;
-              const runCost = (sheetsWithWaste / 1000) * press.cost_amount;
-              pressCost = plateCost + runCost;
-              detail = `Offset Run`;
+              // If hourly rates are not explicitly set in price_amount/cost_amount (e.g. they are per 1k), 
+              // we fall back to a reasonable default or legacy logic.
+              if (press.price_amount < 50) {
+                  const platePrice = 50; 
+                  const runPrice = (sheetsWithWaste / 1000) * press.price_amount; 
+                  pressPrice = platePrice + runPrice;
+                  
+                  const plateCost = 15;
+                  const runCost = (sheetsWithWaste / 1000) * press.cost_amount;
+                  pressCost = plateCost + runCost;
+                  detail = `Offset (Run: ${sheetsWithWaste} sheets)`;
+              } else {
+                  const platePrice = 50;
+                  const plateCost = 15;
+                  pressPrice = platePrice + (totalHr * press.price_amount);
+                  pressCost = plateCost + (totalHr * press.cost_amount);
+                  detail = `Presstime: ${totalHr.toFixed(2)} hrs @ $${press.price_amount}/hr`;
+              }
           }
 
-          const totalCost = paperCost + pressCost;
-          const totalPrice = paperPrice + pressPrice;
+          const totalCost = paperCost + pressCost + totalFinishingCost + totalMailingCost;
+          const totalPrice = paperPrice + pressPrice + totalFinishingPrice + totalMailingPrice;
 
           results.push({
               method: press.name,
@@ -101,10 +157,19 @@ export default function AutoEstimatorPage() {
               totalSheets: sheetsWithWaste,
               paperPrice,
               pressPrice,
+              finishingPrice: totalFinishingPrice,
+              mailingPrice: totalMailingPrice,
               totalPrice,
               totalCost,
+              unitCost: totalPrice / quantity,
               detail,
-              paperName: paper.name
+              paperName: paper.name,
+              breakdown: [
+                  { name: 'Paper', cost: paperCost, detail: `${sheetsWithWaste} sheets of ${paper.name}` },
+                  { name: 'Press', cost: pressCost, detail },
+                  { name: 'Finishing', cost: totalFinishingCost, detail: selectedFinishes.map(f => f.name).join(', ') || 'None' },
+                  { name: 'Mailing', cost: totalMailingCost, detail: mailDetail || 'None' }
+              ]
           });
       });
 
@@ -179,6 +244,38 @@ export default function AutoEstimatorPage() {
                     <label className="block text-xs font-bold uppercase text-gray-500 mb-2">3. Select Paper Stock</label>
                     <select value={selectedPaperId} onChange={(e) => setSelectedPaperId(e.target.value)} className="w-full border rounded p-3 text-sm bg-white">
                         {papers.map(p => <option key={p.id} value={p.id}>{p.name} (${p.price_amount}/sht)</option>)}
+                    </select>
+                </div>
+                <div>
+                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2">4. Finishing Options</label>
+                    <div className="space-y-2 max-h-40 overflow-y-auto p-2 border rounded bg-gray-50">
+                        {finishing.map(f => (
+                            <label key={f.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-white p-1 rounded transition-colors">
+                                <input 
+                                    type="checkbox" 
+                                    checked={selectedFinishingIds.includes(f.id)} 
+                                    onChange={(e) => {
+                                        if (e.target.checked) setSelectedFinishingIds([...selectedFinishingIds, f.id]);
+                                        else setSelectedFinishingIds(selectedFinishingIds.filter(id => id !== f.id));
+                                    }}
+                                    className="rounded border-gray-300 text-black focus:ring-black"
+                                />
+                                <span className="flex-1">{f.name}</span>
+                                <span className="text-xs font-mono text-gray-400">${f.price_amount}</span>
+                            </label>
+                        ))}
+                        {finishing.length === 0 && <p className="text-xs text-gray-400 italic">No finishing options found.</p>}
+                    </div>
+                </div>
+                <div>
+                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2">5. Mailing</label>
+                    <select 
+                        value={selectedMailingId || ''} 
+                        onChange={(e) => setSelectedMailingId(e.target.value || null)} 
+                        className="w-full border rounded p-3 text-sm bg-white"
+                    >
+                        <option value="">No Mailing</option>
+                        {mailing.map(m => <option key={m.id} value={m.id}>{m.name} (${m.price_amount}/{m.cost_unit?.replace('per_', '')})</option>)}
                     </select>
                 </div>
             </div>

@@ -81,6 +81,12 @@ export default function PublicQuotePage({ params }: { params: { id: string } }) 
                             <li><span className="font-bold">Quantity:</span> {quote.quantity.toLocaleString()}</li>
                             <li><span className="font-bold">Size:</span> {quote.width} x {quote.height}"</li>
                             <li><span className="font-bold">Stock:</span> {quote.paper_stock}</li>
+                            {quote.cost_breakdown?.breakdown?.find((b: any) => b.name === 'Finishing')?.detail !== 'None' && (
+                                <li><span className="font-bold">Finishing:</span> {quote.cost_breakdown?.breakdown?.find((b: any) => b.name === 'Finishing')?.detail}</li>
+                            )}
+                            {quote.cost_breakdown?.breakdown?.find((b: any) => b.name === 'Mailing')?.detail !== 'None' && (
+                                <li><span className="font-bold">Mailing:</span> {quote.cost_breakdown?.breakdown?.find((b: any) => b.name === 'Mailing')?.detail}</li>
+                            )}
                         </ul>
                     </div>
                     <div>

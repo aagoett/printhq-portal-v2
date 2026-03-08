@@ -18,7 +18,7 @@ export default async function DashboardJobPage({ params }: { params: { id: strin
     .select(`
       *,
       orders (brand),
-      profiles:user_id (first_name, last_name, email, company, phone)
+      profiles:user_id (email)
     `)
     .eq('id', params.id)
     .single();
@@ -45,9 +45,9 @@ export default async function DashboardJobPage({ params }: { params: { id: strin
   // 3. Fetch Extras (Parallel)
   const [servicesRes, assetsRes, messagesRes, logsRes, itemsRes] = await Promise.all([
     supabase.from('finishing_services').select('*').order('name'),
-    supabase.from('job_assets').select('*, profiles(first_name, email)').eq('job_id', params.id).order('created_at', { ascending: false }),
-    supabase.from('messages').select('*, profiles(email, first_name, role)').eq('job_id', params.id).order('created_at', { ascending: true }),
-    supabase.from('job_logs').select('*, profiles(first_name, role)').eq('job_id', params.id).order('created_at', { ascending: true }),
+    supabase.from('job_assets').select('*, profiles(email)').eq('job_id', params.id).order('created_at', { ascending: false }),
+    supabase.from('messages').select('*, profiles(email)').eq('job_id', params.id).order('created_at', { ascending: true }),
+    supabase.from('job_logs').select('*, profiles(email)').eq('job_id', params.id).order('created_at', { ascending: true }),
     // Attempt to fetch items safely
     supabase.from('job_items').select('*, job_item_steps(*)').eq('job_id', params.id)
   ]);

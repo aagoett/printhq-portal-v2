@@ -37,6 +37,7 @@ export default function PricingBuilderPage() {
       if (catName.includes('paper')) setSelectedType('paper');
       else if (catName.includes('press')) setSelectedType('press_digital');
       else if (catName.includes('finish')) setSelectedType('finishing');
+      else if (catName.includes('mail')) setSelectedType('mailing');
       else setSelectedType('other');
   }, [activeCatId, categories]);
 

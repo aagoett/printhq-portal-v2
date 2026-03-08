@@ -55,7 +55,13 @@ export default function QuoteDetailsPage({ params }: { params: { id: string } })
           due_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
           size: `${quote.width}x${quote.height}`,
           paper_stock: quote.paper_stock,
-          internal_notes: `Converted from Quote #${quote.quote_number}.\nMethod: ${quote.production_method}\nEst Cost: $${quote.total_cost}`,
+          internal_notes: [
+              `Converted from Quote #${quote.quote_number}.`,
+              `Method: ${quote.production_method}`,
+              `Finishing: ${quote.cost_breakdown?.breakdown?.find((b: any) => b.name === 'Finishing')?.detail || 'None'}`,
+              `Mailing: ${quote.cost_breakdown?.breakdown?.find((b: any) => b.name === 'Mailing')?.detail || 'None'}`,
+              `Est Cost: $${quote.total_cost?.toFixed(2)}`
+          ].join('\n'),
       }).select().single();
 
       if (error) {
@@ -129,7 +135,9 @@ export default function QuoteDetailsPage({ params }: { params: { id: string } })
                         <div><p className="text-xs text-gray-500">Quantity</p><p className="font-bold text-lg text-gray-900">{quote.quantity}</p></div>
                         <div><p className="text-xs text-gray-500">Size</p><p className="font-bold text-lg text-gray-900">{quote.width} x {quote.height}"</p></div>
                         <div className="col-span-2"><p className="text-xs text-gray-500">Paper Stock</p><p className="font-bold text-lg text-gray-900">{quote.paper_stock}</p></div>
-                        <div className="col-span-2"><p className="text-xs text-gray-500">Production Method</p><p className="font-bold text-sm text-blue-600 bg-blue-50 px-2 py-1 rounded inline-block">{quote.production_method}</p></div>
+                        <div className="col-span-2"><p className="text-xs text-gray-500">Finishing</p><p className="font-bold text-sm text-gray-900">{quote.cost_breakdown?.breakdown?.find((b: any) => b.name === 'Finishing')?.detail || 'None'}</p></div>
+                        <div className="col-span-1"><p className="text-xs text-gray-500">Mailing</p><p className="font-bold text-sm text-gray-900">{quote.cost_breakdown?.breakdown?.find((b: any) => b.name === 'Mailing')?.detail || 'None'}</p></div>
+                        <div className="col-span-1"><p className="text-xs text-gray-500">Production Method</p><p className="font-bold text-sm text-blue-600 bg-blue-50 px-2 py-1 rounded inline-block">{quote.production_method}</p></div>
                     </div>
                 </div>
 

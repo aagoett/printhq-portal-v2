@@ -1,14 +1,11 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '../utils/supabase/server';
 import { Resend } from 'resend';
 
 // 1. Initialize Clients
 const resend = new Resend(process.env.RESEND_API_KEY);
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const supabase = createClient();
 
 // --- TOOL 1: SEND ORDER CONFIRMATION ---
 export async function sendOrderConfirmation(email: string, orderId: string, summary: string) {
@@ -159,6 +156,109 @@ export async function convertQuoteToJob(quoteId: string) {
     return { success: true, jobId: newJob.id };
   } catch (error: any) {
     console.error('Quote conversion failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// --- TOOL 4: CREATE INVOICE ---
+export async function createInvoice(data: any) {
+  try {
+    const { 
+      orderId, companyId, status, subtotal, shipping, postage, tax, total, paidAmount, terms, items 
+    } = data;
+
+    // 1. Resolve Company ID (In case 'pacific' or other hardcoded ID was passed)
+    let resolvedCompanyId = companyId;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-5][0-9a-f]{3}-[089ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(companyId);
+    
+    if (!isUuid && companyId) {
+      // Try to find a brand in the DB that matches this name or shortname
+      const { data: matchedBrand } = await supabase
+        .from('brands')
+        .select('id')
+        .ilike('name', `%${companyId}%`)
+        .single();
+      
+      if (matchedBrand) {
+        resolvedCompanyId = matchedBrand.id;
+      } else {
+        throw new Error(`Company "${companyId}" not found in database. Please ensure brands are initialized.`);
+      }
+    }
+
+    // 2. Create the invoice record
+    const { data: invoice, error: invoiceError } = await supabase
+      .from('invoices')
+      .insert({
+        order_id: orderId,
+        company_id: resolvedCompanyId,
+        status: status || 'Draft',
+        subtotal,
+        shipping,
+        postage,
+        tax,
+        total,
+        paid_amount: paidAmount || 0,
+        terms: terms || 'Net 30'
+      })
+      .select()
+      .single();
+
+    if (invoiceError) throw invoiceError;
+
+    // 2. Create line items
+    if (items && items.length > 0) {
+      const lineItems = items.map((item: any) => ({
+        invoice_id: invoice.id,
+        description: item.description,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        total_price: item.total_price,
+        is_taxable: item.is_taxable
+      }));
+
+      const { error: itemsError } = await supabase.from('invoice_items').insert(lineItems);
+      if (itemsError) throw itemsError;
+    }
+
+    return { success: true, invoiceId: invoice.id };
+  } catch (error: any) {
+    console.error('Invoice creation failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getInvoice(id: string) {
+  try {
+    const { data: invoice, error } = await supabase
+      .from('invoices')
+      .select(`
+        *,
+        company:brands!company_id(*),
+        order:orders(*, jobs(title)),
+        items:invoice_items(*)
+      `)
+      .eq('id', id)
+      .single();
+
+    if (error) throw error;
+
+    // Manual profile fetch for customer details (more resilient than joining)
+    if (invoice.order?.user_id) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', invoice.order.user_id)
+        .single();
+      
+      if (profile) {
+        invoice.order.user = profile;
+      }
+    }
+
+    return { success: true, invoice };
+  } catch (error: any) {
+    console.error('Fetch invoice failed:', error);
     return { success: false, error: error.message };
   }
 }
