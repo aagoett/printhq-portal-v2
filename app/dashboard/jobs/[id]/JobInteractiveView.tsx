@@ -315,7 +315,10 @@ export default function JobInteractiveView({
   const [workflowOptions, setWorkflowOptions] = useState<any[]>([]);
 
   // UI State
-  const [rightTab, setRightTab] = useState<'chat' | 'activity'>('chat');
+  const [rightTab, setRightTab] = useState<'notes' | 'files' | 'chat' | 'history'>('notes');
+  const [noteText, setNoteText] = useState('');
+  const [notePriority, setNotePriority] = useState('Low');
+  const [noteStep, setNoteStep] = useState('');
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [proofItemId, setProofItemId] = useState<string | undefined>();
   const [uploadFile, setUploadFile] = useState<File | null>(null);
