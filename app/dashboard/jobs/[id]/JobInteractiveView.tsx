@@ -737,7 +737,7 @@ export default function JobInteractiveView({
               <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={20} /></Link>
               <div>
                 <h1 className="text-xl font-bold text-gray-900 leading-none">{job.title}</h1>
-                <p className="text-xs font-mono text-gray-400 mt-1">#{jobId.substring(0,8).toUpperCase()} • {job.orders?.brand}</p>
+                <p className="text-xs font-mono text-gray-400 mt-1">#{jobId.substring(0,8).toUpperCase()} • {job.orders?.brands?.name}</p>
               </div>
           </div>
           <div className="flex items-center gap-3">

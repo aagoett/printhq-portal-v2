@@ -36,12 +36,12 @@ export async function sendOrderConfirmation(email: string, orderId: string, summ
 export async function sendProofNotification(jobId: string, fileUrl: string, customMessage: string = '') {
   const { data: job } = await supabase
     .from('jobs')
-    .select('*, profiles:user_id(email, first_name)')
+    .select('*, profiles:user_id(email, contact_name)')
     .eq('id', jobId)
     .single();
 
   const targetEmail = job?.profiles?.email || job?.guest_email;
-  const targetName = job?.profiles?.first_name || 'Customer';
+  const targetName = job?.profiles?.contact_name || 'Customer';
 
   if (!job || !targetEmail) {
     console.error("Proof Email Failed: Job or Email not found.");

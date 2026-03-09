@@ -40,13 +40,13 @@ export async function sendProofNotification(jobId: string, fileUrl: string, cust
   // FIX: Fetch guest_email as a fallback
   const { data: job } = await supabase
     .from('jobs')
-    .select('*, profiles:user_id(email, first_name)')
+    .select('*, profiles:user_id(email, contact_name)')
     .eq('id', jobId)
     .single();
 
   // FIX: Determine correct email and name
   const targetEmail = job?.profiles?.email || job?.guest_email;
-  const targetName = job?.profiles?.first_name || 'Customer';
+  const targetName = job?.profiles?.contact_name || 'Customer';
 
   if (!job || !targetEmail) {
     console.error("Proof Email Failed: Job or Email not found.");
