@@ -16,8 +16,10 @@ export default async function DashboardJobPage({ params }: { params: { id: strin
   const { data: job, error } = await supabase
     .from('jobs')
     .select(`
-      *,
-      customers!customer_id (id, contact_name),
+      id, title, status, notes, internal_notes, due_date,
+      finishing_options, quantity, size, paper_stock,
+      guest_email, assigned_to, csr_name, order_id, user_id, customer_id,
+      created_at, updated_at,
       orders (brands(name)),
       profiles:user_id (email)
     `)
