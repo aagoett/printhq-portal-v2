@@ -543,6 +543,17 @@ export default function Dashboard() {
     return { color: 'text-black font-medium', label: due.toLocaleDateString('en-US', {month:'short', day:'numeric'}) };
   };
 
+  const getStatusBadge = (status: string) => {
+    const s = (status || '').toLowerCase();
+    if (s === 'in progress' || s === 'in production')
+      return 'bg-rose-50 text-rose-600 border border-rose-200';
+    if (s === 'invoice' || s === 'completed')
+      return 'text-green-600 bg-green-50 border border-green-200';
+    if (s === 'pending review' || s === 'pending')
+      return 'bg-amber-50 text-amber-600 border border-amber-200';
+    return 'bg-blue-50 text-blue-600 border border-blue-200';
+  };
+
   const requestSort = (key: string) => {
     let direction: 'asc' | 'desc' = 'asc';
     if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
@@ -870,188 +881,116 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <table className="w-full text-left text-sm">
-                  <thead className="bg-gray-50 text-gray-500 uppercase font-medium">
-                    <tr>
-                      <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('timeline')}>
-                        <div className="flex items-center gap-1">
-                          Timeline {sortConfig?.key === 'timeline' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 w-48 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('customer')}>
-                        <div className="flex items-center gap-1">
-                          Customer {sortConfig?.key === 'customer' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th> 
-                      <th className="px-6 py-3 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('details')}>
-                        <div className="flex items-center gap-1">
-                          Job Details {sortConfig?.key === 'details' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 w-24 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('size')}>
-                        <div className="flex items-center gap-1">
-                          Size {sortConfig?.key === 'size' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('stock')}>
-                        <div className="flex items-center gap-1">
-                          Stock {sortConfig?.key === 'stock' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('station')}>
-                        <div className="flex items-center gap-1">
-                          Station {sortConfig?.key === 'station' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 w-40 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('team')}>
-                        <div className="flex items-center gap-1">
-                          Team {sortConfig?.key === 'team' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 w-20 text-right">Actions</th>
+                  <thead>
+                    <tr className="text-[11px] text-gray-500 font-semibold uppercase border-b border-gray-100 bg-white tracking-wide">
+                      <th className="px-4 py-3 w-24">Job</th>
+                      <th className="px-4 py-3">Customer</th>
+                      <th className="px-4 py-3 w-28">CSR</th>
+                      <th className="px-4 py-3 w-20 text-right">Qty</th>
+                      <th className="px-4 py-3 w-40">Stock/Size</th>
+                      <th className="px-4 py-3 w-28">Dept</th>
+                      <th className="px-4 py-3">Step/Action</th>
+                      <th className="px-4 py-3 w-32">Status</th>
+                      <th className="px-4 py-3 w-28">Date Due</th>
+                      <th className="px-4 py-3 w-16 text-center">Item</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {sortedFilteredJobs.map((job: any) => {
                       const dueStatus = getDueStatus(job.due_date);
-                      
                       const customerProfile = customers.find(c => c.id === job.user_id);
-                      const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
-                                            const brandName = job.orders?.brands?.name || 'PrintHQ';
-                       
-                       return (
-                       <React.Fragment key={job.id}>
-                       <tr className="hover:bg-gray-50 transition-colors group">
-                        
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex flex-col gap-1">
-                             <div className="text-[10px] text-gray-400 font-bold uppercase">In: {formatDate(job.created_at)}</div>
-                             <div className={`text-xs ${dueStatus.color}`}>Due: {dueStatus.label}</div>
-                          </div>
-                        </td>
+                      const customerName = customerProfile
+                        ? (customerProfile.company || customerProfile.first_name || customerProfile.email?.split('@')[0])
+                        : (job.guest_email?.split('@')[0] || 'Guest');
+                      const brandName = job.orders?.brands?.name || '';
 
-                        <td className="px-6 py-4">
-                            <div className="flex items-center gap-3">
-                                <div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">
-                                    {typeof customerName === 'string' ? customerName.charAt(0).toUpperCase() : '?'}
-                                </div>
-                                <div className="overflow-hidden">
-                                    <p className="text-sm font-bold text-gray-900 truncate max-w-[120px]">{customerName}</p>
-                                    <p className="text-[10px] text-gray-400 uppercase tracking-wider truncate max-w-[120px]">{brandName}</p>
-                                </div>
-                            </div>
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <Link href={`/dashboard/jobs/${job.id}`} className="block group-hover:text-blue-600 transition-colors">
-                              <div className="font-bold text-gray-900 text-base">{job.title}</div>
-                          </Link>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="font-mono text-[10px] text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span>
-                          </div>
-                        </td>
-
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-xs font-medium text-gray-700">{job.size || 'N/A'}</div>
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <div className="text-xs text-gray-500 truncate max-w-[120px]" title={job.paper_stock}>{job.paper_stock || 'N/A'}</div>
-                        </td>
-
-                        <td className="px-6 py-4">
-                           <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide ${job.current_step === 'Complete' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
-                             {job.current_step || 'Processing'}
-                           </span>
-                        </td>
-
-                        <td className="px-6 py-4">
-                           <select 
-                             value={job.assigned_to || ''} 
-                             onChange={(e) => handleAssignJob(job.id, e.target.value)} 
-                             className="bg-transparent border-none text-xs font-bold text-gray-500 focus:ring-0 cursor-pointer hover:text-black w-full truncate"
-                           >
-                             <option value="">-- Unassigned --</option>
-                             {staff.map(s => (
-                               <option key={s.id} value={s.id}>
-                                 {s.first_name || s.email?.split('@')[0]}
-                                </option>
-                              ))}
-                            </select>
-                         </td>
- 
-                         <td className="px-6 py-4 text-right">
-                           <div className="flex items-center justify-end gap-2">
-                             <Link href={`/dashboard/jobs/${job.id}`} className="text-gray-400 hover:text-black transition-colors p-2 hover:bg-gray-100 rounded-full">
-                                <ChevronRight size={20} />
-                             </Link>
-                           </div>
-                         </td>
- 
-                       </tr>
- 
-                       {/* ITEM SUB-ROWS (PHASE 3.12/3.14) */}
-                       {job.job_items && job.job_items.length > 0 && job.job_items
-                         .filter((item: any) => {
-                           if (activeTab === 'All' || activeTab === 'My Queue') return true;
-                           return item.status === activeTab;
-                         })
-                         .map((item: any) => {
-                           const isDeptMatch = activeTab !== 'All' && activeTab !== 'My Queue' && item.status === activeTab;
-                           return (
-                          <tr key={item.id} className={`border-b border-gray-100/50 transition-colors ${isDeptMatch ? 'bg-yellow-400/10' : 'bg-gray-50/30'}`}>
-                            <td className="px-6 py-2"></td>
-                            <td className="px-6 py-2"></td>
-                            <td className="px-6 py-2">
-                              <div className={`flex items-center gap-3 pl-4 border-l-2 ${isDeptMatch ? 'border-yellow-400' : 'border-blue-100'}`}>
-                                <button 
-                                  onClick={() => handleOpenItemDrawer(item.id)}
-                                  className="flex flex-col text-left hover:opacity-75 transition-opacity"
-                                >
-                                  <span className={`text-[11px] font-black uppercase tracking-tight ${isDeptMatch ? 'text-yellow-900' : 'text-gray-700'}`}>{item.description}</span>
-                                  <span className="text-[9px] text-gray-400 font-bold uppercase">{item.quantity?.toLocaleString()} units</span>
-                                </button>
-                              </div>
+                      return (
+                        <React.Fragment key={job.id}>
+                          {/* PARENT JOB ROW */}
+                          <tr className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3">
+                              <Link href={`/dashboard/jobs/${job.id}`} className="font-bold text-gray-900 hover:text-blue-600 text-sm font-mono">
+                                {job.id.substring(0, 5).toUpperCase()}
+                              </Link>
                             </td>
-                            <td className="px-6 py-2">
-                              <span className="text-xs text-gray-500">{item.size || 'N/A'}</span>
-                            </td>
-                            <td className="px-6 py-2">
-                              <div className="text-[10px] text-gray-400 truncate max-w-[120px]" title={item.paper_stock}>{item.paper_stock || 'N/A'}</div>
-                            </td>
-                            <td className="px-6 py-2">
+                            <td className="px-4 py-3">
                               <div className="flex items-center gap-2">
-                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
-                                    item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' 
-                                    : isDeptMatch ? 'bg-yellow-400 text-yellow-900 border-yellow-500 shadow-sm'
-                                    : 'bg-blue-50 text-blue-700 border-blue-200'
-                                }`}>
-                                    {item.status || 'Pending'}
-                                </span>
-                                
-                                {isDeptMatch && (
-                                    <button 
-                                        onClick={() => handleCompleteItemStep(item, activeTab)}
-                                        className="bg-green-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-sm hover:bg-green-700 transition-colors uppercase"
-                                    >
-                                        Mark Done
-                                    </button>
-                                )}
+                                <span className="font-semibold text-gray-900 text-sm">{customerName}</span>
+                                <span className="text-[10px] font-bold bg-green-600 text-white px-1.5 py-0.5 rounded-sm leading-none">PP</span>
                               </div>
                             </td>
-                            <td className="px-6 py-2"></td>
-                            <td className="px-6 py-2">
-                                <div className="flex justify-end">
-                                    <button onClick={() => handleOpenItemDrawer(item.id)} className="text-gray-300 hover:text-black">
-                                        <ExternalLink size={14} />
-                                    </button>
-                                </div>
+                            <td className="px-4 py-3 text-sm text-gray-600">{job.csr_name || '-'}</td>
+                            <td className="px-4 py-3 text-sm text-gray-400 text-right">-</td>
+                            <td className="px-4 py-3 text-sm text-gray-400">-</td>
+                            <td className="px-4 py-3 text-sm text-gray-400">-</td>
+                            <td className="px-4 py-3 text-sm text-gray-400">-</td>
+                            <td className="px-4 py-3">
+                              <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusBadge(job.status)}`}>
+                                {job.status || 'Pending'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`text-xs font-medium ${dueStatus.color}`}>
+                                {dueStatus.label !== '--' ? dueStatus.label : '-'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className="text-sm font-bold text-gray-700">{job.job_items?.length || 0}</span>
                             </td>
                           </tr>
-                        );
-                        })}
-                       </React.Fragment>
-                       );
-                     })}
+
+                          {/* ITEM SUB-ROWS */}
+                          {job.job_items && job.job_items.length > 0 && job.job_items
+                            .filter((item: any) => {
+                              if (activeTab === 'All' || activeTab === 'My Queue') return true;
+                              return item.status === activeTab;
+                            })
+                            .map((item: any) => {
+                              const isDeptMatch = activeTab !== 'All' && activeTab !== 'My Queue' && item.status === activeTab;
+                              const deptParts = (item.status || '').split('/');
+                              const deptName = deptParts.length > 1 ? deptParts[0].trim() : '-';
+                              const stepName = item.status || '-';
+                              return (
+                                <tr key={item.id} className={`border-b border-gray-50/80 transition-colors text-xs ${isDeptMatch ? 'bg-yellow-50/40' : 'bg-gray-50/20 hover:bg-gray-50/60'}`}>
+                                  <td className="px-4 py-2 pl-7">
+                                    <button
+                                      onClick={() => handleOpenItemDrawer(item.id)}
+                                      className="text-gray-500 hover:text-blue-600 text-left truncate max-w-[80px] block font-mono"
+                                    >
+                                      {item.description}
+                                    </button>
+                                  </td>
+                                  <td className="px-4 py-2 text-gray-400">-</td>
+                                  <td className="px-4 py-2 text-gray-400">-</td>
+                                  <td className="px-4 py-2 text-gray-700 text-right font-medium">{item.quantity?.toLocaleString() || '-'}</td>
+                                  <td className="px-4 py-2 text-gray-500 truncate max-w-[100px]">{item.size || item.paper_stock || '-'}</td>
+                                  <td className="px-4 py-2 text-gray-700">{deptName}</td>
+                                  <td className="px-4 py-2 text-gray-700">{stepName}</td>
+                                  <td className="px-4 py-2">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${getStatusBadge(item.status)}`}>
+                                      {item.status || 'Pending'}
+                                    </span>
+                                    {isDeptMatch && (
+                                      <button
+                                        onClick={() => handleCompleteItemStep(item, activeTab)}
+                                        className="ml-2 bg-green-600 text-white text-[9px] font-bold px-2 py-0.5 rounded hover:bg-green-700 transition-colors"
+                                      >
+                                        Mark Done
+                                      </button>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2 text-gray-400">-</td>
+                                  <td className="px-4 py-2 text-center">
+                                    <button onClick={() => handleOpenItemDrawer(item.id)} className="text-gray-400 hover:text-black transition-colors">
+                                      <ExternalLink size={13} />
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}

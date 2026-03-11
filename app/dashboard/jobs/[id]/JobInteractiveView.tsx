@@ -316,6 +316,8 @@ export default function JobInteractiveView({
 
   // UI State
   const [rightTab, setRightTab] = useState<'notes' | 'files' | 'chat' | 'history'>('notes');
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
   const [notePriority, setNotePriority] = useState('Low');
   const [noteStep, setNoteStep] = useState('');
@@ -690,236 +692,398 @@ export default function JobInteractiveView({
   const isApprovedAsset = currentAsset?.status === 'approved';
   const originalAsset = assets.find(a => a.asset_type === 'source');
 
+  const activeItemId = selectedItemId || items[0]?.id || null;
+  const selectedItem = items.find(i => i.id === activeItemId) || items[0] || null;
+  const selectedSteps = [...(selectedItem?.job_item_steps || [])].sort((a: any, b: any) =>
+    new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+  const firstActiveIndex = selectedSteps.findIndex((s: any) => s.status !== 'Completed');
+  const defaultExpandIndex = firstActiveIndex >= 0 ? firstActiveIndex : 0;
+
+  const fmtDate = (d: string) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-';
+
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col relative">
-      
+    <div className="min-h-screen bg-gray-100 flex flex-col">
+
+      {/* PROOF UPLOAD MODAL */}
       {showUploadModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
-                <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                    <h3 className="font-bold text-lg text-gray-900">Send New Proof</h3>
-                    <button onClick={() => setShowUploadModal(false)} className="text-gray-400 hover:text-black"><X size={20}/></button>
-                </div>
-                <div className="p-6 space-y-4">
-                    <div onClick={() => fileInputRef.current?.click()} className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${uploadFile ? 'border-green-400 bg-green-50' : 'border-gray-300 hover:border-black hover:bg-gray-50'}`}>
-                        <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
-                        <UploadCloud className={`mx-auto h-10 w-10 mb-2 ${uploadFile ? 'text-green-600' : 'text-gray-400'}`} />
-                        {uploadFile ? <p className="font-bold text-green-700 text-sm truncate">{uploadFile.name}</p> : <p className="text-sm font-bold text-gray-600">Click to Select File</p>}
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Message to Customer</label>
-                        <textarea value={uploadMessage} onChange={(e) => setUploadMessage(e.target.value)} placeholder="e.g. Check spelling..." className="w-full border border-gray-300 rounded-lg p-3 text-sm h-20 resize-none"/>
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Target Line Item (Optional)</label>
-                        <select 
-                            value={proofItemId || ''} 
-                            onChange={(e) => setProofItemId(e.target.value || undefined)}
-                            className="w-full border border-gray-300 rounded-lg p-2 text-sm bg-white"
-                        >
-                            <option value="">-- Apply to Entire Job --</option>
-                            {items.map(i => <option key={i.id} value={i.id}>{i.description} ({i.size})</option>)}
-                        </select>
-                    </div>
-                    <button onClick={handleSubmitProof} disabled={!uploadFile || isUploading} className={`w-full py-3 rounded-xl font-bold text-white transition-all ${!uploadFile || isUploading ? 'bg-gray-300' : 'bg-black hover:bg-gray-800'}`}>
-                        {isUploading ? 'Sending...' : 'Send Proof'}
-                    </button>
-                </div>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <h3 className="font-bold text-lg text-gray-900">Send New Proof</h3>
+              <button onClick={() => setShowUploadModal(false)} className="text-gray-400 hover:text-black"><X size={20}/></button>
             </div>
+            <div className="p-6 space-y-4">
+              <div onClick={() => fileInputRef.current?.click()} className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${uploadFile ? 'border-green-400 bg-green-50' : 'border-gray-300 hover:border-black hover:bg-gray-50'}`}>
+                <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+                <UploadCloud className={`mx-auto h-10 w-10 mb-2 ${uploadFile ? 'text-green-600' : 'text-gray-400'}`} />
+                {uploadFile ? <p className="font-bold text-green-700 text-sm truncate">{uploadFile.name}</p> : <p className="text-sm font-bold text-gray-600">Click to Select File</p>}
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Message to Customer</label>
+                <textarea value={uploadMessage} onChange={(e) => setUploadMessage(e.target.value)} placeholder="e.g. Check spelling..." className="w-full border border-gray-300 rounded-lg p-3 text-sm h-20 resize-none"/>
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Target Line Item (Optional)</label>
+                <select value={proofItemId || ''} onChange={(e) => setProofItemId(e.target.value || undefined)} className="w-full border border-gray-300 rounded-lg p-2 text-sm bg-white">
+                  <option value="">-- Apply to Entire Job --</option>
+                  {items.map(i => <option key={i.id} value={i.id}>{i.description}</option>)}
+                </select>
+              </div>
+              <button onClick={handleSubmitProof} disabled={!uploadFile || isUploading} className={`w-full py-3 rounded-xl font-bold text-white transition-all ${!uploadFile || isUploading ? 'bg-gray-300' : 'bg-black hover:bg-gray-800'}`}>
+                {isUploading ? 'Sending...' : 'Send Proof'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
       {/* HEADER */}
-      <div className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
-        <div className="max-w-[1920px] mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-              <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={20} /></Link>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900 leading-none">{job.title}</h1>
-                <p className="text-xs font-mono text-gray-400 mt-1">#{jobId.substring(0,8).toUpperCase()} • {job.orders?.brands?.name}</p>
-              </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <Link 
-              href={`/dashboard/invoices/new?jobId=${jobId}`} 
-              className="px-4 py-1.5 bg-emerald-600 text-white rounded-md font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm"
+      <div className="bg-white border-b border-gray-200 sticky top-0 z-20">
+        <div className="px-6 py-3 flex items-center justify-between">
+          <h1 className="text-sm font-bold text-gray-900">
+            # {jobId.substring(0, 5).toUpperCase()} &mdash; {selectedItem?.description || job.title}
+          </h1>
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/dashboard/invoices/new?jobId=${jobId}`}
+              className="px-4 py-1.5 bg-gray-900 text-white text-xs font-bold rounded flex items-center gap-1.5 hover:bg-gray-700 transition-colors"
             >
-              <FilePlus size={14}/> Generate Invoice
+              <Eye size={13}/> VIEW INVOICE
             </Link>
-            <div className={`px-4 py-1.5 rounded-md text-white font-bold uppercase text-[10px] flex items-center bg-gray-900 border border-gray-700`}>{job.status || 'Pending'}</div>
+            <Link
+              href={`/dashboard/invoices/new?jobId=${jobId}`}
+              className="px-4 py-1.5 border border-gray-300 text-gray-700 text-xs font-medium rounded flex items-center gap-1.5 hover:bg-gray-50 transition-colors"
+            >
+              <FilePlus size={13}/> EDIT INVOICE
+            </Link>
+            <button
+              onClick={handleSaveNotes}
+              className="px-4 py-1.5 bg-gray-900 text-white text-xs font-bold rounded hover:bg-gray-700 transition-colors"
+            >
+              UPDATE JOB
+            </button>
+            <Link href="/dashboard" className="p-1.5 text-gray-400 hover:text-black hover:bg-gray-100 rounded transition-colors ml-1">
+              <X size={18}/>
+            </Link>
           </div>
         </div>
       </div>
 
-       {/* STAGE COMMANDER */}
-       <div className={`bg-gray-900 text-white shadow-xl`}>
-          <div className="max-w-[1920px] mx-auto flex flex-col md:flex-row">
-              <div className="p-8 flex-1">
-                  <p className="text-xs font-bold uppercase opacity-75 tracking-widest mb-2">Current Department</p>
-                  <h1 className="text-6xl font-black uppercase tracking-tight leading-none">{job.status || 'PREPRESS'}</h1>
-              </div>
-              <div className="p-8 md:w-1/3 bg-black/20 border-l border-white/10 backdrop-blur-sm flex flex-col justify-center">
-                  <div className="flex items-start gap-3">
-                      <Megaphone size={24} className="mt-1 opacity-80" />
-                      <div>
-                          <p className="text-xs font-bold uppercase opacity-75 tracking-widest mb-1">Important Note</p>
-                          <p className="text-lg font-bold leading-tight">{job.notes || "No general notes on this order."}</p>
+      {/* INFO PANEL */}
+      <div className="bg-gray-50 border-b border-gray-200 px-6 py-4">
+        <div className="grid grid-cols-2 gap-8 text-sm">
+          <div className="space-y-1">
+            <div className="flex gap-2"><span className="text-gray-500 w-20">CSR:</span><span className="font-medium text-gray-900">{job.csr_name || 'Unassigned'}</span></div>
+            <div className="flex gap-2"><span className="text-gray-500 w-20">Date In:</span><span className="font-medium text-red-600">{fmtDate(job.created_at)}</span></div>
+            <div className="flex gap-2"><span className="text-gray-500 w-20">Due on:</span><span className="font-medium text-gray-900">{job.due_date ? fmtDate(job.due_date) : 'No date set'}</span></div>
+            <div className="flex gap-2"><span className="text-gray-500 w-20">Job Items:</span><span className="font-medium text-gray-900">{items.length}</span></div>
+          </div>
+          <div className="space-y-1">
+            <div className="flex gap-2"><span className="text-gray-500 w-36">Customer Name:</span><span className="font-medium text-gray-900">{job.profiles?.email?.split('@')[0] || 'Guest'}</span></div>
+            <div className="flex gap-2"><span className="text-gray-500 w-36">Company:</span><span className="font-medium text-gray-900">{job.orders?.brands?.name || '-'}</span></div>
+            <div className="flex gap-2"><span className="text-gray-500 w-36">Attention:</span><span className="font-medium text-gray-400">-</span></div>
+            <div className="flex gap-2">
+              <span className="text-gray-500 w-36">Phone:</span><span className="font-medium text-gray-400">-</span>
+              <span className="text-gray-500 ml-4">Ext:</span><span className="font-medium text-gray-400">-</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ITEM SELECTOR */}
+      {items.length > 0 && (
+        <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-2 flex-wrap">
+          {items.map(item => (
+            <button
+              key={item.id}
+              onClick={() => { setSelectedItemId(item.id); setExpandedStepId(null); }}
+              className={`px-3 py-1 text-xs rounded border font-medium transition-colors ${
+                activeItemId === item.id
+                  ? 'bg-gray-800 text-white border-gray-800'
+                  : 'bg-white text-gray-700 border-gray-300 hover:border-gray-500'
+              }`}
+            >
+              {item.description}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* SPECS BAR */}
+      {selectedItem && (
+        <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 flex-wrap text-xs">
+          <div className="flex items-center gap-1.5">
+            <span className="text-gray-500">Quantity:</span>
+            <span className="font-bold text-gray-800 bg-gray-100 px-2 py-0.5 rounded">{selectedItem.quantity?.toLocaleString() || '-'}</span>
+          </div>
+          {selectedItem.size && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-gray-500">Size:</span>
+              <span className="font-bold text-gray-800 bg-gray-100 px-2 py-0.5 rounded">{selectedItem.size}</span>
+            </div>
+          )}
+          {selectedItem.paper_stock && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-gray-500">Stock:</span>
+              <span className="font-bold text-gray-800 bg-gray-100 px-2 py-0.5 rounded">{selectedItem.paper_stock}</span>
+            </div>
+          )}
+          <div className="ml-auto flex items-center gap-4">
+            <label className="flex items-center gap-1.5 text-gray-600 cursor-pointer select-none">
+              <input type="checkbox" className="rounded border-gray-300" />
+              Union Bug
+            </label>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500">Rush Date:</span>
+              <input
+                type="date"
+                value={job.due_date ? job.due_date.substring(0, 10) : ''}
+                onChange={(e) => handleUpdateJob(job.id, { due_date: e.target.value })}
+                className="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:border-gray-500"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MAIN TWO-PANEL LAYOUT */}
+      <div className="flex flex-1 overflow-hidden" style={{ minHeight: 'calc(100vh - 260px)' }}>
+
+        {/* LEFT PANEL: Workflow Steps */}
+        <div className="flex-1 overflow-y-auto bg-gray-50 p-4">
+          {!selectedItem ? (
+            <div className="text-center text-gray-400 text-sm py-12">No items found for this job.</div>
+          ) : selectedSteps.length === 0 ? (
+            <div className="text-center text-gray-400 text-sm py-12">No steps defined. Open the item to add workflow steps.</div>
+          ) : (
+            <div className="space-y-2 max-w-2xl">
+              {selectedSteps.map((step: any, index: number) => {
+                const isCompleted = step.status === 'Completed';
+                const isExpanded = expandedStepId === step.id || (expandedStepId === null && index === defaultExpandIndex);
+                return (
+                  <div key={step.id} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                    <button
+                      className="w-full flex items-center gap-4 px-5 py-4 text-left hover:bg-gray-50 transition-colors"
+                      onClick={() => setExpandedStepId(isExpanded ? '__none__' : step.id)}
+                    >
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                        isCompleted ? 'bg-green-500 text-white' : 'bg-gray-800 text-white'
+                      }`}>
+                        {isCompleted ? '✓' : index + 1}
                       </div>
+                      <span className="font-semibold text-gray-900 text-sm flex-1">{step.step_name}</span>
+                      {isCompleted && <span className="text-xs text-green-600 font-medium">Completed</span>}
+                    </button>
+
+                    {isExpanded && (
+                      <div className="border-t border-gray-100 px-5 py-4 bg-white">
+                        <div className="mb-4">
+                          <p className="text-xs font-bold text-gray-500 uppercase mb-2">Step notes</p>
+                          <div className="bg-gray-50 rounded border border-gray-200 px-3 py-2 text-xs text-gray-400 min-h-[40px]">
+                            {step.notes || 'No notes available.'}
+                          </div>
+                        </div>
+                        {!isCompleted && (
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={async () => {
+                                await supabase.from('job_item_steps').update({ status: 'Completed' }).eq('id', step.id);
+                                const updatedSteps = selectedSteps.map((s: any) => s.id === step.id ? { ...s, status: 'Completed' } : s);
+                                setItems(current => current.map(i => i.id === selectedItem.id ? { ...i, job_item_steps: updatedSteps } : i));
+                                syncItemStatus(selectedItem.id, updatedSteps);
+                                logActivity('Step Completed', `Completed step: ${step.step_name}`, selectedItem.id);
+                                const next = selectedSteps[index + 1];
+                                setExpandedStepId(next ? next.id : '__none__');
+                              }}
+                              className="flex items-center gap-2 px-5 py-2 bg-gray-900 text-white text-xs font-bold rounded hover:bg-gray-700 transition-colors"
+                            >
+                              ✓ Mark As Completed
+                            </button>
+                            <button className="px-4 py-2 border border-gray-300 text-gray-600 text-xs font-medium rounded hover:bg-gray-50 transition-colors">
+                              Send to
+                            </button>
+                          </div>
+                        )}
+                        {isCompleted && (
+                          <p className="text-xs text-green-700 font-medium">{step.notes || 'Completed.'}</p>
+                        )}
+                      </div>
+                    )}
                   </div>
-              </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT PANEL: Notes / Files / Chat / History */}
+        <div className="w-80 xl:w-96 bg-white border-l border-gray-200 flex flex-col flex-shrink-0">
+          {/* Tabs */}
+          <div className="flex border-b border-gray-200">
+            {(['notes', 'files', 'chat', 'history'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setRightTab(tab)}
+                className={`flex-1 py-3 text-xs font-semibold transition-colors ${
+                  rightTab === tab
+                    ? 'text-gray-900 border-b-2 border-gray-900'
+                    : 'text-gray-400 hover:text-gray-700'
+                }`}
+              >
+                {tab === 'notes' ? 'Job notes' : tab === 'files' ? 'Job files' : tab === 'history' ? 'History' : 'Chat'}
+              </button>
+            ))}
           </div>
-      </div>
 
-      {/* MAIN LAYOUT */}
-      <div className="flex-1 max-w-[1920px] mx-auto w-full p-4 grid grid-cols-12 gap-4">
-             {/* LEFT COL: ASSETS & INFO */}
-        <div className="col-span-12 lg:col-span-2 space-y-4">
-             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-                <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-4 tracking-widest flex items-center gap-2"><Layers size={14}/> SUMMARY</h3>
-                <div className="space-y-4">
-                    <div>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Customer</p>
-                        <p className="text-sm font-bold text-gray-900 truncate">{job.profiles?.email?.split('@')[0] || 'Guest'}</p>
-                    </div>
-                    <div>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Timeline</p>
-                        <div className="mt-1 flex flex-col gap-1.5">
-                            <div className={`text-[10px] px-2 py-1 rounded font-bold inline-block w-max ${countdown.color} text-white`}>{countdown.text}</div>
-                            <input 
-                              type="date" 
-                              value={job.due_date ? job.due_date.substring(0, 10) : ''} 
-                              onChange={(e) => handleUpdateJob(job.id, { due_date: e.target.value })}
-                              className="text-[10px] font-bold border rounded p-1 w-full bg-white focus:outline-none focus:border-black"
-                            />
+          {/* Tab content */}
+          <div className="flex-1 flex flex-col overflow-hidden">
+
+            {/* NOTES TAB */}
+            {rightTab === 'notes' && (
+              <div className="flex flex-col h-full">
+                <div className="flex-1 overflow-y-auto p-4">
+                  <div className="mb-3">
+                    <select className="text-xs border border-gray-200 rounded px-2 py-1 bg-white text-gray-600 w-full">
+                      <option>Job Notes</option>
+                      <option>Internal Notes</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    {logs.filter((l: any) => l.action === 'Note').length === 0 ? (
+                      <div className="text-center text-gray-400 text-xs py-4 border border-gray-100 rounded bg-gray-50">
+                        No notes available.
+                      </div>
+                    ) : (
+                      logs.filter((l: any) => l.action === 'Note').map((note: any) => (
+                        <div key={note.id} className="bg-gray-50 border border-gray-200 rounded p-3 text-xs">
+                          <p className="text-gray-700">{note.details}</p>
+                          <p className="text-gray-400 mt-1">{note.profiles?.email?.split('@')[0]} · {new Date(note.created_at).toLocaleDateString()}</p>
                         </div>
-                    </div>
-                </div>
-            </div>
-
-             <div className="bg-blue-50 rounded-xl border border-blue-100 p-4">
-                <h3 className="text-[10px] font-bold uppercase text-blue-800 mb-2 flex items-center gap-2 tracking-widest"><FileText size={14}/> SOURCE</h3>
-                {originalAsset ? (
-                    <div onClick={() => loadPreview(originalAsset)} className="flex items-center gap-3 p-2 bg-white rounded-lg border border-blue-200 cursor-pointer hover:border-blue-400 transition-all shadow-sm">
-                        <div className="bg-blue-100 p-2 rounded text-blue-600"><FileImage size={20}/></div>
-                        <div className="overflow-hidden">
-                            <p className="text-[10px] font-bold text-gray-900 truncate w-32">{originalAsset.file_name}</p>
-                            <p className="text-[9px] text-blue-400 font-bold uppercase">View File</p>
-                        </div>
-                    </div>
-                ) : <p className="text-[10px] text-blue-400 italic">No source file.</p>}
-            </div>
-        </div>
-
-        {/* MIDDLE COL: MAIN PRODUCTION HUB */}
-        <div className="col-span-12 lg:col-span-7 flex flex-col gap-4">
-             <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-6">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xs font-bold uppercase text-yellow-700 flex items-center gap-2"><Lock size={16}/> Global Job Notes</h3>
-                    <button onClick={handleSaveNotes} disabled={isSaving} className="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-3 py-1.5 rounded hover:bg-yellow-500 flex items-center gap-2 shadow-sm uppercase tracking-wider"><Save size={12}/> Save Global Notes</button>
-                </div>
-                <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private production notes for the whole job..." className="w-full h-24 bg-white border border-yellow-300 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 transition-all"/>
-             </div>
-
-             <JobItemsTable 
-               items={items} 
-               assets={assets}
-               workflowOptions={workflowOptions}
-               onAddItem={handleAddItem} onUpdateItem={handleUpdateItem} onItemUpload={handleItemUpload}
-               onAddStep={handleAddStep}
-            onToggleStep={handleToggleStep}
-            onDeleteStep={handleDeleteStep}
-            onMoveStep={handleMoveStep}
-            onReorderSteps={handleReorderSteps}
-            onOpenProofModal={(itemId) => { setProofItemId(itemId); setShowUploadModal(true); }}
-            onLogActivity={logActivity}
-            logs={logs}
-            userRole={userRole} 
-          />
-
-             <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden min-h-[500px] relative ${isApprovedAsset ? 'border-green-400 ring-2 ring-green-100' : 'border-gray-200'}`}>
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                        {isApprovedAsset ? <span className="bg-green-600 text-white text-xs font-bold px-2 py-1 rounded flex items-center gap-1"><CheckCircle size={12}/> PRODUCTION FILE</span> : <span className="text-xs font-bold uppercase text-gray-500">Preview Mode</span>}
-                        <span className="text-xs text-gray-400">| {currentAsset?.file_name}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        {currentAsset?.asset_type === 'proof' && currentAsset.status === 'pending' && <button onClick={() => handleApproveProof(currentAsset.id)} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-green-500 shadow-sm flex items-center gap-1"><ThumbsUp size={12}/> Approve</button>}
-                        {previewUrl && <a href={previewUrl} target="_blank" className="text-xs font-bold text-gray-600 hover:text-black border border-gray-300 px-2 py-1 rounded bg-white"><Download size={12}/></a>}
-                    </div>
-                </div>
-                <div className="flex-1 bg-gray-100 flex items-center justify-center p-6 relative">
-                    {!previewUrl ? <div className="text-gray-400 text-sm">Select a file to preview</div> : previewType === 'image' ? <img src={previewUrl} className="max-w-full max-h-[70vh] shadow-lg border border-gray-300 bg-white" /> : <iframe src={`${previewUrl}#toolbar=0`} className="w-full h-full shadow-lg bg-white" />}
-                </div>
-             </div>
-        </div>
-
-        {/* RIGHT COL: FILE VAULT & CHAT */}
-        <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/3">
-                <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                     <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File Vault</h3>
-                     <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                    {assets.map((asset) => {
-                        const isCurrent = viewingAssetId === asset.id;
-                        const linkedItem = asset.job_item_id ? items.find(i => i.id === asset.job_item_id) : null;
-                        return (
-                        <div key={asset.id} onClick={() => loadPreview(asset)} className={`p-2 rounded border cursor-pointer transition-all flex flex-col gap-2 group ${isCurrent ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
-                            <div className="flex items-center gap-2 overflow-hidden">
-                                {asset.asset_type === 'source' ? <FileText size={16} className="text-gray-400"/> : <FileImage size={16} className="text-purple-500"/>}
-                                <div><p className="text-xs font-bold text-gray-700 truncate w-32">{asset.file_name}</p><p className="text-[10px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</p></div>
-                            </div>
-                            <div className="flex flex-wrap gap-1">
-                                {asset.status === 'approved' && <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1.5 rounded flex items-center gap-1">APPROVED</span>}
-                                {linkedItem && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 rounded flex items-center gap-1 border border-blue-200 truncate max-w-full">LINKED: {linkedItem.description}</span>}
-                            </div>
-                        </div>
-                        );
-                    })}
-                </div>
-            </div>
-
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-2/3 overflow-hidden">
-                <div className="flex border-b border-gray-200">
-                    <button onClick={() => setRightTab('chat')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><MessageSquare size={14}/> Discussion</button>
-                    <button onClick={() => setRightTab('activity')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><Activity size={14}/> Activity Log</button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
-                    {rightTab === 'chat' && (
-                        <>
-                            {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
-                            {messages.map((msg) => (
-                                <div key={msg.id} className={`flex flex-col ${msg.user_id === user?.id ? 'items-end' : 'items-start'}`}>
-                                    <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${msg.user_id === user?.id ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
-                                    <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.email?.split('@')[0]}</span>
-                                </div>
-                            ))}
-                            <div ref={messagesEndRef} />
-                        </>
+                      ))
                     )}
-                    {rightTab === 'activity' && (
-                        <>
-                            {logs.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No activity recorded yet.</div>}
-                            {logs.map((log) => (
-                                <div key={log.id} className="flex gap-3 text-xs pb-3 border-b border-gray-50 last:border-0">
-                                    <div className="mt-0.5 min-w-[30px] text-gray-400 font-mono text-[9px]">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
-                                    <div><p className="font-bold text-gray-900">{log.action}</p><p className="text-gray-500">{log.details}</p></div>
-                                </div>
-                            ))}
-                            <div ref={logsEndRef} />
-                        </>
-                    )}
+                  </div>
                 </div>
-                {rightTab === 'chat' && (
-                    <div className="p-2 border-t border-gray-100 bg-gray-50">
-                        <div className="flex gap-2">
-                            <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-200 text-xs focus:outline-none focus:border-black" placeholder="Type here..." />
-                            <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
+                <div className="border-t border-gray-200 p-4 space-y-3">
+                  <textarea
+                    value={noteText}
+                    onChange={(e) => setNoteText(e.target.value)}
+                    placeholder="Leave a Note"
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-xs resize-none h-20 focus:outline-none focus:border-gray-500"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        if (!noteText.trim()) return;
+                        logActivity('Note', noteText);
+                        setNoteText('');
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-gray-900 text-white text-xs font-bold rounded hover:bg-gray-700 transition-colors whitespace-nowrap"
+                    >
+                      + Add Note
+                    </button>
+                    <select
+                      value={noteStep}
+                      onChange={(e) => setNoteStep(e.target.value)}
+                      className="flex-1 text-xs border border-gray-200 rounded px-2 py-2 bg-white text-gray-600 min-w-0"
+                    >
+                      <option value="">Select step (Optional)</option>
+                      {selectedSteps.map((s: any) => (
+                        <option key={s.id} value={s.id}>{s.step_name}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={notePriority}
+                      onChange={(e) => setNotePriority(e.target.value)}
+                      className="w-16 text-xs border border-gray-200 rounded px-1 py-2 bg-white text-gray-600"
+                    >
+                      <option>Low</option>
+                      <option>Medium</option>
+                      <option>High</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* FILES TAB */}
+            {rightTab === 'files' && (
+              <div className="flex flex-col h-full">
+                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                  {assets.length === 0 ? (
+                    <div className="text-center text-gray-400 text-xs py-4">No files uploaded yet.</div>
+                  ) : (
+                    assets.map(asset => (
+                      <div key={asset.id} onClick={() => loadPreview(asset)} className="flex items-center gap-3 p-3 border border-gray-200 rounded cursor-pointer hover:bg-gray-50 transition-colors">
+                        <FileText size={16} className="text-gray-400 flex-shrink-0" />
+                        <div className="overflow-hidden flex-1">
+                          <p className="text-xs font-medium text-gray-800 truncate">{asset.file_name}</p>
+                          <p className="text-[10px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()} · {asset.asset_type}</p>
                         </div>
+                        {asset.status === 'approved' && <span className="text-[10px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded flex-shrink-0">APPROVED</span>}
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="border-t border-gray-200 p-4">
+                  <button onClick={() => setShowUploadModal(true)} className="w-full py-2 border-2 border-dashed border-gray-300 rounded text-xs text-gray-500 hover:border-gray-500 hover:text-gray-700 transition-colors">
+                    + Upload New Proof
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* CHAT TAB */}
+            {rightTab === 'chat' && (
+              <div className="flex flex-col h-full">
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  {messages.length === 0 && <div className="text-center text-gray-300 text-xs py-4">No messages yet.</div>}
+                  {messages.map((msg: any) => (
+                    <div key={msg.id} className={`flex flex-col ${msg.user_id === user?.id ? 'items-end' : 'items-start'}`}>
+                      <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${msg.user_id === user?.id ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-800'}`}>
+                        {msg.content}
+                      </div>
+                      <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.email?.split('@')[0]}</span>
                     </div>
-                )}
-            </div>
+                  ))}
+                  <div ref={messagesEndRef} />
+                </div>
+                <div className="border-t border-gray-100 p-3 bg-gray-50">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newMessage}
+                      onChange={(e) => setNewMessage(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                      className="flex-1 px-3 py-2 rounded border border-gray-200 text-xs focus:outline-none focus:border-gray-500"
+                      placeholder="Type here..."
+                    />
+                    <button onClick={handleSendMessage} className="bg-gray-900 text-white p-2 rounded hover:bg-gray-700 transition-colors">
+                      <Send size={14}/>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* HISTORY TAB */}
+            {rightTab === 'history' && (
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {logs.length === 0 && <div className="text-center text-gray-300 text-xs py-4">No activity recorded yet.</div>}
+                {logs.map((log: any) => (
+                  <div key={log.id} className="flex gap-3 text-xs pb-3 border-b border-gray-50 last:border-0">
+                    <div className="mt-0.5 text-gray-400 font-mono text-[9px] whitespace-nowrap">
+                      {new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                    </div>
+                    <div>
+                      <p className="font-bold text-gray-900">{log.action}</p>
+                      <p className="text-gray-500">{log.details}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
