@@ -19,7 +19,7 @@ export default async function DashboardJobPage({ params }: { params: { id: strin
       id, title, status, notes, internal_notes, due_date,
       finishing_options, quantity, size, paper_stock,
       guest_email, assigned_to, csr_name, order_id, user_id,
-      created_at, updated_at,
+      created_at,
       orders (brands(name)),
       profiles:user_id (email)
     `)
