@@ -4,4 +4,4 @@ out/
 build/
 .env*.local
 *.log
-.DS_Store
+.DS_Storetsconfig.tsbuildinfo
