@@ -5,7 +5,6 @@ import { Resend } from 'resend';
 
 // 1. Initialize Clients
 const resend = new Resend(process.env.RESEND_API_KEY);
-const supabase = createClient();
 
 // --- TOOL 1: SEND ORDER CONFIRMATION ---
 export async function sendOrderConfirmation(email: string, orderId: string, summary: string) {
@@ -37,6 +36,7 @@ export async function sendOrderConfirmation(email: string, orderId: string, summ
 
 // --- TOOL 2: SEND PROOF NOTIFICATION ---
 export async function sendProofNotification(jobId: string, fileUrl: string, customMessage: string = '') {
+  const supabase = await createClient();
   // FIX: Fetch guest_email as a fallback
   const { data: job } = await supabase
     .from('jobs')

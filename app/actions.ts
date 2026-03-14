@@ -5,7 +5,6 @@ import { Resend } from 'resend';
 
 // 1. Initialize Clients
 const resend = new Resend(process.env.RESEND_API_KEY);
-const supabase = createClient();
 
 // --- TOOL 1: SEND ORDER CONFIRMATION ---
 export async function sendOrderConfirmation(email: string, orderId: string, summary: string) {
@@ -34,6 +33,7 @@ export async function sendOrderConfirmation(email: string, orderId: string, summ
 
 // --- TOOL 2: SEND PROOF NOTIFICATION ---
 export async function sendProofNotification(jobId: string, fileUrl: string, customMessage: string = '') {
+  const supabase = await createClient();
   const { data: job } = await supabase
     .from('jobs')
     .select('*, profiles:user_id(email, first_name)')
@@ -81,6 +81,7 @@ export async function sendProofNotification(jobId: string, fileUrl: string, cust
 // --- TOOL 3: CONVERT APPROVED QUOTE TO JOB ---
 export async function convertQuoteToJob(quoteId: string) {
   try {
+    const supabase = await createClient();
     // 1. Fetch the quote with full details
     const { data: quote, error: quoteError } = await supabase
       .from('quotes')
@@ -163,6 +164,7 @@ export async function convertQuoteToJob(quoteId: string) {
 // --- TOOL 4: CREATE INVOICE ---
 export async function createInvoice(data: any) {
   try {
+    const supabase = await createClient();
     const { 
       orderId, companyId, status, subtotal, shipping, postage, tax, total, paidAmount, terms, items 
     } = data;
@@ -230,6 +232,7 @@ export async function createInvoice(data: any) {
 
 export async function getInvoice(id: string) {
   try {
+    const supabase = await createClient();
     const { data: invoice, error } = await supabase
       .from('invoices')
       .select(`

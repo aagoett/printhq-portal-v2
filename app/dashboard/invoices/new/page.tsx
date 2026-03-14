@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createBrowserClient } from '@supabase/ssr';
 import { 
@@ -10,7 +10,15 @@ import Link from 'next/link';
 import { COMPANIES, getCompanyById } from '@/lib/companies';
 import { createInvoice } from '@/app/actions';
 
-export default function NewInvoicePage() {
+export default function NewInvoicePageWrapper() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading invoice...</div>}>
+      <NewInvoicePage />
+    </Suspense>
+  );
+}
+
+function NewInvoicePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const jobId = searchParams.get('jobId');

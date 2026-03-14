@@ -3,7 +3,7 @@ import JobInteractiveView from './JobInteractiveView';
 import { redirect } from 'next/navigation';
 
 export default async function DashboardJobPage({ params }: { params: { id: string } }) {
-  const supabase = createClient();
+  const supabase = await createClient();
 
   // 1. Auth Check
   const { data: { user } } = await supabase.auth.getUser();

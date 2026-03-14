@@ -8,7 +8,7 @@ export type UserRole = 'admin' | 'staff' | 'customer';
  * Returns { user, profile, role } or redirects to /login if not authenticated.
  */
 export async function getAuthUser() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {

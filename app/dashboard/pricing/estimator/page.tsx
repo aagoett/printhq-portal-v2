@@ -1,362 +1,401 @@
 'use client';
 
-import { createBrowserClient } from '@supabase/ssr';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Calculator, Trophy, DollarSign, LayoutGrid, ArrowLeft, Save, Loader2 } from 'lucide-react';
 import Link from 'next/link';
+import { createBrowserClient } from '@supabase/ssr';
+import { Calculator, Save, Plus, ArrowLeft, Loader2, Settings, ClipboardList, ChevronDown } from 'lucide-react';
+import { calculateEstimate, EstimateResult, FinishingOp, Markup, Press, ProductTemplate, Stock } from '@/lib/estimator';
+import { deleteFinishing, deleteMarkup, deletePress, deleteStock, deleteTemplate, saveQuote, upsertFinishing, upsertMarkup, upsertPress, upsertStock, upsertTemplate } from '@/app/actions/estimator';
 
-export default function AutoEstimatorPage() {
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+type Role = 'admin' | 'staff' | 'customer' | string;
+
+export default function EstimatorPage() {
   const router = useRouter();
-  
-  // --- INPUTS ---
-  const [finishW, setFinishW] = useState(8.5);
-  const [finishH, setFinishH] = useState(11);
-  const [quantity, setQuantity] = useState(5000);
-  const [selectedPaperId, setSelectedPaperId] = useState(''); 
-  const [quoteTitle, setQuoteTitle] = useState(''); // New: Name the quote
+  const [role, setRole] = useState<Role>('customer');
+  const [loading, setLoading] = useState(true);
 
-  // --- DATA ---
-  const [papers, setPapers] = useState<any[]>([]);
-  const [presses, setPresses] = useState<any[]>([]);
-  const [finishing, setFinishing] = useState<any[]>([]);
-  const [mailing, setMailing] = useState<any[]>([]);
-  const [estimates, setEstimates] = useState<any[]>([]);
-  const [winner, setWinner] = useState<any>(null);
-  
+  const [presses, setPresses] = useState<Press[]>([]);
+  const [stocks, setStocks] = useState<Stock[]>([]);
+  const [finishingOps, setFinishingOps] = useState<FinishingOp[]>([]);
+  const [markups, setMarkups] = useState<Markup[]>([]);
+  const [templates, setTemplates] = useState<ProductTemplate[]>([]);
+
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  const [selectedPressId, setSelectedPressId] = useState<string>('');
+  const [selectedStockId, setSelectedStockId] = useState<string>('');
+  const [selectedMarkupId, setSelectedMarkupId] = useState<string>('');
   const [selectedFinishingIds, setSelectedFinishingIds] = useState<string[]>([]);
-  const [selectedMailingId, setSelectedMailingId] = useState<string | null>(null);
 
-  const [isSaving, setIsSaving] = useState(false);
-
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const [quantities, setQuantities] = useState<string>('500,1000');
+  const [quoteTitle, setQuoteTitle] = useState('Quick Quote');
+  const [contact, setContact] = useState('');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetchInventory();
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push('/login');
+        return;
+      }
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+      const detectedRole = profile?.role || 'customer';
+      setRole(detectedRole);
+
+      await loadData();
+      setLoading(false);
+    })();
   }, []);
 
-  useEffect(() => {
-    if (selectedPaperId && finishW > 0 && finishH > 0 && quantity > 0) {
-        calculateBestRoute();
-    }
-  }, [finishW, finishH, quantity, selectedPaperId, selectedFinishingIds, selectedMailingId]);
+  const loadData = async () => {
+    const [pressRes, stockRes, finishRes, markupRes, templateRes] = await Promise.all([
+      supabase.from('presses').select('*').order('name'),
+      supabase.from('stocks').select('*').order('name'),
+      supabase.from('finishing_ops').select('*').order('name'),
+      supabase.from('markups').select('*').order('name'),
+      supabase.from('product_templates').select('*').order('name'),
+    ]);
 
-  const fetchInventory = async () => {
-    const { data: pData } = await supabase.from('pricing_components').select('*').eq('type', 'paper').order('name');
-    const { data: mData } = await supabase.from('pricing_components').select('*').in('type', ['press_digital', 'press_offset']);
-    const { data: fData } = await supabase.from('pricing_components').select('*').eq('type', 'finishing').order('name');
-    const { data: mailData } = await supabase.from('pricing_components').select('*').eq('type', 'mailing').order('name');
+    const pressList = pressRes.data || [];
+    const stockList = stockRes.data || [];
+    const finishList = finishRes.data || [];
+    const markupList = markupRes.data || [];
+    const templateList = templateRes.data || [];
 
-    if (pData) {
-        setPapers(pData);
-        if (pData.length > 0) setSelectedPaperId(pData[0].id);
-    }
-    if (mData) setPresses(mData);
-    if (fData) setFinishing(fData);
-    if (mailData) setMailing(mailData);
+    setPresses(pressList as Press[]);
+    setStocks(stockList as Stock[]);
+    setFinishingOps(finishList as FinishingOp[]);
+    setMarkups(markupList as Markup[]);
+    setTemplates(templateList as ProductTemplate[]);
+
+    if (!selectedTemplateId && templateList[0]?.id) setSelectedTemplateId(templateList[0].id);
+    if (!selectedPressId && pressList[0]?.id) setSelectedPressId(pressList[0].id);
+    if (!selectedStockId && stockList[0]?.id) setSelectedStockId(stockList[0].id);
+    if (!selectedMarkupId && markupList[0]?.id) setSelectedMarkupId(markupList[0].id);
   };
 
-  const calculateNUp = (parentW: number, parentH: number, itemW: number, itemH: number) => {
-      const fitNormal = Math.floor(parentW / itemW) * Math.floor(parentH / itemH);
-      const fitRotated = Math.floor(parentW / itemH) * Math.floor(parentH / itemW);
-      return Math.max(fitNormal, fitRotated);
-  };
+  const selectedTemplate = useMemo(() => templates.find((t) => t.id === selectedTemplateId) || templates[0], [templates, selectedTemplateId]);
+  const selectedPress = useMemo(() => presses.find((p) => p.id === (selectedTemplate?.default_press_id || selectedPressId)) || presses.find((p) => p.id === selectedPressId) || presses[0], [presses, selectedPressId, selectedTemplate]);
+  const selectedStock = useMemo(() => stocks.find((s) => s.id === (selectedTemplate?.default_stock_id || selectedStockId)) || stocks.find((s) => s.id === selectedStockId) || stocks[0], [stocks, selectedStockId, selectedTemplate]);
+  const selectedMarkup = useMemo(() => markups.find((m) => m.id === (selectedTemplate?.default_markup_id || selectedMarkupId)) || markups.find((m) => m.id === selectedMarkupId) || null, [markups, selectedMarkupId, selectedTemplate]);
+  const selectedFinishing = useMemo(() => {
+    const ids = selectedTemplate?.finishing_op_ids?.length ? selectedTemplate.finishing_op_ids : selectedFinishingIds;
+    return finishingOps.filter((f) => ids?.includes(f.id));
+  }, [finishingOps, selectedFinishingIds, selectedTemplate]);
 
-  const calculateBestRoute = () => {
-      const results: any[] = [];
-      const paper = papers.find(p => p.id === selectedPaperId);
-      if (!paper) return;
+  const parsedQuantities = useMemo(() => {
+    return quantities.split(',').map((q) => parseInt(q.trim(), 10)).filter((q) => !isNaN(q) && q > 0);
+  }, [quantities]);
 
-      const nUp = calculateNUp(paper.parent_sheet_width, paper.parent_sheet_height, finishW, finishH);
-      if (nUp === 0) return;
+  const results: EstimateResult[] = useMemo(() => {
+    if (!selectedTemplate || !selectedPress || !selectedStock) return [];
+    return parsedQuantities.map((qty) => calculateEstimate({
+      quantity: qty,
+      template: selectedTemplate,
+      press: selectedPress,
+      stock: selectedStock,
+      finishingOps: selectedFinishing,
+      markup: selectedMarkup,
+    }));
+  }, [parsedQuantities, selectedTemplate, selectedPress, selectedStock, selectedFinishing, selectedMarkup]);
 
-      const sheetsNeeded = Math.ceil(quantity / nUp);
-      const sheetsWithWaste = Math.ceil(sheetsNeeded * 1.1);
-      const paperCost = sheetsWithWaste * paper.cost_amount;
-      const paperPrice = sheetsWithWaste * paper.price_amount;
+  const totalPrice = results.reduce((sum, r) => sum + r.totalPrice, 0);
 
-      // Calculate Finishing
-      let totalFinishingCost = 0;
-      let totalFinishingPrice = 0;
-      const selectedFinishes = finishing.filter(f => selectedFinishingIds.includes(f.id));
-      selectedFinishes.forEach(f => {
-          if (f.cost_unit === 'per_sheet') {
-              totalFinishingCost += sheetsWithWaste * f.cost_amount;
-              totalFinishingPrice += sheetsWithWaste * f.price_amount;
-          } else {
-              totalFinishingCost += f.cost_amount;
-              totalFinishingPrice += f.price_amount;
-          }
-      });
-
-      // Calculate Mailing
-      let totalMailingCost = 0;
-      let totalMailingPrice = 0;
-      let mailDetail = '';
-      if (selectedMailingId) {
-          const mail = mailing.find(m => m.id === selectedMailingId);
-          if (mail) {
-              if (mail.cost_unit === 'per_piece' || mail.cost_unit === 'per_item') {
-                  totalMailingCost = quantity * mail.cost_amount;
-                  totalMailingPrice = quantity * mail.price_amount;
-              } else {
-                  totalMailingCost = mail.cost_amount;
-                  totalMailingPrice = mail.price_amount;
-              }
-              mailDetail = mail.name;
-          }
-      }
-
-      presses.forEach(press => {
-          if (paper.parent_sheet_width > press.max_sheet_width && press.max_sheet_width > 0) return;
-
-          let pressCost = 0;
-          let pressPrice = 0;
-          let detail = '';
-
-          if (press.type === 'press_digital') {
-              pressCost = sheetsWithWaste * press.cost_amount;
-              pressPrice = sheetsWithWaste * press.price_amount;
-              detail = `Click: $${press.price_amount}/sheet`;
-          } else {
-              // Time-based Presstime calculation
-              const setupHr = (press.setup_minutes || 0) / 60;
-              const runHr = sheetsWithWaste / (press.run_speed_per_hour || 5000);
-              const totalHr = setupHr + runHr;
-              
-              // If hourly rates are not explicitly set in price_amount/cost_amount (e.g. they are per 1k), 
-              // we fall back to a reasonable default or legacy logic.
-              if (press.price_amount < 50) {
-                  const platePrice = 50; 
-                  const runPrice = (sheetsWithWaste / 1000) * press.price_amount; 
-                  pressPrice = platePrice + runPrice;
-                  
-                  const plateCost = 15;
-                  const runCost = (sheetsWithWaste / 1000) * press.cost_amount;
-                  pressCost = plateCost + runCost;
-                  detail = `Offset (Run: ${sheetsWithWaste} sheets)`;
-              } else {
-                  const platePrice = 50;
-                  const plateCost = 15;
-                  pressPrice = platePrice + (totalHr * press.price_amount);
-                  pressCost = plateCost + (totalHr * press.cost_amount);
-                  detail = `Presstime: ${totalHr.toFixed(2)} hrs @ $${press.price_amount}/hr`;
-              }
-          }
-
-          const totalCost = paperCost + pressCost + totalFinishingCost + totalMailingCost;
-          const totalPrice = paperPrice + pressPrice + totalFinishingPrice + totalMailingPrice;
-
-          results.push({
-              method: press.name,
-              sheet: `${paper.parent_sheet_width}x${paper.parent_sheet_height}"`,
-              nUp,
-              totalSheets: sheetsWithWaste,
-              paperPrice,
-              pressPrice,
-              finishingPrice: totalFinishingPrice,
-              mailingPrice: totalMailingPrice,
-              totalPrice,
-              totalCost,
-              unitCost: totalPrice / quantity,
-              detail,
-              paperName: paper.name,
-              breakdown: [
-                  { name: 'Paper', cost: paperCost, detail: `${sheetsWithWaste} sheets of ${paper.name}` },
-                  { name: 'Press', cost: pressCost, detail },
-                  { name: 'Finishing', cost: totalFinishingCost, detail: selectedFinishes.map(f => f.name).join(', ') || 'None' },
-                  { name: 'Mailing', cost: totalMailingCost, detail: mailDetail || 'None' }
-              ]
-          });
-      });
-
-      results.sort((a, b) => a.totalPrice - b.totalPrice);
-      setEstimates(results);
-      if (results.length > 0) setWinner(results[0]);
+  const handleToggleFinishing = (id: string) => {
+    setSelectedFinishingIds((prev) => prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id]);
   };
 
   const handleSaveQuote = async () => {
-      if (!winner) return;
-      const title = quoteTitle || `Estimate for ${quantity}x ${finishW}x${finishH}`;
-      setIsSaving(true);
-
-      const { error } = await supabase.from('quotes').insert({
-          title: title,
-          quantity: quantity,
-          width: finishW,
-          height: finishH,
-          paper_stock: winner.paperName,
-          production_method: winner.method,
-          total_cost: winner.totalCost,
-          total_price: winner.totalPrice,
-          cost_breakdown: winner, // Store the full math object
-          status: 'Draft'
+    if (!results.length) return;
+    setSaving(true);
+    try {
+      const quote = await saveQuote({
+        title: quoteTitle || 'Quote',
+        contact,
+        templateId: selectedTemplate?.id,
+        pressId: selectedPress?.id,
+        stockId: selectedStock?.id,
+        markupId: selectedMarkup?.id,
+        quantities: parsedQuantities,
+        results,
+        finishingIds: selectedFinishing.map((f) => f.id),
       });
+      alert('Quote saved');
+      router.push('/dashboard/quotes');
+      return quote;
+    } catch (err: any) {
+      alert(err?.message || 'Failed to save quote');
+    } finally {
+      setSaving(false);
+    }
+  };
 
-      if (error) {
-          alert('Error saving quote: ' + error.message);
-          setIsSaving(false);
-      } else {
-          router.push('/dashboard/quotes'); // Redirect to list
-      }
+  if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="border-b bg-white">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link href="/dashboard" className="p-2 rounded-full border text-gray-500 hover:bg-gray-50"><ArrowLeft size={18} /></Link>
+            <div>
+              <div className="text-xs uppercase text-gray-400 font-bold">Estimator</div>
+              <h1 className="text-xl font-bold text-gray-900">Quantity breaks, press selection, and saved quotes</h1>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Link href="/dashboard/quotes" className="px-3 py-2 text-sm border rounded-lg bg-white text-gray-700 hover:bg-gray-50">Quotes</Link>
+            {role !== 'customer' && <Link href="/dashboard/pricing" className="px-3 py-2 text-sm border rounded-lg bg-white text-gray-700 hover:bg-gray-50 flex items-center gap-2"><Settings size={16}/>Costs</Link>}
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-6 py-8 space-y-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="bg-white border border-gray-200 rounded-2xl p-5 space-y-4 shadow-sm">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase text-gray-500">
+              <Calculator size={16}/> Quote Builder
+            </div>
+
+            <div className="space-y-3">
+              <label className="text-xs font-bold text-gray-500">Template</label>
+              <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">
+                {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-bold text-gray-500">Press</label>
+                <select value={selectedPress?.id} onChange={(e) => setSelectedPressId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">
+                  {presses.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-gray-500">Stock</label>
+                <select value={selectedStock?.id} onChange={(e) => setSelectedStockId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">
+                  {stocks.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-bold text-gray-500">Markup</label>
+                <select value={selectedMarkup?.id || ''} onChange={(e) => setSelectedMarkupId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">
+                  <option value="">No markup</option>
+                  {markups.map(m => <option key={m.id} value={m.id}>{m.name} ({m.percent}%)</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-gray-500">Quantities (comma separated)</label>
+                <input value={quantities} onChange={(e) => setQuantities(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm" />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-gray-500">Finishing</label>
+              <div className="grid grid-cols-1 gap-2 max-h-32 overflow-y-auto border rounded-lg p-2 bg-gray-50">
+                {finishingOps.map(f => (
+                  <label key={f.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={(selectedTemplate?.finishing_op_ids || selectedFinishingIds).includes(f.id)} onChange={() => handleToggleFinishing(f.id)} />
+                    <span className="flex-1">{f.name}</span>
+                    <span className="text-xs text-gray-400">setup {f.setup_minutes ?? 0}m</span>
+                  </label>
+                ))}
+                {finishingOps.length === 0 && <div className="text-xs text-gray-400">No finishing ops</div>}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-500">Quote Title</label>
+              <input value={quoteTitle} onChange={(e) => setQuoteTitle(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm" />
+              <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Contact / Company" className="w-full rounded-lg border px-3 py-2 text-sm" />
+            </div>
+
+            <button onClick={handleSaveQuote} disabled={!results.length || saving} className="w-full bg-black text-white rounded-lg py-3 font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+              {saving ? <Loader2 className="animate-spin" size={16}/> : <Save size={16}/>} Save Quote
+            </button>
+          </div>
+
+          <div className="lg:col-span-2 space-y-4">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+              <div className="px-6 py-4 border-b flex items-center justify-between">
+                <div>
+                  <div className="text-xs uppercase text-gray-400 font-bold">Estimate</div>
+                  <h2 className="text-lg font-bold text-gray-900">Breakdown by quantity</h2>
+                </div>
+                <div className="text-sm font-bold text-gray-800">Total ${totalPrice.toFixed(2)}</div>
+              </div>
+              <div className="divide-y">
+                {results.length === 0 && (
+                  <div className="p-6 text-gray-500 text-sm">Add a quantity to see pricing.</div>
+                )}
+                {results.map((res) => (
+                  <div key={res.quantity} className="p-6 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-xs uppercase text-gray-400 font-bold">Quantity</div>
+                        <div className="text-xl font-bold text-gray-900">{res.quantity.toLocaleString()}</div>
+                        <div className="text-xs text-gray-500">{res.sheets.toLocaleString()} sheets • {res.pressHours.toFixed(2)} hrs press</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs uppercase text-gray-400 font-bold">Price</div>
+                        <div className="text-3xl font-black text-gray-900">${res.totalPrice.toFixed(2)}</div>
+                        <div className="text-xs text-gray-500">Cost ${res.totalCost.toFixed(2)}</div>
+                      </div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg border text-sm divide-y">
+                      {res.breakdown.map((b, i) => (
+                        <div key={i} className="px-4 py-2 flex items-center justify-between">
+                          <div>
+                            <div className="font-semibold text-gray-800">{b.label}</div>
+                            {b.detail && <div className="text-xs text-gray-500">{b.detail}</div>}
+                          </div>
+                          <div className="text-right">
+                            <div className="font-mono text-gray-800">${b.price.toFixed(2)}</div>
+                            <div className="text-[10px] text-gray-500">Cost ${b.cost.toFixed(2)}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {role !== 'customer' && (
+              <AdminRates
+                presses={presses}
+                stocks={stocks}
+                finishingOps={finishingOps}
+                markups={markups}
+                templates={templates}
+                onRefresh={loadData}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminRates({ presses, stocks, finishingOps, markups, templates, onRefresh }: {
+  presses: Press[];
+  stocks: Stock[];
+  finishingOps: FinishingOp[];
+  markups: Markup[];
+  templates: ProductTemplate[];
+  onRefresh: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(true);
+
+  const handleUpsert = async (table: string, values: any) => {
+    try {
+      if (table === 'presses') await upsertPress(values);
+      if (table === 'stocks') await upsertStock(values);
+      if (table === 'finishing_ops') await upsertFinishing(values);
+      if (table === 'markups') await upsertMarkup(values);
+      if (table === 'product_templates') await upsertTemplate(values);
+      await onRefresh();
+    } catch (err: any) {
+      alert(err?.message || 'Save failed');
+    }
+  };
+
+  const handleDelete = async (table: string, id: string) => {
+    if (!confirm('Delete record?')) return;
+    try {
+      if (table === 'presses') await deletePress(id);
+      if (table === 'stocks') await deleteStock(id);
+      if (table === 'finishing_ops') await deleteFinishing(id);
+      if (table === 'markups') await deleteMarkup(id);
+      if (table === 'product_templates') await deleteTemplate(id);
+      await onRefresh();
+    } catch (err: any) {
+      alert(err?.message || 'Delete failed');
+    }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-        
-        {/* NAV */}
-        <div className="max-w-6xl mx-auto flex items-center justify-between mb-8 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-            <div className="flex items-center gap-4">
-                <Link href="/dashboard" className="p-2 bg-gray-50 border rounded-full hover:bg-gray-100 text-gray-500"><ArrowLeft size={20}/></Link>
-                <h1 className="text-xl font-bold text-gray-900">Auto-Estimator</h1>
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
+      <button onClick={() => setOpen((p) => !p)} className="w-full flex items-center justify-between px-6 py-4 border-b">
+        <div className="flex items-center gap-2 text-sm font-bold text-gray-800"><ClipboardList size={16}/> Admin Rates</div>
+        <ChevronDown className={`transition ${open ? 'rotate-180' : ''}`} size={16} />
+      </button>
+      {open && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-6">
+          <SimpleTable title="Presses" columns={['name','type','impressions_per_hour']} rows={presses} onSave={(row) => handleUpsert('presses', row)} onDelete={(id) => handleDelete('presses', id)} />
+          <SimpleTable title="Stocks" columns={['name','sheet_width','sheet_height','cost_per_sheet']} rows={stocks} onSave={(row) => handleUpsert('stocks', row)} onDelete={(id) => handleDelete('stocks', id)} />
+          <SimpleTable title="Finishing" columns={['name','setup_minutes','run_minutes_per_thousand','cost_per_hour']} rows={finishingOps} onSave={(row) => handleUpsert('finishing_ops', row)} onDelete={(id) => handleDelete('finishing_ops', id)} />
+          <SimpleTable title="Markups" columns={['name','percent']} rows={markups} onSave={(row) => handleUpsert('markups', row)} onDelete={(id) => handleDelete('markups', id)} />
+          <SimpleTable title="Templates" columns={['name','finished_width','finished_height','default_press_id','default_stock_id','default_markup_id','setup_waste_sheets']} rows={templates} onSave={(row) => handleUpsert('product_templates', row)} onDelete={(id) => handleDelete('product_templates', id)} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SimpleTable({ title, columns, rows, onSave, onDelete }: { title: string; columns: string[]; rows: any[]; onSave: (row: any) => void; onDelete: (id: string) => void; }) {
+  const [editing, setEditing] = useState<any | null>(null);
+
+  const handleEdit = (row?: any) => {
+    setEditing(row || { id: undefined });
+  };
+
+  const handleChange = (key: string, value: any) => {
+    setEditing((prev: any) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSubmit = async () => {
+    await onSave(editing);
+    setEditing(null);
+  };
+
+  return (
+    <div className="border border-gray-100 rounded-xl overflow-hidden">
+      <div className="px-4 py-3 bg-gray-50 flex items-center justify-between">
+        <div className="text-sm font-bold text-gray-800">{title}</div>
+        <button onClick={() => handleEdit()} className="text-xs px-2 py-1 border rounded-lg flex items-center gap-1 hover:bg-white"><Plus size={12}/> New</button>
+      </div>
+      <div className="divide-y text-sm">
+        {rows.map((row) => (
+          <div key={row.id} className="px-4 py-2 flex items-center justify-between hover:bg-gray-50">
+            <div className="flex-1">
+              <div className="font-semibold text-gray-800">{row.name || row.id}</div>
+              <div className="text-[11px] text-gray-500 truncate">{columns.map((c) => `${c}: ${row[c] ?? '--'}`).join(' • ')}</div>
             </div>
             <div className="flex gap-2">
-                <Link href="/dashboard/pricing" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><DollarSign size={16}/> Costs</Link>
-                <Link href="/dashboard/quotes" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> My Quotes</Link>
+              <button onClick={() => handleEdit(row)} className="text-xs text-blue-600">Edit</button>
+              <button onClick={() => onDelete(row.id)} className="text-xs text-red-600">Delete</button>
             </div>
+          </div>
+        ))}
+        {rows.length === 0 && <div className="px-4 py-3 text-xs text-gray-500">No records.</div>}
+      </div>
+
+      {editing && (
+        <div className="p-4 bg-white border-t border-gray-100 space-y-3">
+          <div className="text-xs uppercase text-gray-500 font-bold">{editing.id ? 'Edit' : 'New'} {title.slice(0,-1)}</div>
+          {columns.map((col) => (
+            <div key={col} className="space-y-1">
+              <label className="text-[11px] text-gray-500 font-semibold">{col}</label>
+              <input value={editing[col] ?? ''} onChange={(e) => handleChange(col, e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm" />
+            </div>
+          ))}
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setEditing(null)} className="text-xs px-3 py-2 border rounded-lg">Cancel</button>
+            <button onClick={handleSubmit} className="text-xs px-3 py-2 bg-black text-white rounded-lg">Save</button>
+          </div>
         </div>
-
-        <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
-            
-            {/* INPUTS */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-fit space-y-6">
-                <div>
-                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Quote Reference</label>
-                    <input type="text" placeholder="e.g. Haleigh's Flyers" value={quoteTitle} onChange={(e) => setQuoteTitle(e.target.value)} className="w-full border rounded p-2 text-sm focus:border-black outline-none"/>
-                </div>
-                <div>
-                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2">1. Finished Size</label>
-                    <div className="flex gap-2 items-center">
-                        <input type="number" value={finishW} onChange={(e) => setFinishW(parseFloat(e.target.value))} className="w-20 border rounded p-2 text-sm font-bold text-center"/>
-                        <span className="text-gray-400">x</span>
-                        <input type="number" value={finishH} onChange={(e) => setFinishH(parseFloat(e.target.value))} className="w-20 border rounded p-2 text-sm font-bold text-center"/>
-                        <span className="text-xs text-gray-400 ml-2">in</span>
-                    </div>
-                </div>
-                <div>
-                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2">2. Quantity</label>
-                    <input type="number" value={quantity} onChange={(e) => setQuantity(parseInt(e.target.value))} className="w-full border rounded p-3 text-lg font-bold"/>
-                </div>
-                <div>
-                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2">3. Select Paper Stock</label>
-                    <select value={selectedPaperId} onChange={(e) => setSelectedPaperId(e.target.value)} className="w-full border rounded p-3 text-sm bg-white">
-                        {papers.map(p => <option key={p.id} value={p.id}>{p.name} (${p.price_amount}/sht)</option>)}
-                    </select>
-                </div>
-                <div>
-                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2">4. Finishing Options</label>
-                    <div className="space-y-2 max-h-40 overflow-y-auto p-2 border rounded bg-gray-50">
-                        {finishing.map(f => (
-                            <label key={f.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-white p-1 rounded transition-colors">
-                                <input 
-                                    type="checkbox" 
-                                    checked={selectedFinishingIds.includes(f.id)} 
-                                    onChange={(e) => {
-                                        if (e.target.checked) setSelectedFinishingIds([...selectedFinishingIds, f.id]);
-                                        else setSelectedFinishingIds(selectedFinishingIds.filter(id => id !== f.id));
-                                    }}
-                                    className="rounded border-gray-300 text-black focus:ring-black"
-                                />
-                                <span className="flex-1">{f.name}</span>
-                                <span className="text-xs font-mono text-gray-400">${f.price_amount}</span>
-                            </label>
-                        ))}
-                        {finishing.length === 0 && <p className="text-xs text-gray-400 italic">No finishing options found.</p>}
-                    </div>
-                </div>
-                <div>
-                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2">5. Mailing</label>
-                    <select 
-                        value={selectedMailingId || ''} 
-                        onChange={(e) => setSelectedMailingId(e.target.value || null)} 
-                        className="w-full border rounded p-3 text-sm bg-white"
-                    >
-                        <option value="">No Mailing</option>
-                        {mailing.map(m => <option key={m.id} value={m.id}>{m.name} (${m.price_amount}/{m.cost_unit?.replace('per_', '')})</option>)}
-                    </select>
-                </div>
-            </div>
-
-            {/* RESULTS */}
-            <div className="lg:col-span-2 space-y-6">
-                {winner ? (
-                    <div className="bg-green-50 rounded-xl border-2 border-green-500 p-6 relative shadow-sm">
-                        <div className="flex justify-between items-start">
-                            <div>
-                                <div className="flex items-center gap-2 mb-1">
-                                    <Trophy size={16} className="text-green-600"/>
-                                    <span className="text-xs font-bold uppercase text-green-600 tracking-wider">Best Production Route</span>
-                                </div>
-                                <h2 className="text-3xl font-black text-green-900 uppercase">{winner.method}</h2>
-                                <p className="text-sm font-bold text-green-700 mt-1">
-                                    Running {winner.nUp}-up on {winner.sheet} sheet
-                                </p>
-                            </div>
-                            <div className="text-right">
-                                <p className="text-xs font-bold text-green-600 uppercase mb-1">Client Price</p>
-                                <p className="text-4xl font-black text-green-900">${winner.totalPrice.toFixed(2)}</p>
-                                <p className="text-xs text-green-700 font-mono mt-1">${winner.unitCost.toFixed(3)} / unit</p>
-                            </div>
-                        </div>
-                        
-                        <div className="mt-6 flex gap-1 h-2 rounded-full overflow-hidden">
-                            <div className="bg-blue-400 h-full" style={{ width: `${(winner.paperPrice / winner.totalPrice) * 100}%` }}></div>
-                            <div className="bg-orange-400 h-full" style={{ width: `${(winner.pressPrice / winner.totalPrice) * 100}%` }}></div>
-                        </div>
-                        
-                        <div className="mt-6 pt-6 border-t border-green-200 flex justify-end">
-                            <button onClick={handleSaveQuote} disabled={isSaving} className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg flex items-center gap-2 shadow-lg transition-all">
-                                {isSaving ? <Loader2 className="animate-spin" size={20}/> : <Save size={20}/>}
-                                Save as Quote
-                            </button>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="h-40 flex items-center justify-center border-2 border-dashed border-gray-300 rounded-xl text-gray-400">
-                        Enter specs to see the best route.
-                    </div>
-                )}
-
-                {/* COMPARISON TABLE */}
-                {estimates.length > 1 && (
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                        <div className="px-6 py-3 border-b border-gray-100 bg-gray-50">
-                            <h3 className="text-xs font-bold uppercase text-gray-500">Comparison Logic</h3>
-                        </div>
-                        <table className="w-full text-sm">
-                            <thead className="text-left text-xs text-gray-400 font-bold border-b border-gray-100">
-                                <tr>
-                                    <th className="px-6 py-2">Method</th>
-                                    <th className="px-6 py-2">Layout</th>
-                                    <th className="px-6 py-2">Details</th>
-                                    <th className="px-6 py-2 text-right">Price</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-50">
-                                {estimates.map((est, i) => (
-                                    <tr key={i} className={`hover:bg-gray-50 ${i === 0 ? 'bg-green-50/50' : ''}`}>
-                                        <td className="px-6 py-3 font-bold text-gray-900">
-                                            {est.method}
-                                            {i === 0 && <span className="ml-2 bg-green-200 text-green-800 text-[9px] px-1.5 py-0.5 rounded">WINNER</span>}
-                                        </td>
-                                        <td className="px-6 py-3 text-gray-600 text-xs">
-                                            {est.nUp}-up on {est.sheet}
-                                        </td>
-                                        <td className="px-6 py-3 text-gray-500 text-xs">{est.detail}</td>
-                                        <td className="px-6 py-3 text-right font-mono font-bold text-gray-900">
-                                            ${est.totalPrice.toFixed(2)}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
-            </div>
-        </div>
+      )}
     </div>
   );
 }
