@@ -52,7 +52,7 @@ export default function BinderyDashboard() {
         .eq('id', user.id)
         .single();
       
-      const userRole = profile?.role || 'customer';
+      const userRole = (profile as any)?.role || 'customer';
       setRole(userRole);
       
       // Allow admin or bindery to view this

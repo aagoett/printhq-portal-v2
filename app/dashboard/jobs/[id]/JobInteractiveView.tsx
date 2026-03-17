@@ -646,9 +646,10 @@ export default function JobInteractiveView({
       console.error('Error updating step note:', error);
       alert('Failed to save step note');
     } else {
-      // Refresh steps locally
-      const updatedSteps = steps.map((s: any) => s.id === stepId ? { ...s, notes: note } : s);
-      // Assuming steps is stateful; if not, you may need to refetch.
+      setItems(current => current.map(item => ({
+        ...item,
+        job_item_steps: item.job_item_steps?.map((s: any) => s.id === stepId ? { ...s, notes: note } : s)
+      })));
     }
   };
 
