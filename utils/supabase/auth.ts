@@ -1,4 +1,4 @@
-import { createClient } from '../utils/supabase/server';
+import { createClient } from './server';
 import { redirect } from 'next/navigation';
 
 export type UserRole = 'admin' | 'staff' | 'customer';
