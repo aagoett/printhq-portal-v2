@@ -1,10 +1,33 @@
 'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Calculator, Trophy, DollarSign, LayoutGrid, ArrowLeft, Save, Loader2 } from 'lucide-react';
+import { Calculator, Trophy, DollarSign, LayoutGrid, ArrowLeft, Save, Loader2, Users } from 'lucide-react';
 import Link from 'next/link';
+import { applyOverridesToList, CustomerPricingOverride, formatCurrency } from '@/utils/pricing';
+
+type ProfileLite = {
+  id: string;
+  email: string;
+  first_name?: string;
+  company?: string;
+  role?: string;
+};
+
+type PricingComponent = {
+  id: string;
+  name: string;
+  type: string;
+  price_amount: number;
+  cost_amount: number;
+  parent_sheet_width?: number;
+  parent_sheet_height?: number;
+  max_sheet_width?: number;
+  cost_unit?: string;
+  setup_minutes?: number;
+  run_speed_per_hour?: number;
+};
 
 export default function AutoEstimatorPage() {
   const router = useRouter();
@@ -13,14 +36,22 @@ export default function AutoEstimatorPage() {
   const [finishW, setFinishW] = useState(8.5);
   const [finishH, setFinishH] = useState(11);
   const [quantity, setQuantity] = useState(5000);
-  const [selectedPaperId, setSelectedPaperId] = useState(''); 
-  const [quoteTitle, setQuoteTitle] = useState(''); // New: Name the quote
+  const [selectedPaperId, setSelectedPaperId] = useState('');
+  const [quoteTitle, setQuoteTitle] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState('');
+
+  // Customer context for overrides
+  const [currentProfile, setCurrentProfile] = useState<ProfileLite | null>(null);
+  const [isInternal, setIsInternal] = useState(false);
+  const [customers, setCustomers] = useState<ProfileLite[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [customerOverrides, setCustomerOverrides] = useState<CustomerPricingOverride[]>([]);
 
   // --- DATA ---
-  const [papers, setPapers] = useState<any[]>([]);
-  const [presses, setPresses] = useState<any[]>([]);
-  const [finishing, setFinishing] = useState<any[]>([]);
-  const [mailing, setMailing] = useState<any[]>([]);
+  const [papers, setPapers] = useState<PricingComponent[]>([]);
+  const [presses, setPresses] = useState<PricingComponent[]>([]);
+  const [finishing, setFinishing] = useState<PricingComponent[]>([]);
+  const [mailing, setMailing] = useState<PricingComponent[]>([]);
   const [estimates, setEstimates] = useState<any[]>([]);
   const [winner, setWinner] = useState<any>(null);
   
@@ -28,6 +59,7 @@ export default function AutoEstimatorPage() {
   const [selectedMailingId, setSelectedMailingId] = useState<string | null>(null);
 
   const [isSaving, setIsSaving] = useState(false);
+  const [loadingBootstrap, setLoadingBootstrap] = useState(true);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -35,14 +67,49 @@ export default function AutoEstimatorPage() {
   );
 
   useEffect(() => {
-    fetchInventory();
+    bootstrap();
   }, []);
 
   useEffect(() => {
     if (selectedPaperId && finishW > 0 && finishH > 0 && quantity > 0) {
         calculateBestRoute();
     }
-  }, [finishW, finishH, quantity, selectedPaperId, selectedFinishingIds, selectedMailingId]);
+  }, [finishW, finishH, quantity, selectedPaperId, selectedFinishingIds, selectedMailingId, customerOverrides, selectedTemplate, papers, presses, finishing, mailing]);
+
+  useEffect(() => {
+    if (selectedCustomerId) {
+      loadOverrides(selectedCustomerId);
+    } else {
+      setCustomerOverrides([]);
+    }
+  }, [selectedCustomerId]);
+
+  const bootstrap = async () => {
+    // Fetch auth + profile
+    const { data: auth } = await supabase.auth.getUser();
+    if (auth?.user) {
+      const { data: profileData } = await supabase.from('profiles').select('*').eq('id', auth.user.id).single();
+      if (profileData) {
+        const internal = profileData.role === 'admin' || profileData.role === 'staff';
+        setCurrentProfile(profileData);
+        setIsInternal(internal);
+        setSelectedCustomerId(auth.user.id);
+
+        if (internal) {
+          const { data: people } = await supabase
+            .from('profiles')
+            .select('id, email, first_name, company, role')
+            .order('email');
+          if (people) setCustomers(people);
+        } else {
+          setCustomers([profileData]);
+        }
+      }
+    }
+
+    await fetchInventory();
+    setLoadingBootstrap(false);
+  };
 
   const fetchInventory = async () => {
     const { data: pData } = await supabase.from('pricing_components').select('*').eq('type', 'paper').order('name');
@@ -51,13 +118,48 @@ export default function AutoEstimatorPage() {
     const { data: mailData } = await supabase.from('pricing_components').select('*').eq('type', 'mailing').order('name');
 
     if (pData) {
-        setPapers(pData);
-        if (pData.length > 0) setSelectedPaperId(pData[0].id);
+        setPapers(pData as any);
+        if (pData.length > 0 && !selectedPaperId) setSelectedPaperId(pData[0].id);
     }
-    if (mData) setPresses(mData);
-    if (fData) setFinishing(fData);
-    if (mailData) setMailing(mailData);
+    if (mData) setPresses(mData as any);
+    if (fData) setFinishing(fData as any);
+    if (mailData) setMailing(mailData as any);
   };
+
+  const loadOverrides = async (customerId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('customer_pricing')
+        .select('*')
+        .eq('customer_id', customerId);
+      if (error) {
+        console.error('customer_pricing error', error.message);
+        setCustomerOverrides([]);
+        return;
+      }
+      setCustomerOverrides(data || []);
+    } catch (err) {
+      console.error('customer_pricing unexpected error', err);
+      setCustomerOverrides([]);
+    }
+  };
+
+  const paperOptions = useMemo(
+    () => applyOverridesToList(papers, customerOverrides, { templateKey: selectedTemplate, componentType: 'paper' }),
+    [papers, customerOverrides, selectedTemplate]
+  );
+  const pressOptions = useMemo(
+    () => applyOverridesToList(presses, customerOverrides, { templateKey: selectedTemplate, componentType: 'press' }),
+    [presses, customerOverrides, selectedTemplate]
+  );
+  const finishingOptions = useMemo(
+    () => applyOverridesToList(finishing, customerOverrides, { templateKey: selectedTemplate, componentType: 'finishing' }),
+    [finishing, customerOverrides, selectedTemplate]
+  );
+  const mailingOptions = useMemo(
+    () => applyOverridesToList(mailing, customerOverrides, { templateKey: selectedTemplate, componentType: 'mailing' }),
+    [mailing, customerOverrides, selectedTemplate]
+  );
 
   const calculateNUp = (parentW: number, parentH: number, itemW: number, itemH: number) => {
       const fitNormal = Math.floor(parentW / itemW) * Math.floor(parentH / itemH);
@@ -67,7 +169,7 @@ export default function AutoEstimatorPage() {
 
   const calculateBestRoute = () => {
       const results: any[] = [];
-      const paper = papers.find(p => p.id === selectedPaperId);
+      const paper = paperOptions.find(p => p.id === selectedPaperId) || paperOptions[0];
       if (!paper) return;
 
       const nUp = calculateNUp(paper.parent_sheet_width, paper.parent_sheet_height, finishW, finishH);
@@ -81,7 +183,7 @@ export default function AutoEstimatorPage() {
       // Calculate Finishing
       let totalFinishingCost = 0;
       let totalFinishingPrice = 0;
-      const selectedFinishes = finishing.filter(f => selectedFinishingIds.includes(f.id));
+      const selectedFinishes = finishingOptions.filter(f => selectedFinishingIds.includes(f.id));
       selectedFinishes.forEach(f => {
           if (f.cost_unit === 'per_sheet') {
               totalFinishingCost += sheetsWithWaste * f.cost_amount;
@@ -97,7 +199,7 @@ export default function AutoEstimatorPage() {
       let totalMailingPrice = 0;
       let mailDetail = '';
       if (selectedMailingId) {
-          const mail = mailing.find(m => m.id === selectedMailingId);
+          const mail = mailingOptions.find(m => m.id === selectedMailingId);
           if (mail) {
               if (mail.cost_unit === 'per_piece' || mail.cost_unit === 'per_item') {
                   totalMailingCost = quantity * mail.cost_amount;
@@ -110,8 +212,8 @@ export default function AutoEstimatorPage() {
           }
       }
 
-      presses.forEach(press => {
-          if (paper.parent_sheet_width > press.max_sheet_width && press.max_sheet_width > 0) return;
+      pressOptions.forEach(press => {
+          if (paper.parent_sheet_width > (press as any).max_sheet_width && (press as any).max_sheet_width > 0) return;
 
           let pressCost = 0;
           let pressPrice = 0;
@@ -122,13 +224,9 @@ export default function AutoEstimatorPage() {
               pressPrice = sheetsWithWaste * press.price_amount;
               detail = `Click: $${press.price_amount}/sheet`;
           } else {
-              // Time-based Presstime calculation
               const setupHr = (press.setup_minutes || 0) / 60;
               const runHr = sheetsWithWaste / (press.run_speed_per_hour || 5000);
               const totalHr = setupHr + runHr;
-              
-              // If hourly rates are not explicitly set in price_amount/cost_amount (e.g. they are per 1k), 
-              // we fall back to a reasonable default or legacy logic.
               if (press.price_amount < 50) {
                   const platePrice = 50; 
                   const runPrice = (sheetsWithWaste / 1000) * press.price_amount; 
@@ -178,6 +276,8 @@ export default function AutoEstimatorPage() {
       if (results.length > 0) setWinner(results[0]);
   };
 
+  const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
+
   const handleSaveQuote = async () => {
       if (!winner) return;
       const title = quoteTitle || `Estimate for ${quantity}x ${finishW}x${finishH}`;
@@ -193,7 +293,9 @@ export default function AutoEstimatorPage() {
           total_cost: winner.totalCost,
           total_price: winner.totalPrice,
           cost_breakdown: winner, // Store the full math object
-          status: 'Draft'
+          status: 'Draft',
+          user_id: selectedCustomerId || null,
+          customer_email: selectedCustomer?.email || currentProfile?.email || null
       });
 
       if (error) {
@@ -203,6 +305,10 @@ export default function AutoEstimatorPage() {
           router.push('/dashboard/quotes'); // Redirect to list
       }
   };
+
+  if (loadingBootstrap) {
+    return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -223,9 +329,33 @@ export default function AutoEstimatorPage() {
             
             {/* INPUTS */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 h-fit space-y-6">
+                {isInternal && (
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2 flex items-center gap-2"><Users size={14}/> Customer (for overrides)</label>
+                    <select 
+                      value={selectedCustomerId} 
+                      onChange={(e) => setSelectedCustomerId(e.target.value)} 
+                      className="w-full border rounded p-2 text-sm bg-white"
+                    >
+                      <option value="">-- None / Guest --</option>
+                      {customers.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.first_name || c.company ? `${c.first_name || c.company} (${c.email})` : c.email}
+                        </option>
+                      ))}
+                    </select>
+                    {customerOverrides.length > 0 && (
+                      <p className="text-[11px] text-green-700 mt-1">{customerOverrides.length} override(s) will be applied.</p>
+                    )}
+                  </div>
+                )}
                 <div>
                     <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Quote Reference</label>
                     <input type="text" placeholder="e.g. Haleigh's Flyers" value={quoteTitle} onChange={(e) => setQuoteTitle(e.target.value)} className="w-full border rounded p-2 text-sm focus:border-black outline-none"/>
+                </div>
+                <div>
+                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Template / SKU (optional)</label>
+                    <input type="text" placeholder="e.g. bc-template-16pt" value={selectedTemplate} onChange={(e) => setSelectedTemplate(e.target.value)} className="w-full border rounded p-2 text-sm focus:border-black outline-none"/>
                 </div>
                 <div>
                     <label className="block text-xs font-bold uppercase text-gray-500 mb-2">1. Finished Size</label>
@@ -243,13 +373,13 @@ export default function AutoEstimatorPage() {
                 <div>
                     <label className="block text-xs font-bold uppercase text-gray-500 mb-2">3. Select Paper Stock</label>
                     <select value={selectedPaperId} onChange={(e) => setSelectedPaperId(e.target.value)} className="w-full border rounded p-3 text-sm bg-white">
-                        {papers.map(p => <option key={p.id} value={p.id}>{p.name} (${p.price_amount}/sht)</option>)}
+                        {paperOptions.map(p => <option key={p.id} value={p.id}>{p.name} ({formatCurrency(p.price_amount)}/sht{p.__override ? ' • override' : ''})</option>)}
                     </select>
                 </div>
                 <div>
                     <label className="block text-xs font-bold uppercase text-gray-500 mb-2">4. Finishing Options</label>
                     <div className="space-y-2 max-h-40 overflow-y-auto p-2 border rounded bg-gray-50">
-                        {finishing.map(f => (
+                        {finishingOptions.map(f => (
                             <label key={f.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-white p-1 rounded transition-colors">
                                 <input 
                                     type="checkbox" 
@@ -261,10 +391,11 @@ export default function AutoEstimatorPage() {
                                     className="rounded border-gray-300 text-black focus:ring-black"
                                 />
                                 <span className="flex-1">{f.name}</span>
-                                <span className="text-xs font-mono text-gray-400">${f.price_amount}</span>
+                                <span className="text-xs font-mono text-gray-400">{formatCurrency(f.price_amount)}</span>
+                                {f.__override && <span className="text-[10px] text-green-700 font-bold">override</span>}
                             </label>
                         ))}
-                        {finishing.length === 0 && <p className="text-xs text-gray-400 italic">No finishing options found.</p>}
+                        {finishingOptions.length === 0 && <p className="text-xs text-gray-400 italic">No finishing options found.</p>}
                     </div>
                 </div>
                 <div>
@@ -275,7 +406,7 @@ export default function AutoEstimatorPage() {
                         className="w-full border rounded p-3 text-sm bg-white"
                     >
                         <option value="">No Mailing</option>
-                        {mailing.map(m => <option key={m.id} value={m.id}>{m.name} (${m.price_amount}/{m.cost_unit?.replace('per_', '')})</option>)}
+                        {mailingOptions.map(m => <option key={m.id} value={m.id}>{m.name} ({formatCurrency(m.price_amount)}/{m.cost_unit?.replace('per_', '')}{m.__override ? ' • override' : ''})</option>)}
                     </select>
                 </div>
             </div>
@@ -294,6 +425,7 @@ export default function AutoEstimatorPage() {
                                 <p className="text-sm font-bold text-green-700 mt-1">
                                     Running {winner.nUp}-up on {winner.sheet} sheet
                                 </p>
+                                {selectedTemplate && <p className="text-xs text-green-700 mt-1">Template: {selectedTemplate}</p>}
                             </div>
                             <div className="text-right">
                                 <p className="text-xs font-bold text-green-600 uppercase mb-1">Client Price</p>

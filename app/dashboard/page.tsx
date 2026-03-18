@@ -5,15 +5,16 @@ import {
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
   Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, 
   Briefcase, Plus, ShoppingCart, Clock, ChevronRight, Layers, Ruler,
-  ArrowUpDown, ArrowUp, ArrowDown, ExternalLink, Calculator
+  ArrowUpDown, ArrowUp, ArrowDown, ExternalLink, Calculator, MessageSquare, Send, Sparkles, Paperclip, Bot
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useMemo } from 'react';
 import React from 'react';
 import Link from 'next/link';
 // Use the new name and the @ alias so it always finds the right spot
 import { sendOrderConfirmation } from '../server-actions';
 import ItemDetailDrawer from '@/components/ItemDetailDrawer';
+import { applyOverridesToList, parseQuantityList, formatCurrency } from '@/utils/pricing';
 
 
 // --- TYPES ---
@@ -838,6 +839,19 @@ export default function Dashboard() {
           </div>
 
           {isInternal && (
+            <div className="mb-8">
+              <BotIntakePanel
+                supabase={supabase}
+                currentUser={user}
+                brandList={brandList}
+                workflowOptions={workflowOptions}
+                customers={customers}
+                onJobCreated={fetchDashboardData}
+              />
+            </div>
+          )}
+
+          {isInternal && (
             <div className="mb-6 flex gap-2 overflow-x-auto pb-2">
               {departmentTabs.map((dept) => (
                 <button 
@@ -1103,5 +1117,434 @@ function StatusCard({ job, formatDate, dueStatus }: { job: Job, formatDate: (d: 
         </div>
       </div>
     </Link>
+  );
+}
+
+
+function BotIntakePanel({ supabase, currentUser, brandList, workflowOptions, customers, onJobCreated }: { supabase: any, currentUser: any, brandList: any[], workflowOptions: any[], customers: any[], onJobCreated?: () => void }) {
+  const [transcript, setTranscript] = useState('Bot said they need flyers with a QR code. Midnight blue background.');
+  const [contactEmail, setContactEmail] = useState('');
+  const [contactName, setContactName] = useState('');
+  const [itemTitle, setItemTitle] = useState('Bot Intake Job');
+  const [finishW, setFinishW] = useState(8.5);
+  const [finishH, setFinishH] = useState(11);
+  const [qtyInput, setQtyInput] = useState('250,500,1000');
+  const [templateKey, setTemplateKey] = useState('');
+  const [selectedBrandId, setSelectedBrandId] = useState<string>(brandList?.[0]?.id || '');
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>(currentUser?.id || '');
+  const [selectedPaperId, setSelectedPaperId] = useState<string>('');
+  const [selectedFinishingIds, setSelectedFinishingIds] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isEstimating, setIsEstimating] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [statusNote, setStatusNote] = useState('');
+  const [proposals, setProposals] = useState<{ quantity: number; winner: any }[]>([]);
+  const [selectedQuantity, setSelectedQuantity] = useState<number | null>(null);
+
+  const [papers, setPapers] = useState<any[]>([]);
+  const [presses, setPresses] = useState<any[]>([]);
+  const [finishing, setFinishing] = useState<any[]>([]);
+  const [mailing, setMailing] = useState<any[]>([]);
+  const [customerOverrides, setCustomerOverrides] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetchPricing();
+  }, []);
+
+  useEffect(() => {
+    if (brandList?.length && !selectedBrandId) {
+      setSelectedBrandId(brandList[0].id);
+    }
+  }, [brandList]);
+
+  useEffect(() => {
+    if (selectedCustomerId) {
+      loadOverrides(selectedCustomerId);
+    } else {
+      setCustomerOverrides([]);
+    }
+  }, [selectedCustomerId]);
+
+  useEffect(() => {
+    if (!selectedPaperId && papers.length > 0) {
+      setSelectedPaperId(papers[0].id);
+    }
+  }, [papers, selectedPaperId]);
+
+  const fetchPricing = async () => {
+    const { data: pData } = await supabase.from('pricing_components').select('*').eq('type', 'paper').order('name');
+    const { data: mData } = await supabase.from('pricing_components').select('*').in('type', ['press_digital', 'press_offset']);
+    const { data: fData } = await supabase.from('pricing_components').select('*').eq('type', 'finishing').order('name');
+    const { data: mailData } = await supabase.from('pricing_components').select('*').eq('type', 'mailing').order('name');
+    if (pData) setPapers(pData as any);
+    if (mData) setPresses(mData as any);
+    if (fData) setFinishing(fData as any);
+    if (mailData) setMailing(mailData as any);
+  };
+
+  const loadOverrides = async (customerId: string) => {
+    const { data, error } = await supabase.from('customer_pricing').select('*').eq('customer_id', customerId);
+    if (error) {
+      console.error('customer_pricing', error.message);
+      setCustomerOverrides([]);
+      return;
+    }
+    setCustomerOverrides(data || []);
+  };
+
+  const papersWithOverrides = useMemo(() => applyOverridesToList(papers, customerOverrides, { templateKey, componentType: 'paper' }), [papers, customerOverrides, templateKey]);
+  const pressesWithOverrides = useMemo(() => applyOverridesToList(presses, customerOverrides, { templateKey, componentType: 'press' }), [presses, customerOverrides, templateKey]);
+  const finishingWithOverrides = useMemo(() => applyOverridesToList(finishing, customerOverrides, { templateKey, componentType: 'finishing' }), [finishing, customerOverrides, templateKey]);
+  const mailingWithOverrides = useMemo(() => applyOverridesToList(mailing, customerOverrides, { templateKey, componentType: 'mailing' }), [mailing, customerOverrides, templateKey]);
+
+  const calculateWinner = (qty: number) => {
+    const paper = papersWithOverrides.find((p) => p.id === selectedPaperId) || papersWithOverrides[0];
+    if (!paper || qty <= 0) return null;
+
+    const fitNormal = Math.floor(paper.parent_sheet_width / finishW) * Math.floor(paper.parent_sheet_height / finishH);
+    const fitRotated = Math.floor(paper.parent_sheet_width / finishH) * Math.floor(paper.parent_sheet_height / finishW);
+    const nUp = Math.max(fitNormal, fitRotated);
+    if (nUp === 0) return null;
+
+    const sheetsNeeded = Math.ceil(qty / nUp);
+    const sheetsWithWaste = Math.ceil(sheetsNeeded * 1.1);
+    const paperCost = sheetsWithWaste * paper.cost_amount;
+    const paperPrice = sheetsWithWaste * paper.price_amount;
+
+    const selectedFinishes = finishingWithOverrides.filter((f) => selectedFinishingIds.includes(f.id));
+    const finishingCost = selectedFinishes.reduce((acc, f) => acc + (f.cost_unit === 'per_sheet' ? sheetsWithWaste * f.cost_amount : f.cost_amount), 0);
+    const finishingPrice = selectedFinishes.reduce((acc, f) => acc + (f.cost_unit === 'per_sheet' ? sheetsWithWaste * f.price_amount : f.price_amount), 0);
+
+    const mail = mailingWithOverrides.find((m) => m.id === null);
+    let mailingCost = 0;
+    let mailingPrice = 0;
+    if (mail) {
+      if (mail.cost_unit === 'per_piece' || mail.cost_unit === 'per_item') {
+        mailingCost = qty * mail.cost_amount;
+        mailingPrice = qty * mail.price_amount;
+      } else {
+        mailingCost = mail.cost_amount;
+        mailingPrice = mail.price_amount;
+      }
+    }
+
+    let best: any = null;
+    pressesWithOverrides.forEach((press) => {
+      if (paper.parent_sheet_width > (press as any).max_sheet_width && (press as any).max_sheet_width > 0) return;
+      let pressCost = 0;
+      let pressPrice = 0;
+      let detail = '';
+
+      if (press.type === 'press_digital') {
+        pressCost = sheetsWithWaste * press.cost_amount;
+        pressPrice = sheetsWithWaste * press.price_amount;
+        detail = `Digital | ${sheetsWithWaste} sheets`;
+      } else {
+        const setupHr = (press.setup_minutes || 0) / 60;
+        const runHr = sheetsWithWaste / (press.run_speed_per_hour || 5000);
+        const totalHr = setupHr + runHr;
+        if (press.price_amount < 50) {
+          pressPrice = 50 + (sheetsWithWaste / 1000) * press.price_amount;
+          pressCost = 15 + (sheetsWithWaste / 1000) * press.cost_amount;
+          detail = `Offset | ${totalHr.toFixed(2)} hrs`;
+        } else {
+          pressPrice = 50 + totalHr * press.price_amount;
+          pressCost = 15 + totalHr * press.cost_amount;
+          detail = `Offset | ${totalHr.toFixed(2)} hrs`;
+        }
+      }
+
+      const totalCost = paperCost + pressCost + finishingCost + mailingCost;
+      const totalPrice = paperPrice + pressPrice + finishingPrice + mailingPrice;
+      const candidate = {
+        method: press.name,
+        sheet: `${paper.parent_sheet_width}x${paper.parent_sheet_height}`,
+        nUp,
+        totalSheets: sheetsWithWaste,
+        paperPrice,
+        pressPrice,
+        finishingPrice,
+        mailingPrice,
+        totalPrice,
+        totalCost,
+        unitCost: totalPrice / qty,
+        detail,
+        paperName: paper.name,
+      };
+      if (!best || candidate.totalPrice < best.totalPrice) {
+        best = candidate;
+      }
+    });
+
+    return best;
+  };
+
+  const handleEstimate = () => {
+    setIsEstimating(true);
+    const quantities = parseQuantityList(qtyInput);
+    const results: { quantity: number; winner: any }[] = [];
+    quantities.forEach((q) => {
+      const winner = calculateWinner(q);
+      if (winner) results.push({ quantity: q, winner });
+    });
+    results.sort((a, b) => a.quantity - b.quantity);
+    setProposals(results);
+    setSelectedQuantity(results[0]?.quantity || null);
+    setIsEstimating(false);
+  };
+
+  const handleCreateJob = async () => {
+    if (isCreating) return;
+    if (!selectedQuantity) return alert('Select a quantity to create the job.');
+    const chosen = proposals.find((p) => p.quantity === selectedQuantity);
+    if (!chosen?.winner) return alert('Run estimator and pick a quantity first.');
+    setIsCreating(true);
+    setStatusNote('');
+    try {
+      const { data: order, error: orderError } = await supabase
+        .from('orders')
+        .insert({ user_id: selectedCustomerId || null, status: 'New', brand_id: selectedBrandId || null })
+        .select()
+        .single();
+      if (orderError || !order) throw orderError;
+
+      const { data: job, error: jobError } = await supabase
+        .from('jobs')
+        .insert({
+          order_id: order.id,
+          user_id: selectedCustomerId || null,
+          guest_email: selectedCustomerId ? null : (contactEmail || null),
+          title: itemTitle || 'Bot Intake Job',
+          quantity: selectedQuantity,
+          status: 'Pending Review',
+          created_by: currentUser?.id || null,
+          notes: transcript,
+          paper_stock: chosen.winner.paperName || null,
+          size: `${finishW}x${finishH}`,
+        })
+        .select()
+        .single();
+      if (jobError || !job) throw jobError;
+
+      const { data: jobItem, error: itemError } = await supabase
+        .from('job_items')
+        .insert({
+          job_id: job.id,
+          description: itemTitle || 'Bot Intake Item',
+          quantity: selectedQuantity,
+          paper_stock: chosen.winner.paperName || null,
+          size: `${finishW}x${finishH}`,
+          internal_notes: transcript,
+          status: 'Pending',
+        })
+        .select()
+        .single();
+      if (itemError || !jobItem) throw itemError;
+
+      const steps = (workflowOptions?.length ? workflowOptions : [{ name: 'Prepress' }]).map((w: any) => w.name || w.step_name || w);
+      for (const stepName of steps) {
+        await supabase.from('job_item_steps').insert({ job_item_id: jobItem.id, step_name: stepName, status: 'Pending', is_internal: true });
+      }
+
+      for (const file of attachments) {
+        const cleanName = `${job.id}-intake-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+        const { data: uploaded, error: uploadErr } = await supabase.storage.from('uploads').upload(cleanName, file);
+        if (uploadErr) {
+          console.error('upload failed', uploadErr.message);
+          continue;
+        }
+        if (uploaded) {
+          await supabase.from('job_assets').insert({
+            job_id: job.id,
+            job_item_id: jobItem.id,
+            uploader_id: currentUser?.id || null,
+            file_url: uploaded.path,
+            file_name: file.name,
+            asset_type: 'source',
+            status: 'pending',
+          });
+        }
+      }
+
+      await supabase.from('job_logs').insert({
+        job_id: job.id,
+        user_id: currentUser?.id || null,
+        action: 'Bot Intake',
+        details: `Bot intake created job with ${selectedQuantity} qty (${chosen.winner.method}).`,
+        job_item_id: jobItem.id,
+      });
+
+      await supabase.from('messages').insert({
+        job_id: job.id,
+        user_id: currentUser?.id || null,
+        content: `Bot Intake Summary: ${transcript}
+Quantity: ${selectedQuantity}
+Route: ${chosen.winner.method}
+Price: ${formatCurrency(chosen.winner.totalPrice)}`,
+      });
+
+      setStatusNote('Job created and notifications sent.');
+      setAttachments([]);
+      setProposals([]);
+      setSelectedQuantity(null);
+      setSelectedFinishingIds([]);
+      setSelectedPaperId(papersWithOverrides[0]?.id || '');
+      onJobCreated?.();
+    } catch (err: any) {
+      console.error('bot intake create failed', err?.message || err);
+      alert('Failed to create job from bot intake.');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleFileDrop = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setAttachments(Array.from(files));
+    setIsDragging(false);
+  };
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+      <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+        <div>
+          <p className="text-[11px] font-bold uppercase text-gray-500 flex items-center gap-2"><Bot size={14}/> Bot Intake</p>
+          <h3 className="text-lg font-bold text-gray-900">Convert chat ➜ estimator ➜ job</h3>
+        </div>
+        <div className="text-xs text-gray-500">{customerOverrides.length} override(s) in effect for this customer.</div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
+        <div className="space-y-4">
+          <label className="block text-xs font-bold uppercase text-gray-500">Conversation Transcript</label>
+          <textarea value={transcript} onChange={(e) => setTranscript(e.target.value)} className="w-full border rounded-xl p-3 h-36 text-sm" placeholder="Paste the chat with the bot or customer..." />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-bold uppercase text-gray-500">Contact Email</label>
+              <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} className="w-full border rounded px-3 py-2 text-sm" placeholder="guest@email.com" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold uppercase text-gray-500">Contact Name</label>
+              <input value={contactName} onChange={(e) => setContactName(e.target.value)} className="w-full border rounded px-3 py-2 text-sm" placeholder="Optional" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-bold uppercase text-gray-500">Brand</label>
+              <select value={selectedBrandId} onChange={(e) => setSelectedBrandId(e.target.value)} className="w-full border rounded px-3 py-2 text-sm bg-white">
+                {brandList.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold uppercase text-gray-500">Customer</label>
+              <select value={selectedCustomerId} onChange={(e) => setSelectedCustomerId(e.target.value)} className="w-full border rounded px-3 py-2 text-sm bg-white">
+                <option value="">Guest (no account)</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>{c.first_name || c.company || c.email}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-[11px] font-bold uppercase text-gray-500">Template / SKU (optional)</label>
+            <input value={templateKey} onChange={(e) => setTemplateKey(e.target.value)} className="w-full border rounded px-3 py-2 text-sm" placeholder="bc-template-16pt" />
+          </div>
+
+          <div onDragOver={(e) => {e.preventDefault(); setIsDragging(true);}} onDragLeave={(e) => {e.preventDefault(); setIsDragging(false);}} onDrop={(e) => {e.preventDefault(); handleFileDrop(e.dataTransfer.files);}} className={`border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-all ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-black hover:bg-gray-50'}`}>
+            <input type="file" multiple className="hidden" id="bot-intake-files" onChange={(e) => handleFileDrop(e.target.files)} />
+            <label htmlFor="bot-intake-files" className="flex flex-col items-center text-sm text-gray-600">
+              <Paperclip className="mb-2" size={18}/> Attach files or drop them here
+            </label>
+          </div>
+          {attachments.length > 0 && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg divide-y">
+              {attachments.map((f, idx) => (
+                <div key={idx} className="px-3 py-2 text-sm flex justify-between items-center">
+                  <span className="truncate">{f.name}</span>
+                  <button onClick={() => setAttachments(attachments.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-500 text-xs font-bold">Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="block text-[11px] font-bold uppercase text-gray-500">Item Title</label>
+              <input value={itemTitle} onChange={(e) => setItemTitle(e.target.value)} className="w-full border rounded px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold uppercase text-gray-500">Finished Size</label>
+              <div className="flex gap-2 items-center">
+                <input type="number" value={finishW} onChange={(e) => setFinishW(parseFloat(e.target.value))} className="w-full border rounded px-2 py-2 text-sm" />
+                <span className="text-gray-400">×</span>
+                <input type="number" value={finishH} onChange={(e) => setFinishH(parseFloat(e.target.value))} className="w-full border rounded px-2 py-2 text-sm" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold uppercase text-gray-500">Quantity Breaks</label>
+              <input value={qtyInput} onChange={(e) => setQtyInput(e.target.value)} className="w-full border rounded px-3 py-2 text-sm" placeholder="250,500,1000" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold uppercase text-gray-500">Paper</label>
+            <select value={selectedPaperId} onChange={(e) => setSelectedPaperId(e.target.value)} className="w-full border rounded px-3 py-2 text-sm bg-white">
+              {papersWithOverrides.map((p) => (
+                <option key={p.id} value={p.id}>{p.name} ({formatCurrency(p.price_amount)}/sht{p.__override ? ' • override' : ''})</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold uppercase text-gray-500">Finishing</label>
+            <div className="grid grid-cols-2 gap-2 max-h-28 overflow-y-auto border rounded-lg p-2 bg-gray-50">
+              {finishingWithOverrides.map((f) => (
+                <label key={f.id} className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={selectedFinishingIds.includes(f.id)} onChange={(e) => {
+                    if (e.target.checked) setSelectedFinishingIds([...selectedFinishingIds, f.id]);
+                    else setSelectedFinishingIds(selectedFinishingIds.filter((id) => id !== f.id));
+                  }} />
+                  <span className="truncate">{f.name}</span>
+                  {f.__override && <span className="text-[10px] text-green-700 font-bold">override</span>}
+                </label>
+              ))}
+              {finishingWithOverrides.length === 0 && <p className="text-xs text-gray-400">No finishing options.</p>}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button onClick={handleEstimate} disabled={isEstimating} className="flex-1 bg-white border border-gray-300 rounded-lg px-4 py-2 text-sm font-bold hover:border-black flex items-center justify-center gap-2">
+              {isEstimating ? <Loader2 className="animate-spin" size={16}/> : <Sparkles size={16}/>} Run Estimator
+            </button>
+            <button onClick={handleCreateJob} disabled={isCreating || !selectedQuantity} className="flex-1 bg-black text-white rounded-lg px-4 py-2 text-sm font-bold hover:bg-gray-800 flex items-center justify-center gap-2 disabled:opacity-60">
+              {isCreating ? <Loader2 className="animate-spin" size={16}/> : <Send size={16}/>} Create Job
+            </button>
+          </div>
+
+          {proposals.length > 0 && (
+            <div className="border border-gray-200 rounded-xl divide-y">
+              {proposals.map((p) => (
+                <button key={p.quantity} onClick={() => setSelectedQuantity(p.quantity)} className={`w-full text-left px-4 py-3 flex items-center justify-between ${selectedQuantity === p.quantity ? 'bg-blue-50 border-l-4 border-blue-500' : ''}`}>
+                  <div>
+                    <p className="text-sm font-bold text-gray-900">{p.quantity.toLocaleString()} qty</p>
+                    <p className="text-xs text-gray-500">{p.winner.method} • {p.winner.sheet} • {p.winner.nUp}-up</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-black text-gray-900">{formatCurrency(p.winner.totalPrice)}</p>
+                    <p className="text-[11px] text-gray-500">{formatCurrency(p.winner.unitCost)} / unit</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {statusNote && <div className="bg-green-50 text-green-800 border border-green-200 rounded-lg px-3 py-2 text-sm">{statusNote}</div>}
+        </div>
+      </div>
+    </div>
   );
 }
