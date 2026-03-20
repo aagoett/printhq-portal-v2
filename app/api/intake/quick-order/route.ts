@@ -20,6 +20,7 @@ export type QuickOrderItemPayload = {
   mailing_notes?: string;
   substrate?: string;
   finishing?: string[];
+  route_steps?: string[];
 };
 
 export async function POST(req: NextRequest) {
@@ -48,10 +49,9 @@ export async function POST(req: NextRequest) {
 
     const items = JSON.parse(itemsRaw as string) as QuickOrderItemPayload[];
 
-    const files = formData.getAll('files') as File[];
-    if (files.length !== items.length) {
-      return NextResponse.json({ error: 'Files/items length mismatch' }, { status: 400 });
-    }
+    // Keep index alignment but allow file-less items for waiting-on-art flows
+    const filesRaw = formData.getAll('files');
+    const files = filesRaw.map((file) => (file instanceof File ? file : null));
 
     const selectedBrandId = (formData.get('selectedBrandId') as string) || null;
     const isNewCustomer = (formData.get('isNewCustomer') as string) === 'true';
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
     const mode = (formData.get('mode') as string) || 'quick-order';
 
     // 3) Determine target user
-    const targetUserId = isNewCustomer ? null : (selectedCustomerId || authedUser.id);
+    const targetUserId = isNewCustomer ? null : selectedCustomerId || authedUser.id;
     const guestEmail = isNewCustomer ? newCustomerEmail : null;
 
     // 4) Use service role for all writes
@@ -99,12 +99,16 @@ export async function POST(req: NextRequest) {
 
     if (jobError || !job) throw jobError;
 
-    const createdItems: any[] = [];
-    const workflowSteps = (workflowOptions?.length ? workflowOptions.map((w: any) => w.name || w.step_name || w) : ['Prepress']) as string[];
+    const defaultWorkflowSteps = (workflowOptions?.length
+      ? workflowOptions.map((w: any) => w.name || w.step_name || w)
+      : ['Prepress']) as string[];
 
     for (let idx = 0; idx < items.length; idx++) {
       const item = items[idx];
       const file = files[idx];
+
+      const workflowSteps = (item.route_steps && item.route_steps.length ? item.route_steps : defaultWorkflowSteps) as string[];
+      const initialStatus = workflowSteps[0] || 'Pending';
 
       const paperStockValue = item.cover_stock && item.inside_stock
         ? `Cover: ${item.cover_stock} / Inside: ${item.inside_stock}`
@@ -134,16 +138,16 @@ export async function POST(req: NextRequest) {
           paper_stock: paperStockValue,
           size: item.size,
           internal_notes: combinedNotes,
-          status: 'Pending',
+          status: initialStatus,
         })
         .select()
         .single();
 
       if (itemError || !newItem) throw itemError;
-      createdItems.push(newItem);
 
-      // Upload artwork to storage bucket
-      if (file) {
+      const hasFile = file && file instanceof File && file.size > 0;
+
+      if (hasFile && file) {
         const fileExt = file.name.split('.').pop();
         const fileName = `${job.id}-${Math.random().toString(36).substring(7)}.${fileExt}`;
         const { data: fileData, error: uploadError } = await admin.storage.from('uploads').upload(fileName, file);
@@ -157,6 +161,14 @@ export async function POST(req: NextRequest) {
           file_name: file.name,
           asset_type: 'source',
           status: 'pending',
+        });
+      } else {
+        await admin.from('job_logs').insert({
+          job_id: job.id,
+          user_id: authedUser.id,
+          action: 'Waiting on Art',
+          details: `${item.title || item.product_name || 'Item'} marked as waiting on art`,
+          job_item_id: newItem.id,
         });
       }
 

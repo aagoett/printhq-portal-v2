@@ -486,122 +486,55 @@ export default function Dashboard() {
 
     setIsUploading(true);
     try {
-      // 1. Determine the REAL User
-      let targetUserId = user?.id; 
-      let targetEmail = user?.email;
       const isInternal = role === 'admin' || role === 'staff';
+      let targetEmail = user?.email || '';
 
-      // 2. ADMIN OVERRIDE LOGIC
       if (isInternal) {
-          if (isNewCustomer) {
-            targetUserId = null; 
-            targetEmail = newCustomerEmail;
-          } else if (selectedCustomerId) {
-            targetUserId = selectedCustomerId;
-            const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
-            targetEmail = selectedCustomer?.email || '';
-          }
-      }
-
-      // 3. Create Order
-      const { data: newOrder, error: orderError } = await supabase
-        .from('orders')
-        .insert({ 
-            user_id: targetUserId, 
-            status: 'New', 
-            brand_id: selectedBrandId 
-        })
-        .select().single();
-
-      if (orderError) throw orderError;
-
-      // 4. Create Job Container
-      const jobTitle = cart.length === 1 ? cart[0].title : `Order #${newOrder.id.substring(0,6).toUpperCase()}`;
-      const totalQty = cart.reduce((acc, item) => acc + item.quantity, 0);
-
-      const { data: newJob, error: jobError } = await supabase
-        .from('jobs')
-        .insert({
-          order_id: newOrder.id,
-          user_id: targetUserId, 
-          guest_email: isNewCustomer ? targetEmail : null,
-          title: jobTitle,
-          quantity: totalQty,
-          status: 'Pending Review',
-          created_by: user.id
-        })
-        .select().single();
-
-      if (jobError) throw jobError;
-
-      // 5. Process Items
-      for (const item of cart) {
-        const initialStatus = item.route_steps?.[0] || 'Pending';
-        const { data: newItem, error: itemError } = await supabase
-            .from('job_items')
-            .insert({
-                job_id: newJob.id,
-                description: item.title,
-                quantity: item.quantity,
-                paper_stock: item.paper_stock,
-                size: item.size,
-                internal_notes: item.notes,
-                status: initialStatus
-            })
-            .select().single();
-
-        if (itemError) throw itemError;
-
-        if (item.file) {
-          const fileExt = item.file.name.split('.').pop();
-          const fileName = `${newJob.id}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-          const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, item.file);
-          if (uploadError) console.error("File upload failed for " + item.title, uploadError);
-          if (fileData) {
-              await supabase.from('job_assets').insert({
-                  job_id: newJob.id,
-                  job_item_id: newItem.id,
-                  uploader_id: user.id,
-                  file_url: fileData.path,
-                  file_name: item.file.name,
-                  asset_type: 'source',
-                  status: 'pending'
-              });
-          }
-        } else {
-          await supabase.from('job_logs').insert({
-            job_id: newJob.id,
-            user_id: user.id,
-            action: 'Waiting on Art',
-            details: `${item.title} marked as waiting on art`,
-            job_item_id: newItem.id
-          });
-        }
-
-        // Seed steps from route preview
-        const stepsToInsert = item.route_steps && item.route_steps.length > 0 ? item.route_steps : ['Prepress'];
-        for (let idx = 0; idx < stepsToInsert.length; idx++) {
-          const stepName = stepsToInsert[idx];
-          await supabase.from('job_item_steps').insert({
-            job_item_id: newItem.id,
-            step_name: stepName,
-            status: idx === 0 ? 'Pending' : 'Pending',
-            is_internal: true
-          });
+        if (isNewCustomer) {
+          targetEmail = newCustomerEmail;
+        } else if (selectedCustomerId) {
+          const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
+          targetEmail = selectedCustomer?.email || targetEmail;
         }
       }
 
-      // 6. Send Email
+      const itemsPayload = cart.map(({ id, file, artworkStatus, mailingNotes, route_steps, ...rest }) => ({
+        ...rest,
+        route_steps: route_steps || [],
+        mailing_notes: mailingNotes,
+      }));
+
+      const formData = new FormData();
+      formData.append('items', JSON.stringify(itemsPayload));
+      cart.forEach((item) => {
+        formData.append('files', item.file || new Blob());
+      });
+      formData.append('selectedBrandId', selectedBrandId || '');
+      formData.append('isNewCustomer', String(isNewCustomer));
+      formData.append('newCustomerEmail', newCustomerEmail || '');
+      formData.append('selectedCustomerId', selectedCustomerId || '');
+      formData.append('workflowOptions', JSON.stringify(workflowOptions || []));
+      formData.append('mode', 'product-order');
+
+      const response = await fetch('/api/intake/quick-order', {
+        method: 'POST',
+        body: formData,
+      });
+      const result = await response.json();
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.error || 'Failed to submit order');
+      }
+
       const brandName = brandList.find(b => b.id === selectedBrandId)?.name || 'PrintHQ';
-      if (targetEmail && newJob) {
-         await sendOrderConfirmation(targetEmail, newJob.id, `${cart.length} Item(s) from ${brandName}`);
+      if (targetEmail && result?.orderId) {
+        await sendOrderConfirmation(targetEmail, result.orderId, `${cart.length} Item(s) from ${brandName}`);
       }
-      
+
       alert("✅ Order Submitted Successfully!");
 
       setShowModal(false);
       setCart([]);
-      fetchDashboardData(); 
+      fetchDashboardData();
 
     } catch (error) {
       console.error('Error:', error);
