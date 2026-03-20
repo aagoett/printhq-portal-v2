@@ -195,7 +195,7 @@ export default function DashboardIntakePage() {
                 stockLibrary={stockLibrary}
                 workflowOptions={workflowOptions}
                 productTemplates={productTemplates}
-                onJobCreated={() => setActiveMode('quote')}
+                onJobCreated={() => setActiveMode('quick-order')}
                 mode={activeMode}
               />
             </section>

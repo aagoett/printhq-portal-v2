@@ -37,9 +37,9 @@ export default function QuotesListPage() {
 
         <div className="max-w-6xl mx-auto space-y-4">
             {quotes.map((quote) => (
-                <div key={quote.id} className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm flex items-center justify-between hover:border-black transition-colors group">
+                <Link key={quote.id} href={`/dashboard/quotes/${quote.id}`} className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm flex items-center justify-between hover:border-black transition-colors group">
                     <div className="flex items-start gap-4">
-                        <div className="bg-gray-100 p-3 rounded-lg text-gray-500">
+                        <div className="bg-gray-100 p-3 rounded-lg text-gray-500 group-hover:bg-gray-900 group-hover:text-white transition-colors">
                             <FileText size={24}/>
                         </div>
                         <div>
@@ -51,7 +51,7 @@ export default function QuotesListPage() {
                               return (
                                 <>
                                   <div className="flex items-center gap-2">
-                                    <h3 className="font-bold text-lg text-gray-900">{quote.title || `Quote #${quote.quote_number}`}</h3>
+                                    <h3 className="font-bold text-lg text-gray-900 group-hover:text-black">{quote.title || `Quote #${quote.quote_number}`}</h3>
                                     {profile && <span className="ml-2 rounded bg-blue-50 px-2 py-0.5 text-blue-700 capitalize text-[10px] font-black">{profile}{factor ? ` ×${Number(factor).toFixed(2)}` : ''}</span>}
                                   </div>
                                   <p className="text-xs text-gray-500 flex items-center gap-2 mt-1">
@@ -74,11 +74,11 @@ export default function QuotesListPage() {
                             <p className="text-xs text-gray-400 uppercase font-bold">Method</p>
                             <p className="text-sm font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded">{quote.production_method}</p>
                         </div>
-                        <button className="p-2 text-gray-300 hover:text-black hover:bg-gray-100 rounded-full transition-all">
+                        <span className="p-2 text-gray-300 group-hover:text-black group-hover:bg-gray-100 rounded-full transition-all">
                             <ArrowRight size={20}/>
-                        </button>
+                        </span>
                     </div>
-                </div>
+                </Link>
             ))}
             
             {quotes.length === 0 && !loading && (

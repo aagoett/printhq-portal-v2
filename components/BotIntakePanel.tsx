@@ -31,6 +31,8 @@ export default function BotIntakePanel({
       helper: 'Capture customer context, estimate quantity breaks, and turn the winning route into a review-ready job.',
       status: 'Quote-first flow',
       defaultTitle: 'New Quote Request',
+      createAction: 'Create Review Job',
+      successNote: 'Quote intake created and routed into review.',
     },
     'quick-order': {
       eyebrow: 'Quick Order',
@@ -38,6 +40,8 @@ export default function BotIntakePanel({
       helper: 'Use this when specs are mostly known and speed matters more than discovery.',
       status: 'Fast-path order flow',
       defaultTitle: 'Quick Order',
+      createAction: 'Create Quick Order',
+      successNote: 'Quick order created and routed into review.',
     },
     'internal-job': {
       eyebrow: 'Internal Job',
@@ -45,6 +49,8 @@ export default function BotIntakePanel({
       helper: 'Use for house jobs, samples, reprints, press tests, and non-customer work that still needs estimator logic.',
       status: 'Internal production flow',
       defaultTitle: 'Internal Job',
+      createAction: 'Create Internal Job',
+      successNote: 'Internal job created and routed into review.',
     },
   }[mode];
 
@@ -308,7 +314,7 @@ export default function BotIntakePanel({
         content: `${modeCopy.eyebrow} Summary: ${transcript}\nQuantity: ${selectedQuantity}\nRoute: ${chosen.winner.method}\nPrice: ${formatCurrency(chosen.winner.totalPrice)}`,
       });
 
-      setStatusNote('Job created and routed into review.');
+      setStatusNote(modeCopy.successNote);
       setAttachments([]);
       setProposals([]);
       setSelectedQuantity(null);
@@ -519,7 +525,7 @@ export default function BotIntakePanel({
               {isEstimating ? <Loader2 className="animate-spin" size={16}/> : <Sparkles size={16}/>} Run Estimator
             </button>
             <button onClick={handleCreateJob} disabled={isCreating || !selectedQuantity} className="flex-1 bg-black text-white rounded-lg px-4 py-2 text-sm font-bold hover:bg-gray-800 flex items-center justify-center gap-2 disabled:opacity-60">
-              {isCreating ? <Loader2 className="animate-spin" size={16}/> : <Send size={16}/>} Create Job
+              {isCreating ? <Loader2 className="animate-spin" size={16}/> : <Send size={16}/>} {modeCopy.createAction}
             </button>
           </div>
 
