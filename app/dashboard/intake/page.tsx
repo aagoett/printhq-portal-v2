@@ -3,9 +3,11 @@
 import { createBrowserClient } from '@supabase/ssr';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { ArrowLeft, Bot, Briefcase, Calculator, FileText, Layers3, MessageSquare, PackageCheck, Settings, Sparkles, User } from 'lucide-react';
 import CsrChatPanel from '@/components/CsrChatPanel';
 import BotIntakePanel from '@/components/BotIntakePanel';
+import QuickOrderPanel from '@/components/QuickOrderPanel';
 
 const MODES = [
   {
@@ -22,7 +24,7 @@ const MODES = [
     icon: PackageCheck,
     title: 'Known specs, move fast',
     body: 'For repeatable work or requests that already have enough detail to estimate and create.',
-    jump: '#structured-intake',
+    jump: '#quick-order',
   },
   {
     key: 'internal-job',
@@ -45,6 +47,7 @@ export default function DashboardIntakePage() {
   const [role, setRole] = useState('customer');
   const [customers, setCustomers] = useState<any[]>([]);
   const [brandList, setBrandList] = useState<any[]>([]);
+  const [stockLibrary, setStockLibrary] = useState<any[]>([]);
   const [workflowOptions, setWorkflowOptions] = useState<any[]>([]);
   const [activeMode, setActiveMode] = useState<'quote' | 'quick-order' | 'internal-job'>('quote');
 
@@ -65,14 +68,16 @@ export default function DashboardIntakePage() {
         return;
       }
 
-      const [{ data: allProfiles }, { data: brandsData }, { data: qData }] = await Promise.all([
+      const [{ data: allProfiles }, { data: brandsData }, { data: stockData }, { data: qData }] = await Promise.all([
         supabase.from('profiles').select('*'),
         supabase.from('brands').select('*'),
+        supabase.from('paper_stocks').select('*').order('name'),
         supabase.from('workflow_queues').select('*').order('rank'),
       ]);
 
       setCustomers(allProfiles || []);
       setBrandList(brandsData || []);
+      setStockLibrary(stockData || []);
       setWorkflowOptions(qData || []);
       setLoading(false);
     };
@@ -155,6 +160,51 @@ export default function DashboardIntakePage() {
         </div>
 
         <div className="grid gap-8">
+          {activeMode === 'quick-order' ? (
+            <section id="quick-order" className="scroll-mt-20">
+              <div className="mb-3 flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-400 flex items-center gap-2"><PackageCheck size={14}/> Quick Order</div>
+                  <h2 className="text-2xl font-bold text-gray-900">Multi-item quick builder</h2>
+                  <p className="text-sm text-gray-600 mt-1">Group multiple items, uploads, and specs into one intake ticket.</p>
+                </div>
+                <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-sm text-emerald-800">Mode: <span className="font-bold">Quick Order</span></div>
+              </div>
+              <QuickOrderPanel
+                supabase={supabase}
+                currentUser={user}
+                role={role}
+                customers={customers}
+                brandList={brandList}
+                stockLibrary={stockLibrary}
+                workflowOptions={workflowOptions}
+                onJobCreated={() => setActiveMode('quote')}
+                mode={activeMode}
+              />
+            </section>
+          ) : (
+            <section id="quick-order" className="rounded-2xl border border-dashed border-gray-300 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-400 flex items-center gap-2"><PackageCheck size={14}/> Quick Order</div>
+                  <h2 className="text-xl font-bold text-gray-900">Multi-item intake stays available</h2>
+                  <p className="text-sm text-gray-600 mt-1">Switch to Quick Order mode to add multiple items with uploads, specs, and customer selection.</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setActiveMode('quick-order');
+                    if (typeof window !== 'undefined') {
+                      document.querySelector('#quick-order')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                  }}
+                  className="rounded-full bg-black px-5 py-2 text-sm font-bold text-white hover:bg-gray-800"
+                >
+                  Open Quick Order
+                </button>
+              </div>
+            </section>
+          )}
+
           <section id="csr-chat" className="scroll-mt-20">
             <div className="mb-3 flex items-center justify-between gap-4 flex-wrap">
               <div>
@@ -214,7 +264,7 @@ function FlowStep({ title, body }: { title: string; body: string }) {
   );
 }
 
-function NavChip({ href, icon, label }: { href: string; icon: React.ReactNode; label: string }) {
+function NavChip({ href, icon, label }: { href: string; icon: ReactNode; label: string }) {
   return (
     <Link href={href} className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-3 hover:border-black hover:bg-gray-50">
       <span className="text-gray-500">{icon}</span>
