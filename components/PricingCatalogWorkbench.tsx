@@ -205,10 +205,26 @@ export default function PricingCatalogWorkbench({ catalogType }: { catalogType: 
 
           <div className="grid grid-cols-2 gap-3">
             <label className="text-xs font-bold text-red-600">Internal Cost
-              <input type="number" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} className="w-full border border-red-100 bg-red-50 rounded px-3 py-2 text-sm mt-1" placeholder="0.02" />
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.001"
+                value={form.cost}
+                onChange={(e) => setForm({ ...form, cost: e.target.value })}
+                className="w-full border border-red-100 bg-red-50 rounded px-3 py-2 text-sm mt-1"
+                placeholder="0.02"
+              />
             </label>
             <label className="text-xs font-bold text-green-700">Client Price
-              <input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="w-full border border-green-100 bg-green-50 rounded px-3 py-2 text-sm mt-1" placeholder="0.05" />
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.001"
+                value={form.price}
+                onChange={(e) => setForm({ ...form, price: e.target.value })}
+                className="w-full border border-green-100 bg-green-50 rounded px-3 py-2 text-sm mt-1"
+                placeholder="0.05"
+              />
             </label>
           </div>
 

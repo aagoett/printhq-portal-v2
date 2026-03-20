@@ -4,6 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
 import { Trash2, DollarSign, Settings, ArrowLeft, Clock, Zap, Maximize, LayoutGrid, Calculator, Scissors, Truck } from 'lucide-react';
 import Link from 'next/link';
+import { coerceDecimal, parseDecimalInput } from '@/utils/number';
 
 export default function PricingBuilderPage() {
   const [categories, setCategories] = useState<any[]>([]);
@@ -47,6 +48,16 @@ export default function PricingBuilderPage() {
       else setSelectedType('other');
   }, [activeCatId, categories]);
 
+  const normalizeComponent = (comp: any) => ({
+    ...comp,
+    cost_amount: coerceDecimal(comp.cost_amount) ?? 0,
+    price_amount: coerceDecimal(comp.price_amount) ?? 0,
+    setup_minutes: coerceDecimal((comp as any).setup_minutes),
+    run_speed_per_hour: coerceDecimal((comp as any).run_speed_per_hour),
+    parent_sheet_width: coerceDecimal((comp as any).parent_sheet_width),
+    parent_sheet_height: coerceDecimal((comp as any).parent_sheet_height),
+  });
+
   const fetchData = async () => {
     const { data: cats } = await supabase.from('pricing_categories').select('*').order('sort_order');
     const { data: comps } = await supabase.from('pricing_components').select('*').order('name');
@@ -55,24 +66,44 @@ export default function PricingBuilderPage() {
         setCategories(cats);
         if (!activeCatId && cats.length > 0) setActiveCatId(cats[0].id);
     }
-    if (comps) setComponents(comps);
+    if (comps) setComponents(comps.map(normalizeComponent));
     setLoading(false);
   };
 
   const handleAddComponent = async () => {
       if (!newName.trim() || !newCost || !activeCatId) return;
 
+      let costValue: number;
+      let priceValue: number;
+      let setupValue: number | null;
+      let runSpeedValue: number | null;
+      let widthValue: number | null;
+      let heightValue: number | null;
+
+      try {
+        costValue = parseDecimalInput(newCost, { defaultValue: 0, fieldName: 'Internal cost' }) ?? 0;
+        priceValue = parseDecimalInput(newPrice || newCost, { defaultValue: costValue, fieldName: 'Client price' }) ?? costValue;
+        setupValue = parseDecimalInput(setupMins, { allowNull: true, fieldName: 'Setup minutes' });
+        runSpeedValue = parseDecimalInput(runSpeed, { allowNull: true, fieldName: 'Run speed per hour' });
+        widthValue = parseDecimalInput(sheetW, { allowNull: true, fieldName: 'Parent width' });
+        heightValue = parseDecimalInput(sheetH, { allowNull: true, fieldName: 'Parent height' });
+      } catch (err: any) {
+        alert(err?.message || 'Please enter valid numeric values.');
+        return;
+      }
+
       const { error } = await supabase.from('pricing_components').insert({
           category_id: activeCatId,
           name: newName,
           type: selectedType, // CRITICAL FIX: SAVING THE TYPE
-          cost_amount: parseFloat(newCost),
-          price_amount: parseFloat(newPrice) || parseFloat(newCost),
+          cost_amount: costValue,
+          price_amount: priceValue,
+          price_unit: newUnit,
           cost_unit: newUnit,
-          setup_minutes: parseInt(setupMins) || 0,
-          run_speed_per_hour: parseInt(runSpeed) || 0,
-          parent_sheet_width: parseFloat(sheetW) || 0,
-          parent_sheet_height: parseFloat(sheetH) || 0
+          setup_minutes: setupValue ?? null,
+          run_speed_per_hour: runSpeedValue ?? null,
+          parent_sheet_width: widthValue ?? null,
+          parent_sheet_height: heightValue ?? null
       });
 
       if (error) alert(error.message);
@@ -149,13 +180,13 @@ export default function PricingBuilderPage() {
                         <div>
                             <label className="block text-xs font-bold text-red-600 mb-1">Internal Cost</label>
                             <div className="relative"><span className="absolute left-3 top-2 text-gray-400 text-xs">$</span>
-                                <input type="number" placeholder="0.04" value={newCost} onChange={(e) => setNewCost(e.target.value)} className="w-full border border-red-100 bg-red-50 rounded-lg pl-6 pr-3 py-2 text-sm outline-none focus:border-red-500"/>
+                                <input type="number" inputMode="decimal" step="0.001" placeholder="0.04" value={newCost} onChange={(e) => setNewCost(e.target.value)} className="w-full border border-red-100 bg-red-50 rounded-lg pl-6 pr-3 py-2 text-sm outline-none focus:border-red-500"/>
                             </div>
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-green-700 mb-1">Client Price</label>
                             <div className="relative"><span className="absolute left-3 top-2 text-gray-400 text-xs">$</span>
-                                <input type="number" placeholder="0.10" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} className="w-full border border-green-100 bg-green-50 rounded-lg pl-6 pr-3 py-2 text-sm outline-none focus:border-green-500"/>
+                                <input type="number" inputMode="decimal" step="0.001" placeholder="0.10" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} className="w-full border border-green-100 bg-green-50 rounded-lg pl-6 pr-3 py-2 text-sm outline-none focus:border-green-500"/>
                             </div>
                         </div>
 
@@ -187,14 +218,14 @@ export default function PricingBuilderPage() {
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
                         {isPaper && (
                             <>
-                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Width (in)</label><input type="number" placeholder="12" value={sheetW} onChange={(e) => setSheetW(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
-                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Height (in)</label><input type="number" placeholder="18" value={sheetH} onChange={(e) => setSheetH(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
+                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Width (in)</label><input type="number" inputMode="decimal" step="0.001" placeholder="12" value={sheetW} onChange={(e) => setSheetW(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
+                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Height (in)</label><input type="number" inputMode="decimal" step="0.001" placeholder="18" value={sheetH} onChange={(e) => setSheetH(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
                             </>
                         )}
                         {isPress && (
                             <>
-                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Speed (/hr)</label><input type="number" placeholder="5000" value={runSpeed} onChange={(e) => setRunSpeed(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
-                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Setup (min)</label><input type="number" placeholder="15" value={setupMins} onChange={(e) => setSetupMins(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
+                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Speed (/hr)</label><input type="number" inputMode="decimal" step="0.01" placeholder="5000" value={runSpeed} onChange={(e) => setRunSpeed(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
+                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Setup (min)</label><input type="number" inputMode="decimal" step="0.01" placeholder="15" value={setupMins} onChange={(e) => setSetupMins(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
                             </>
                         )}
                         <div className="col-span-2 flex items-end">

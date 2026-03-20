@@ -9,6 +9,7 @@ import { applyOverridesToList, CustomerPricingOverride, formatCurrency } from '@
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
 import { calculateProposals, EstimatorContext, RouteOption, PricingComponent, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
 import { CUSTOMER_CLASS_DEFAULTS, getCustomerClassDefaultProfile, normalizeCustomerClass } from '@/lib/customerClass';
+import { coerceDecimal } from '@/utils/number';
 
 type ProfileLite = {
   id: string;
@@ -254,6 +255,28 @@ export default function AutoEstimatorPage() {
     setLoadingBootstrap(false);
   };
 
+  const normalizePaper = (row: any) => ({
+    ...row,
+    parent_sheet_width: coerceDecimal(row.parent_sheet_width),
+    parent_sheet_height: coerceDecimal(row.parent_sheet_height),
+    weight: coerceDecimal(row.weight),
+    caliper: coerceDecimal(row.caliper),
+    cost_amount: coerceDecimal(row.cost_amount) ?? 0,
+    price_amount: coerceDecimal(row.price_amount),
+    price_override: coerceDecimal(row.price_override),
+  });
+
+  const normalizeComponent = (row: any) => ({
+    ...row,
+    cost_amount: coerceDecimal(row.cost_amount) ?? 0,
+    price_amount: coerceDecimal(row.price_amount),
+    price_override: coerceDecimal((row as any).price_override),
+    setup_minutes: coerceDecimal((row as any).setup_minutes),
+    run_speed_per_hour: coerceDecimal((row as any).run_speed_per_hour),
+    parent_sheet_width: coerceDecimal((row as any).parent_sheet_width),
+    parent_sheet_height: coerceDecimal((row as any).parent_sheet_height),
+  });
+
   const fetchInventory = async () => {
     const { data: pData } = await supabase.from('paper_catalog').select('*').order('name');
     const { data: mData } = await supabase.from('pricing_components').select('*').in('type', ['press_digital', 'press_offset']);
@@ -261,16 +284,17 @@ export default function AutoEstimatorPage() {
     const { data: mailData } = await supabase.from('pricing_components').select('*').eq('type', 'mailing').order('name');
 
     if (pData) {
-        setPapers(pData as any);
-        if (pData.length > 0 && !selectedPaperId) {
-          setSelectedPaperId(pData[0].id);
-          setCoverPaperId(pData[0].id);
-          setInsidePaperId(pData[0].id);
+        const normalized = (pData as any[]).map(normalizePaper) as any;
+        setPapers(normalized);
+        if (normalized.length > 0 && !selectedPaperId) {
+          setSelectedPaperId(normalized[0].id);
+          setCoverPaperId(normalized[0].id);
+          setInsidePaperId(normalized[0].id);
         }
     }
-    if (mData) setPresses(mData as any);
-    if (fData) setFinishing(fData as any);
-    if (mailData) setMailing(mailData as any);
+    if (mData) setPresses((mData as any[]).map(normalizeComponent) as any);
+    if (fData) setFinishing((fData as any[]).map(normalizeComponent) as any);
+    if (mailData) setMailing((mailData as any[]).map(normalizeComponent) as any);
   };
 
   const loadValidationQuotes = async () => {

@@ -220,21 +220,21 @@ export default function PaperCatalogPage() {
             <div className="grid grid-cols-2 gap-3">
               <label className="block text-sm">
                 <span className="text-xs font-bold text-gray-600 flex items-center gap-1"><Weight size={12}/> Weight (lb)</span>
-                <input value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="100" />
+                <input value={form.weight} inputMode="decimal" step="0.001" onChange={(e) => setForm({ ...form, weight: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="100" />
               </label>
               <label className="block text-sm">
                 <span className="text-xs font-bold text-gray-600 flex items-center gap-1"><Ruler size={12}/> Caliper (pt/mil)</span>
-                <input value={form.caliper} onChange={(e) => setForm({ ...form, caliper: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="10" />
+                <input value={form.caliper} inputMode="decimal" step="0.001" onChange={(e) => setForm({ ...form, caliper: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" placeholder="10" />
               </label>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <label className="block text-sm">
                 <span className="text-xs font-bold text-gray-600">Parent Width (in)</span>
-                <input type="number" value={form.parentWidth} onChange={(e) => setForm({ ...form, parentWidth: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" />
+                <input type="number" inputMode="decimal" step="0.001" value={form.parentWidth} onChange={(e) => setForm({ ...form, parentWidth: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" />
               </label>
               <label className="block text-sm">
                 <span className="text-xs font-bold text-gray-600">Parent Height (in)</span>
-                <input type="number" value={form.parentHeight} onChange={(e) => setForm({ ...form, parentHeight: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" />
+                <input type="number" inputMode="decimal" step="0.001" value={form.parentHeight} onChange={(e) => setForm({ ...form, parentHeight: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" />
               </label>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -256,11 +256,11 @@ export default function PaperCatalogPage() {
             <div className="grid grid-cols-2 gap-3">
               <label className="block text-sm">
                 <span className="text-xs font-bold text-gray-600">Internal Cost</span>
-                <input type="number" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm bg-red-50 border-red-100" placeholder="0.045" />
+                <input type="number" inputMode="decimal" step="0.001" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm bg-red-50 border-red-100" placeholder="0.045" />
               </label>
               <label className="block text-sm">
                 <span className="text-xs font-bold text-gray-600">Sell override (optional)</span>
-                <input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm bg-green-50 border-green-100" placeholder="0.09" />
+                <input type="number" inputMode="decimal" step="0.001" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm bg-green-50 border-green-100" placeholder="0.09" />
               </label>
             </div>
             <button onClick={handleSave} disabled={saving} className="w-full bg-black text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 hover:bg-gray-800 disabled:opacity-60">
