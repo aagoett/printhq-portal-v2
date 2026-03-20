@@ -1,33 +1,45 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { getInvoice } from '@/app/actions';
+import { createBrowserClient } from '@supabase/ssr';
+import { useEffect, useMemo, useState } from 'react';
 import InvoicePrintView from '@/components/InvoicePrintView';
+import CustomerPortalShell from '@/components/CustomerPortalShell';
 
-export default function InvoiceDetailPage({ params }: { params: { id: string } }) {
+export default function InvoiceDetailsPage({ params }: { params: { id: string } }) {
   const [invoiceData, setInvoiceData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [role, setRole] = useState('customer');
+
+  const supabase = useMemo(() => createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  ), []);
 
   useEffect(() => {
+    const fetchInvoice = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+        setRole(profile?.role || 'customer');
+      }
+
+      const result = await supabase
+        .from('invoices')
+        .select(`
+          *,
+          company:brands!company_id(name,address,phone,email),
+          order:orders(id, user_id, guest_email, shipping_address, user:profiles!user_id(first_name,last_name,company,address,phone))
+        `)
+        .eq('id', params.id)
+        .single();
+
+      setInvoiceData(result.data);
+    };
+
     fetchInvoice();
-  }, [params.id]);
+  }, [params.id, supabase]);
 
-  const fetchInvoice = async () => {
-    const result = await getInvoice(params.id);
-    if (result.success) {
-      setInvoiceData(result.invoice);
-    } else {
-      setError(result.error);
-    }
-    setLoading(false);
-  };
-
-  if (loading) return <div className="p-20 text-center font-bold text-gray-400 animate-pulse uppercase tracking-[0.2em]">Retrieving Invoice...</div>;
-  if (error) return <div className="p-20 text-center text-red-500 font-bold underline">Error: {error}</div>;
   if (!invoiceData) return <div className="p-20 text-center text-gray-400">Invoice not found.</div>;
 
-  // Map DB structure to Print Component Props
   const mappedInvoice = {
     invoiceNumber: invoiceData.invoice_number?.toString() || 'DRAFT',
     date: new Date(invoiceData.created_at).toLocaleDateString(),
@@ -40,15 +52,16 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     customer: {
       name: invoiceData.order?.user?.first_name ? `${invoiceData.order.user.first_name} ${invoiceData.order.user.last_name || ''}` : 'Guest / Cash Sale',
       company: invoiceData.order?.user?.company || 'Walk-in Customer',
-      address: 'SEE JOB SPECS', 
-      acctNo: '2381', 
+      address: invoiceData.order?.user?.address || 'No address on file',
+      phone: invoiceData.order?.user?.phone || '',
     },
-    items: invoiceData.items.map((item: any) => ({
+    items: (invoiceData.items || []).map((item: any) => ({
       description: item.description,
-      quantity: item.quantity,
-      unitPrice: item.unit_price,
-      totalPrice: item.total_price,
-      isTaxable: item.is_taxable
+      quantity: Number(item.quantity),
+      unitPrice: Number(item.unit_price),
+      totalPrice: Number(item.total_price),
+      isTaxable: !!item.taxable,
+      isPostage: !!item.is_postage,
     })),
     subtotal: Number(invoiceData.subtotal),
     shipping: Number(invoiceData.shipping),
@@ -58,9 +71,27 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     paidAmount: Number(invoiceData.paid_amount),
     balance: Number(invoiceData.total) - Number(invoiceData.paid_amount),
     terms: invoiceData.terms,
-    preparedBy: 'PrintHQ System',
-    salesRep: 'Web Portal',
+    preparedBy: 'PrintHQ',
+    salesRep: 'PrintHQ',
   };
+
+  const isInternal = role === 'admin' || role === 'staff';
+
+  if (!isInternal) {
+    return (
+      <CustomerPortalShell
+        title={`Invoice #${mappedInvoice.invoiceNumber}`}
+        description="Print-friendly billing detail with balance and line items."
+        activeHref="/dashboard/invoices"
+        backHref="/dashboard/invoices"
+        backLabel="Back to invoices"
+      >
+        <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <InvoicePrintView invoice={mappedInvoice} />
+        </div>
+      </CustomerPortalShell>
+    );
+  }
 
   return <InvoicePrintView invoice={mappedInvoice} />;
 }

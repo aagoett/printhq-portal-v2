@@ -178,7 +178,7 @@ function JobItemsTable({
                       </div>
 
                       {/* PRIMARY PERSISTENT NOTE */}
-                      {item.internal_notes && (
+                      {isStaff && item.internal_notes && (
                         <div className="text-[11px] bg-yellow-400/10 text-yellow-800 p-3 rounded-lg border border-yellow-200 flex items-start gap-2 font-black leading-relaxed max-w-xl shadow-inner uppercase tracking-tight">
                           <Lock size={14} className="mt-0.5 flex-shrink-0 text-yellow-600"/> 
                           <div>
@@ -189,7 +189,7 @@ function JobItemsTable({
                       )}
 
                       {/* MULTIPLE LOGGED NOTES / ACTIVITY */}
-                      {(() => {
+                      {isStaff && (() => {
                         const itemLogs = logs
                           .filter(l => l.job_item_id === item.id || (l.details && l.details.includes(`ITEM:${item.id}`)))
                           .filter(l => l.action === 'Item Update' || l.action === 'Item Added');
@@ -733,7 +733,8 @@ export default function JobInteractiveView({
   };
 
   const countdown = getCountdown();
-  const currentAsset = assets.find(a => a.id === viewingAssetId);
+  const visibleAssets = isStaff ? assets : assets.filter(a => a.asset_type !== 'source');
+  const currentAsset = visibleAssets.find(a => a.id === viewingAssetId) || visibleAssets[0] || assets.find(a => a.id === viewingAssetId);
   const isApprovedAsset = currentAsset?.status === 'approved';
   const originalAsset = assets.find(a => a.asset_type === 'source');
 
@@ -780,20 +781,20 @@ export default function JobInteractiveView({
       <div className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
         <div className="max-w-[1920px] mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-4">
-              <Link href="/dashboard" className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={20} /></Link>
+              <Link href={isStaff ? "/dashboard" : "/dashboard/messages"} className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={20} /></Link>
               <div>
                 <h1 className="text-xl font-bold text-gray-900 leading-none">{job.title}</h1>
                 <p className="text-xs font-mono text-gray-400 mt-1">#{jobId.substring(0,8).toUpperCase()} • {job.orders?.brand}</p>
               </div>
           </div>
           <div className="flex items-center gap-3">
-            {isStaff && (
-              <Link 
-                href={`/dashboard/invoices/new?jobId=${jobId}`} 
-                className="px-4 py-1.5 bg-emerald-600 text-white rounded-md font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm"
-              >
-                <FilePlus size={14}/> Generate Invoice
-              </Link>
+            {isStaff ? (
+              <Link href={`/dashboard/invoices/new?jobId=${jobId}`} className="px-4 py-1.5 bg-emerald-600 text-white rounded-md font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm"><FilePlus size={14}/> Generate Invoice</Link>
+            ) : (
+              <div className="hidden sm:flex gap-2">
+                <Link href="/dashboard" className="px-3 py-1.5 rounded-full border border-gray-200 text-xs font-bold text-gray-600 hover:border-gray-300 hover:text-black">Home</Link>
+                <Link href="/dashboard/messages" className="px-3 py-1.5 rounded-full border border-gray-200 text-xs font-bold text-gray-600 hover:border-gray-300 hover:text-black">Messages</Link>
+              </div>
             )}
             <div className={`px-4 py-1.5 rounded-md text-white font-bold uppercase text-[10px] flex items-center bg-gray-900 border border-gray-700`}>{job.status || 'Pending'}</div>
           </div>
@@ -801,6 +802,7 @@ export default function JobInteractiveView({
       </div>
 
        {/* STAGE COMMANDER */}
+       {isStaff ? (
        <div className={`bg-gray-900 text-white shadow-xl`}>
           <div className="max-w-[1920px] mx-auto flex flex-col md:flex-row">
               <div className="p-8 flex-1">
@@ -818,6 +820,17 @@ export default function JobInteractiveView({
               </div>
           </div>
       </div>
+      ) : (
+        <div className="bg-gray-900 text-white shadow-xl">
+          <div className="max-w-[1920px] mx-auto px-6 py-8 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase opacity-70 tracking-widest">Job status</p>
+              <h2 className="text-3xl font-black tracking-tight">{job.status || 'In Progress'}</h2>
+            </div>
+            <p className="max-w-xl text-sm text-gray-300">Customer view only: progress, proofs, files we have shared, and your message thread. Internal production notes stay hidden.</p>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-[1920px] mx-auto w-full px-4 mt-4">
         <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 space-y-3">
@@ -885,6 +898,7 @@ export default function JobInteractiveView({
                 </div>
             </div>
 
+             {isStaff ? (
              <div className="bg-blue-50 rounded-xl border border-blue-100 p-4">
                 <h3 className="text-[10px] font-bold uppercase text-blue-800 mb-2 flex items-center gap-2 tracking-widest"><FileText size={14}/> SOURCE</h3>
                 {originalAsset ? (
@@ -897,6 +911,7 @@ export default function JobInteractiveView({
                     </div>
                 ) : <p className="text-[10px] text-blue-400 italic">No source file.</p>}
             </div>
+            ) : null}
         </div>
 
         {/* MIDDLE COL: MAIN PRODUCTION HUB */}
@@ -954,7 +969,7 @@ export default function JobInteractiveView({
                      )}
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                    {assets.map((asset) => {
+                    {visibleAssets.map((asset) => {
                         const isCurrent = viewingAssetId === asset.id;
                         const linkedItem = asset.job_item_id ? items.find(i => i.id === asset.job_item_id) : null;
                         return (
@@ -976,7 +991,7 @@ export default function JobInteractiveView({
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-2/3 overflow-hidden">
                 <div className="flex border-b border-gray-200">
                     <button onClick={() => setRightTab('chat')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><MessageSquare size={14}/> Discussion</button>
-                    <button onClick={() => setRightTab('activity')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><Activity size={14}/> Activity Log</button>
+                    {isStaff && <button onClick={() => setRightTab('activity')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><Activity size={14}/> Activity Log</button>}
                 </div>
                 <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
                     {rightTab === 'chat' && (
