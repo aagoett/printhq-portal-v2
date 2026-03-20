@@ -83,6 +83,7 @@ export default function IntakePage() {
   // --- CART STATE ---
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedBrandId, setSelectedBrandId] = useState('');
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
@@ -293,6 +294,7 @@ export default function IntakePage() {
     if (stockLibrary.length > 0) setSelectedStockId(stockLibrary[0].name);
     setCustomStockValue('');
     if (fileInputRef.current) fileInputRef.current.value = '';
+    setEditingItemId(null);
   };
 
   const handleAddToCart = () => {
@@ -305,8 +307,9 @@ export default function IntakePage() {
       finalStock = customStockValue;
     }
 
+    const id = editingItemId || Math.random().toString(36);
     const newItem: CartItem = {
-      id: Math.random().toString(36),
+      id,
       file: currentFile,
       title: jobTitle,
       quantity: parseInt(jobQty),
@@ -315,11 +318,35 @@ export default function IntakePage() {
       paper_stock: finalStock,
     };
 
-    setCart([...cart, newItem]);
+    if (editingItemId) {
+      setCart(cart.map((item) => item.id === editingItemId ? newItem : item));
+    } else {
+      setCart([...cart, newItem]);
+    }
     resetForm();
   };
 
   const handleRemoveFromCart = (id: string) => setCart(cart.filter((item) => item.id !== id));
+
+  const handleEditCartItem = (id: string) => {
+    const item = cart.find((c) => c.id === id);
+    if (!item) return;
+    setEditingItemId(id);
+    setCurrentFile(item.file);
+    setJobTitle(item.title);
+    setJobQty(item.quantity.toString());
+    setJobSize(item.size === 'N/A' ? '' : item.size);
+    setJobNotes(item.notes);
+
+    const stockMatch = stockLibrary.find((s) => s.name === item.paper_stock);
+    if (stockMatch) {
+      setSelectedStockId(stockMatch.name);
+      setCustomStockValue('');
+    } else {
+      setSelectedStockId('custom');
+      setCustomStockValue(item.paper_stock);
+    }
+  };
 
   const handleSubmitOrder = async () => {
     if (cart.length === 0) return alert('Cart is empty.');
@@ -723,11 +750,16 @@ Price: ${formatCurrency(chosen.winner.totalPrice)}`,
                     <div className="border border-gray-200 rounded-xl overflow-hidden">
                       <div className="bg-gray-100 px-4 py-2 text-xs font-bold uppercase text-gray-500 flex justify-between">
                         <span>Items in Order ({cart.length})</span>
-                        <span>Qty</span>
+                        <span className="flex items-center gap-2">
+                          <span>Total</span>
+                          <span className="px-2 py-0.5 rounded-full bg-white text-gray-700 border border-gray-200 font-mono">
+                            {cart.reduce((acc, item) => acc + (item.quantity || 0), 0).toLocaleString()}
+                          </span>
+                        </span>
                       </div>
                       <div className="divide-y divide-gray-100">
                         {cart.map((item) => (
-                          <div key={item.id} className="p-3 bg-white flex justify-between items-center">
+                          <div key={item.id} className={`p-3 bg-white flex justify-between items-center ${editingItemId === item.id ? 'bg-blue-50/80' : ''}`}>
                             <div className="flex items-center overflow-hidden">
                               <FileText size={16} className="text-blue-500 mr-3 flex-shrink-0" />
                               <div className="truncate">
@@ -735,8 +767,9 @@ Price: ${formatCurrency(chosen.winner.totalPrice)}`,
                                 <p className="text-xs text-gray-400">{item.size} • {item.paper_stock}</p>
                               </div>
                             </div>
-                            <div className="flex items-center gap-4">
-                              <span className="text-sm font-mono font-bold">{item.quantity}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] uppercase tracking-widest px-2 py-1 rounded-full bg-gray-100 text-gray-600">{item.quantity.toLocaleString()} qty</span>
+                              <button onClick={() => handleEditCartItem(item.id)} className={`text-gray-400 hover:text-blue-600 px-2 py-1 rounded ${editingItemId === item.id ? 'bg-blue-100 text-blue-800 border border-blue-200' : ''}`}>Edit</button>
                               <button onClick={() => handleRemoveFromCart(item.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={16}/></button>
                             </div>
                           </div>
@@ -815,7 +848,7 @@ Price: ${formatCurrency(chosen.winner.totalPrice)}`,
                       />
 
                       <button type="button" onClick={handleAddToCart} disabled={!currentFile || !jobQty} className={`w-full py-3 rounded-lg font-bold text-sm transition-all flex items-center justify-center ${!currentFile || !jobQty ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800 shadow-md'}`}>
-                        {!currentFile ? 'Select a File first...' : !jobQty ? 'Enter Quantity...' : '+ Add Item to List'}
+                        {editingItemId ? 'Save Item' : (!currentFile ? 'Select a File first...' : !jobQty ? 'Enter Quantity...' : '+ Add Item to List')}
                       </button>
                     </div>
                   </div>

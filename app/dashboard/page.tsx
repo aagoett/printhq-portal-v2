@@ -83,6 +83,23 @@ const STAGES: { key: StageKey; color: string; pill: string; description: string 
   { key: 'Blocked', color: 'bg-red-50 border-red-200', pill: 'text-red-800 bg-red-100', description: 'Waiting on customer, files, or payment' },
 ];
 
+const summarizeItems = (items: any[] = []) => {
+  const counts: Record<string, number> = {};
+  let totalQty = 0;
+  items.forEach((item) => {
+    const status = item?.status || 'Pending';
+    counts[status] = (counts[status] || 0) + 1;
+    totalQty += Number(item?.quantity || 0);
+  });
+  return { counts, totalQty };
+};
+
+const deriveJobStation = (job: Job) => {
+  if (job.current_step) return job.current_step;
+  const activeItem = job.job_items?.find((i: any) => i.status && i.status !== 'Completed');
+  return activeItem?.status || (job.job_items?.length ? 'Completed' : 'Processing');
+};
+
 export default function ShopFloorDashboard() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
@@ -459,6 +476,8 @@ export default function ShopFloorDashboard() {
                         const customerProfile = customers.find((c) => c.id === job.user_id);
                         const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
                         const brandName = job.orders?.brands?.name || 'PrintHQ';
+                        const itemSummary = summarizeItems(job.job_items || []);
+                        const displayQty = job.quantity || itemSummary.totalQty || 0;
 
                         return (
                           <div key={job.id} className="rounded-xl bg-white border border-gray-200 shadow-sm p-3 space-y-2">
@@ -485,7 +504,13 @@ export default function ShopFloorDashboard() {
                             </div>
 
                             <div className="flex items-center gap-2 text-[11px] text-gray-500 flex-wrap">
-                              <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700">Qty {job.quantity?.toLocaleString()}</span>
+                              <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700">Qty {displayQty.toLocaleString()}</span>
+                              <span className="px-2 py-1 rounded-full bg-white border border-gray-200 text-gray-700">{job.job_items?.length || 0} items</span>
+                              {Object.entries(itemSummary.counts).map(([status, count]) => (
+                                <span key={status} className="px-2 py-1 rounded-full bg-gray-50 border border-gray-200 text-gray-600 capitalize">
+                                  {status}: {count}
+                                </span>
+                              ))}
                               {job.size && <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700">{job.size}</span>}
                               {job.paper_stock && <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 truncate">{job.paper_stock}</span>}
                             </div>
@@ -577,6 +602,8 @@ function NavItem({ icon, label, active = false, href = '#' }: { icon: any; label
 function StatusCard({ job, formatDate, dueStatus }: { job: Job; formatDate: (d: string) => string; dueStatus: any }) {
   const styles: any = { 'Pending Review': 'bg-amber-100 text-amber-700', 'In Production': 'bg-emerald-100 text-emerald-700' };
   const brandName = job.orders?.brands?.name || 'PrintHQ';
+  const itemSummary = summarizeItems(job.job_items || []);
+  const displayQty = job.quantity || itemSummary.totalQty || 0;
   return (
     <Link href={`/dashboard/jobs/${job.id}`}>
       <div className="group cursor-pointer rounded-xl border border-gray-200 bg-white p-6 shadow-sm transition-all hover:border-black hover:shadow-md">
@@ -586,9 +613,20 @@ function StatusCard({ job, formatDate, dueStatus }: { job: Job; formatDate: (d: 
         </div>
         <h4 className="mt-4 text-lg font-bold text-gray-900 truncate">{job.title}</h4>
         <div className="mt-1 flex items-center justify-between">
-          <span className="text-sm text-gray-500">{job.quantity} units</span>
+          <span className="text-sm text-gray-500">{displayQty} units · {job.job_items?.length || 0} items</span>
           <span className="text-xs text-gray-400 flex items-center"><Clock size={12} className="mr-1" /> {formatDate(job.created_at)}</span>
         </div>
+
+        {job.job_items?.length ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <span className="text-[10px] uppercase tracking-widest px-2 py-1 rounded-full bg-gray-100 text-gray-700">Items</span>
+            {Object.entries(itemSummary.counts).map(([status, count]) => (
+              <span key={status} className="text-[10px] px-2 py-1 rounded-full bg-white border border-gray-200 text-gray-600 capitalize">
+                {status}: {count}
+              </span>
+            ))}
+          </div>
+        ) : null}
 
         <div className="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
           <span className="text-[10px] font-bold uppercase text-gray-400">{brandName}</span>
@@ -616,11 +654,19 @@ function DueList({ title, jobs, getDueStatus, formatDate }: { title: string; job
           {jobs.map((job) => {
             const dueStatus = getDueStatus(job.due_date);
             const brandName = job.orders?.brands?.name || 'PrintHQ';
+            const itemSummary = summarizeItems(job.job_items || []);
             return (
               <div key={job.id} className="px-4 py-3 flex items-center justify-between">
                 <div>
                   <Link href={`/dashboard/jobs/${job.id}`} className="font-semibold text-gray-900 hover:text-blue-700 text-sm">{job.title}</Link>
-                  <p className="text-[11px] text-gray-400 uppercase font-bold">{brandName} • {formatDate(job.created_at)}</p>
+                  <p className="text-[11px] text-gray-400 uppercase font-bold">{brandName} • {formatDate(job.created_at)} • {job.job_items?.length || 0} items</p>
+                  {job.job_items?.length ? (
+                    <div className="mt-1 flex flex-wrap gap-1 text-[10px]">
+                      {Object.entries(itemSummary.counts).map(([status, count]) => (
+                        <span key={status} className="px-2 py-0.5 rounded-full bg-gray-50 border border-gray-200 text-gray-600 capitalize">{status}: {count}</span>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="text-right">
                   <p className={`text-xs ${dueStatus.color}`}>{dueStatus.label}</p>

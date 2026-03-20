@@ -6,7 +6,7 @@ import {
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
   Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe, ChevronDown, ArrowUp, ArrowDown, ExternalLink, FilePlus
 } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
 // Fix: Use relative path (3 dots) for Dashboard folder
 import { sendProofNotification } from '../../../server-actions'; 
@@ -339,6 +339,17 @@ export default function JobInteractiveView({
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
+
+  const itemAggregate = useMemo(() => {
+    const counts: Record<string, number> = {};
+    let totalQty = 0;
+    items.forEach((it: any) => {
+      const status = it?.status || 'Pending';
+      counts[status] = (counts[status] || 0) + 1;
+      totalQty += Number(it?.quantity || 0);
+    });
+    return { counts, totalQty };
+  }, [items]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -770,6 +781,45 @@ export default function JobInteractiveView({
                   </div>
               </div>
           </div>
+      </div>
+
+      <div className="max-w-[1920px] mx-auto w-full px-4 mt-4">
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <p className="text-[11px] font-black uppercase text-gray-400">Order & Items</p>
+              <p className="text-sm text-gray-700">Order #{job.order_id?.substring(0, 8) || jobId.substring(0, 8)} • {items.length} line items</p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-[10px]">
+              <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 font-black">Total Qty {(itemAggregate.totalQty || job.quantity || 0).toLocaleString()}</span>
+              {Object.entries(itemAggregate.counts).map(([status, count]) => (
+                <span key={status} className="px-2 py-1 rounded-full bg-gray-50 border border-gray-200 text-gray-600 capitalize">{status}: {count}</span>
+              ))}
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {items.length === 0 && <div className="text-sm text-gray-400 italic">No items added yet.</div>}
+            {items.map((item) => (
+              <div key={item.id} className="p-3 border border-gray-100 rounded-xl bg-gray-50">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="overflow-hidden">
+                    <p className="text-sm font-bold text-gray-900 truncate">{item.description}</p>
+                    <p className="text-[11px] text-gray-500 uppercase">Qty {item.quantity?.toLocaleString()}</p>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                    item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-blue-50 text-blue-700 border-blue-200'
+                  }`}>
+                    {item.status || 'Pending'}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-gray-500">
+                  {item.size && <span className="px-2 py-0.5 rounded-full bg-white border border-gray-200">{item.size}</span>}
+                  {item.paper_stock && <span className="px-2 py-0.5 rounded-full bg-white border border-gray-200 truncate">{item.paper_stock}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* MAIN LAYOUT */}
