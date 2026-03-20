@@ -19,7 +19,6 @@ const MODE_COPY = {
 } as const;
 
 type QuickOrderProps = {
-  supabase: any;
   currentUser: any;
   role: string;
   customers: any[];
@@ -41,7 +40,6 @@ type CartItem = {
 };
 
 export default function QuickOrderPanel({
-  supabase,
   currentUser,
   role,
   customers,
@@ -166,103 +164,35 @@ export default function QuickOrderPanel({
     setIsUploading(true);
     setStatusNote('');
     try {
-      const isInternal = role === 'admin' || role === 'staff';
-      let targetUserId = currentUser?.id;
-      let targetEmail = currentUser?.email;
+      const formData = new FormData();
+      formData.append('items', JSON.stringify(cart.map((item) => ({
+        title: item.title,
+        quantity: item.quantity,
+        size: item.size,
+        notes: item.notes,
+        paper_stock: item.paper_stock,
+      }))));
 
-      if (isInternal) {
-        if (isNewCustomer) {
-          targetUserId = null;
-          targetEmail = newCustomerEmail;
-        } else if (selectedCustomerId) {
-          targetUserId = selectedCustomerId;
-          const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
-          targetEmail = selectedCustomer?.email || '';
-        }
-      }
-
-      const { data: newOrder, error: orderError } = await supabase
-        .from('orders')
-        .insert({
-          user_id: targetUserId,
-          status: 'New',
-          brand_id: selectedBrandId || null,
-        })
-        .select()
-        .single();
-
-      if (orderError || !newOrder) throw orderError;
-
-      const jobTitleText = cart.length === 1 ? cart[0].title : `Order #${newOrder.id.substring(0, 6).toUpperCase()}`;
-      const totalQty = cart.reduce((acc, item) => acc + item.quantity, 0);
-
-      const { data: newJob, error: jobError } = await supabase
-        .from('jobs')
-        .insert({
-          order_id: newOrder.id,
-          user_id: targetUserId,
-          guest_email: isNewCustomer ? targetEmail : null,
-          title: jobTitleText,
-          quantity: totalQty,
-          status: 'Pending Review',
-          created_by: currentUser?.id,
-        })
-        .select()
-        .single();
-
-      if (jobError || !newJob) throw jobError;
-
-      for (const item of cart) {
-        const { data: newItem, error: itemError } = await supabase
-          .from('job_items')
-          .insert({
-            job_id: newJob.id,
-            description: item.title,
-            quantity: item.quantity,
-            paper_stock: item.paper_stock,
-            size: item.size,
-            internal_notes: item.notes,
-            status: 'Pending',
-          })
-          .select()
-          .single();
-
-        if (itemError || !newItem) throw itemError;
-
-        const fileExt = item.file.name.split('.').pop();
-        const fileName = `${newJob.id}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-        const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, item.file);
-        if (uploadError) console.error('File upload failed for ' + item.title, uploadError);
-
-        if (fileData) {
-          await supabase.from('job_assets').insert({
-            job_id: newJob.id,
-            job_item_id: newItem.id,
-            uploader_id: currentUser?.id,
-            file_url: fileData.path,
-            file_name: item.file.name,
-            asset_type: 'source',
-            status: 'pending',
-          });
-        }
-
-        const steps = (workflowOptions?.length ? workflowOptions.map((w: any) => w.name || w.step_name || w) : ['Prepress']) as string[];
-        for (const stepName of steps) {
-          await supabase.from('job_item_steps').insert({
-            job_item_id: newItem.id,
-            step_name: stepName,
-            status: 'Pending',
-            is_internal: true,
-          });
-        }
-      }
-
-      await supabase.from('job_logs').insert({
-        job_id: newJob.id,
-        user_id: currentUser?.id,
-        action: 'Quick Order',
-        details: `${cart.length} item(s) created from intake (${mode}).`,
+      cart.forEach((item) => {
+        formData.append('files', item.file);
       });
+
+      formData.append('selectedBrandId', selectedBrandId || '');
+      formData.append('isNewCustomer', String(isNewCustomer));
+      formData.append('newCustomerEmail', newCustomerEmail || '');
+      formData.append('selectedCustomerId', selectedCustomerId || '');
+      formData.append('workflowOptions', JSON.stringify(workflowOptions || []));
+      formData.append('mode', mode);
+
+      const response = await fetch('/api/intake/quick-order', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.error || 'Failed to submit order');
+      }
 
       setStatusNote(`Order created • ${cart.length} item(s)`);
       setCart([]);
@@ -270,7 +200,7 @@ export default function QuickOrderPanel({
       onJobCreated?.();
     } catch (error: any) {
       console.error('Quick order failed', error?.message || error);
-      setStatusNote('Failed to submit order.');
+      setStatusNote(error?.message || 'Failed to submit order.');
     } finally {
       setIsUploading(false);
     }

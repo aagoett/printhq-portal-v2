@@ -171,7 +171,6 @@ export default function DashboardIntakePage() {
                 <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-sm text-emerald-800">Mode: <span className="font-bold">Quick Order</span></div>
               </div>
               <QuickOrderPanel
-                supabase={supabase}
                 currentUser={user}
                 role={role}
                 customers={customers}
