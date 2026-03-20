@@ -65,6 +65,10 @@ export default function ItemDetailDrawer({
   const itemAssets = assets.filter(a => a.job_item_id === item.id);
   const steps = item.job_item_steps?.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) || [];
 
+  if (userRole === 'customer') {
+    return null;
+  }
+
   const handleSave = () => {
     onUpdate(item.id, formData);
     onClose();

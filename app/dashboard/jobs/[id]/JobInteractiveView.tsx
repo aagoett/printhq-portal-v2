@@ -85,12 +85,13 @@ function JobItemsTable({
   const [isAdding, setIsAdding] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
+  const isStaff = userRole !== 'customer';
   const editingItem = items.find(i => i.id === editingItemId);
 
   return (
     <>
       {/* DRAWER */}
-      {editingItem && (
+      {editingItem && isStaff && (
         <ItemDetailDrawer 
           item={editingItem} 
           assets={assets}
@@ -117,13 +118,15 @@ function JobItemsTable({
           </h3>
           <div className="flex items-center gap-2">
              <span className="text-xs font-mono bg-gray-200 px-2 py-1 rounded text-gray-600">{items.length} Items</span>
-             <button onClick={() => setIsAdding(true)} className="flex items-center gap-1 text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800 transition-colors">
-               <Plus size={12} /> Add Item
-             </button>
+             {isStaff && (
+               <button onClick={() => setIsAdding(true)} className="flex items-center gap-1 text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800 transition-colors">
+                 <Plus size={12} /> Add Item
+               </button>
+             )}
           </div>
         </div>
         
-        {isAdding && (
+        {isStaff && isAdding && (
           <AddItemForm 
             onAdd={(item) => { onAddItem(item); setIsAdding(false); }} 
             onCancel={() => setIsAdding(false)} 
@@ -151,7 +154,11 @@ function JobItemsTable({
                  const hasFiles = assets.some(a => a.job_item_id === item.id);
                  const steps = item.job_item_steps || [];
                  return (
-                <tr key={item.id} onClick={() => setEditingItemId(item.id)} className="hover:bg-blue-50/50 transition-all cursor-pointer group">
+                <tr 
+                  key={item.id} 
+                  onClick={() => { if (!isStaff) return; setEditingItemId(item.id); }} 
+                  className={`hover:bg-blue-50/50 transition-all ${isStaff ? 'cursor-pointer' : 'cursor-default'} group`}
+                >
                   <td className="px-6 py-6 align-top">
                      <span className="text-xl font-black text-gray-100 group-hover:text-blue-200 transition-colors font-mono">{String(index + 1).padStart(2, '0')}</span>
                   </td>
@@ -224,24 +231,30 @@ function JobItemsTable({
                     </div>
                   </td>
                   <td className="px-6 py-6 align-top">
-                      <select 
-                        value={item.status || 'Pending'}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => onUpdateItem(item.id, { status: e.target.value })}
-                        className={`text-[11px] font-black px-3 py-1.5 rounded-lg border-2 cursor-pointer focus:outline-none focus:ring-4 focus:ring-black/5 uppercase tracking-widest transition-all
-                        ${item.status === 'Completed' ? 'bg-green-600 text-white border-green-700' 
-                          : item.status === 'Pending' ? 'bg-gray-100 text-gray-500 border-gray-200'
-                          : 'bg-blue-600 text-white border-blue-700'}
-                        `}
-                      >
-                         <option value="Pending">Pending</option>
-                         {/* DYNAMIC STEPS AS STATUS OPTIONS */}
-                         {steps.map((s: any) => (
-                            <option key={s.id} value={s.step_name}>{s.step_name}</option>
-                         ))}
-                         <option value="Completed">Completed</option>
-                         <option value="Cancelled">Cancelled</option>
-                      </select>
+                      {isStaff ? (
+                        <select 
+                          value={item.status || 'Pending'}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => onUpdateItem(item.id, { status: e.target.value })}
+                          className={`text-[11px] font-black px-3 py-1.5 rounded-lg border-2 cursor-pointer focus:outline-none focus:ring-4 focus:ring-black/5 uppercase tracking-widest transition-all
+                          ${item.status === 'Completed' ? 'bg-green-600 text-white border-green-700' 
+                            : item.status === 'Pending' ? 'bg-gray-100 text-gray-500 border-gray-200'
+                            : 'bg-blue-600 text-white border-blue-700'}
+                          `}
+                        >
+                           <option value="Pending">Pending</option>
+                           {/* DYNAMIC STEPS AS STATUS OPTIONS */}
+                           {steps.map((s: any) => (
+                              <option key={s.id} value={s.step_name}>{s.step_name}</option>
+                           ))}
+                           <option value="Completed">Completed</option>
+                           <option value="Cancelled">Cancelled</option>
+                        </select>
+                      ) : (
+                        <span className={`text-[11px] font-black px-3 py-1.5 rounded-lg border-2 uppercase tracking-widest bg-gray-50 text-gray-600 border-gray-200 inline-block`}>
+                          {item.status || 'Pending'}
+                        </span>
+                      )}
                    </td>
                   <td className="px-6 py-6 text-right align-top">
                       <div className="flex items-center justify-end gap-2">
@@ -250,7 +263,7 @@ function JobItemsTable({
                             const hasProof = itemAssets.some(a => a.asset_type === 'proof');
                             const isApproved = itemAssets.some(a => a.asset_type === 'proof' && a.status === 'approved');
                             
-                            return (
+                            return isStaff ? (
                               <button 
                                 onClick={(e) => { e.stopPropagation(); onOpenProofModal(item.id); }}
                                 className={`flex items-center gap-1.5 text-[10px] px-2.5 py-1.5 rounded-lg font-black transition-all shadow-sm uppercase tracking-widest border-2
@@ -262,11 +275,17 @@ function JobItemsTable({
                                 {isApproved ? <CheckCircle size={12}/> : <Plus size={12} />}
                                 {isApproved ? 'Approved' : hasProof ? 'Sent / Send Another' : 'Proof'}
                               </button>
+                            ) : (
+                              <span className={`text-[10px] px-2.5 py-1.5 rounded-lg font-black uppercase tracking-widest border-2 ${isApproved ? 'bg-green-50 text-green-700 border-green-200' : hasProof ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
+                                {isApproved ? 'Proof Approved' : hasProof ? 'Proof Sent' : 'No Proof Yet'}
+                              </span>
                             );
                          })()}
-                         <div className="p-2 hover:bg-gray-100 rounded-full transition-colors inline-block">
-                           <Settings size={18} className="text-gray-300 group-hover:text-black transition-colors" />
-                         </div>
+                         {isStaff && (
+                           <div className="p-2 hover:bg-gray-100 rounded-full transition-colors inline-block">
+                             <Settings size={18} className="text-gray-300 group-hover:text-black transition-colors" />
+                           </div>
+                         )}
                       </div>
                   </td>
                 </tr>
@@ -311,6 +330,8 @@ export default function JobInteractiveView({
   const [assets, setAssets] = useState(initialAssets);
   const [userRole, setUserRole] = useState('customer');
   
+  const isStaff = userRole !== 'customer';
+
   // NEW: State for Dynamic Settings
   const [workflowOptions, setWorkflowOptions] = useState<any[]>([]);
 
@@ -411,6 +432,7 @@ export default function JobInteractiveView({
 
   // --- ITEM CRUD OPERATIONS ---
   const handleAddItem = async (newItem: any) => {
+    if (!isStaff) return;
     const tempId = Math.random().toString();
     const optimisticItem = { ...newItem, id: tempId, status: 'Pending', job_id: jobId, job_item_steps: [] };
     setItems([...items, optimisticItem]);
@@ -433,17 +455,20 @@ export default function JobInteractiveView({
   };
 
   const handleUpdateItem = async (id: string, updates: any) => {
+    if (!isStaff) return;
     setItems(current => current.map(i => i.id === id ? { ...i, ...updates } : i));
     const { error } = await supabase.from('job_items').update(updates).eq('id', id);
     if (error) alert("Error saving item: " + error.message);
   };
 
   const handleUpdateJob = async (id: string, updates: any) => {
+      if (!isStaff) return;
       setJob({ ...job, ...updates });
       await supabase.from('jobs').update(updates).eq('id', id);
   };
 
   const handleItemUpload = async (file: File, itemId: string) => {
+      if (!isStaff) return;
       const storageName = `${jobId}-item-${itemId.substring(0,4)}-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
       const { data: uploadData, error: uploadError } = await supabase.storage.from('uploads').upload(storageName, file);
       if (uploadError) throw uploadError;
@@ -481,6 +506,7 @@ export default function JobInteractiveView({
 
   // --- STEP OPERATIONS (UPDATED FOR INTERNAL/EXTERNAL) ---
   const handleAddStep = async (itemId: string, stepName: string, isInternal: boolean) => {
+    if (!isStaff) return;
     const tempId = Math.random().toString();
     const newStep = { id: tempId, job_item_id: itemId, step_name: stepName, status: 'Pending', is_internal: isInternal };
     
@@ -519,6 +545,7 @@ export default function JobInteractiveView({
   };
 
   const handleToggleStep = async (stepId: string, currentStatus: string) => {
+    if (!isStaff) return;
     const statusOptions = ['Pending', 'In Production', 'To Bindery', 'In Bindery', 'Bindery Complete', 'Completed', 'Cancelled'];
     const currentIndex = statusOptions.indexOf(currentStatus);
     const newStatus = currentIndex === statusOptions.length - 1 ? statusOptions[0] : statusOptions[currentIndex + 1];
@@ -539,6 +566,7 @@ export default function JobInteractiveView({
   };
 
   const handleMoveStep = async (stepId: string, direction: 'up' | 'down') => {
+    if (!isStaff) return;
     setItems(current => current.map(item => {
       if (!item.job_item_steps) return item;
       const index = item.job_item_steps.findIndex((s: any) => s.id === stepId);
@@ -558,6 +586,7 @@ export default function JobInteractiveView({
   };
 
   const handleReorderSteps = async (itemId: string, newSteps: any[]) => {
+    if (!isStaff) return;
     setItems(current => current.map(item => {
       if (item.id === itemId) return { ...item, job_item_steps: newSteps };
       return item;
@@ -567,6 +596,7 @@ export default function JobInteractiveView({
   };
 
   const handleDeleteStep = async (stepId: string) => {
+    if (!isStaff) return;
     setItems(current => current.map(i => ({
       ...i,
       job_item_steps: i.job_item_steps?.filter((s: any) => s.id !== stepId)
@@ -601,6 +631,7 @@ export default function JobInteractiveView({
   };
 
   const handleSubmitProof = async () => {
+      if (!isStaff) return;
       if (!uploadFile || !user) return;
       setIsUploading(true);
       const fileName = `${jobId}-proof-${Math.random().toString(36).substring(7)}${proofItemId ? `-item-${proofItemId.substring(0,4)}` : ''}.${uploadFile.name.split('.').pop()}`;
@@ -652,6 +683,7 @@ export default function JobInteractiveView({
   };
 
   const handleUpdateStepNote = async (stepId: string, note: string) => {
+    if (!isStaff) return;
     const { error } = await supabase.from('job_item_steps').update({ notes: note }).eq('id', stepId);
     if (error) {
       console.error('Error updating step note:', error);
@@ -665,6 +697,7 @@ export default function JobInteractiveView({
   };
 
   const handleSaveNotes = async () => {
+      if (!isStaff) return;
       if (!internalNotes.trim()) return;
       setIsSaving(true);
       
@@ -681,6 +714,7 @@ export default function JobInteractiveView({
   };
 
   const toggleFinishingOption = async (optionName: string) => {
+      if (!isStaff) return;
       const currentOptions = job.finishing_options || [];
       const newOptions = currentOptions.includes(optionName) 
         ? currentOptions.filter((o: string) => o !== optionName) : [...currentOptions, optionName];
@@ -706,7 +740,7 @@ export default function JobInteractiveView({
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">
       
-      {showUploadModal && (
+      {isStaff && showUploadModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
                 <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
@@ -753,12 +787,14 @@ export default function JobInteractiveView({
               </div>
           </div>
           <div className="flex items-center gap-3">
-            <Link 
-              href={`/dashboard/invoices/new?jobId=${jobId}`} 
-              className="px-4 py-1.5 bg-emerald-600 text-white rounded-md font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm"
-            >
-              <FilePlus size={14}/> Generate Invoice
-            </Link>
+            {isStaff && (
+              <Link 
+                href={`/dashboard/invoices/new?jobId=${jobId}`} 
+                className="px-4 py-1.5 bg-emerald-600 text-white rounded-md font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm"
+              >
+                <FilePlus size={14}/> Generate Invoice
+              </Link>
+            )}
             <div className={`px-4 py-1.5 rounded-md text-white font-bold uppercase text-[10px] flex items-center bg-gray-900 border border-gray-700`}>{job.status || 'Pending'}</div>
           </div>
         </div>
@@ -841,7 +877,8 @@ export default function JobInteractiveView({
                               type="date" 
                               value={job.due_date ? job.due_date.substring(0, 10) : ''} 
                               onChange={(e) => handleUpdateJob(job.id, { due_date: e.target.value })}
-                              className="text-[10px] font-bold border rounded p-1 w-full bg-white focus:outline-none focus:border-black"
+                              disabled={!isStaff}
+                              className="text-[10px] font-bold border rounded p-1 w-full bg-white focus:outline-none focus:border-black disabled:opacity-60 disabled:cursor-not-allowed"
                             />
                         </div>
                     </div>
@@ -864,13 +901,15 @@ export default function JobInteractiveView({
 
         {/* MIDDLE COL: MAIN PRODUCTION HUB */}
         <div className="col-span-12 lg:col-span-7 flex flex-col gap-4">
-             <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-6">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xs font-bold uppercase text-yellow-700 flex items-center gap-2"><Lock size={16}/> Global Job Notes</h3>
-                    <button onClick={handleSaveNotes} disabled={isSaving} className="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-3 py-1.5 rounded hover:bg-yellow-500 flex items-center gap-2 shadow-sm uppercase tracking-wider"><Save size={12}/> Save Global Notes</button>
-                </div>
-                <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private production notes for the whole job..." className="w-full h-24 bg-white border border-yellow-300 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 transition-all"/>
-             </div>
+             {isStaff && (
+               <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-6">
+                  <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-xs font-bold uppercase text-yellow-700 flex items-center gap-2"><Lock size={16}/> Global Job Notes</h3>
+                      <button onClick={handleSaveNotes} disabled={isSaving} className="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-3 py-1.5 rounded hover:bg-yellow-500 flex items-center gap-2 shadow-sm uppercase tracking-wider"><Save size={12}/> Save Global Notes</button>
+                  </div>
+                  <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private production notes for the whole job..." className="w-full h-24 bg-white border border-yellow-300 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 transition-all"/>
+               </div>
+             )}
 
              <JobItemsTable 
                items={items} 
@@ -882,7 +921,7 @@ export default function JobInteractiveView({
             onDeleteStep={handleDeleteStep}
             onMoveStep={handleMoveStep}
             onReorderSteps={handleReorderSteps}
-            onOpenProofModal={(itemId) => { setProofItemId(itemId); setShowUploadModal(true); }}
+            onOpenProofModal={(itemId) => { if (!isStaff) return; setProofItemId(itemId); setShowUploadModal(true); }}
             onLogActivity={logActivity}
             logs={logs}
             userRole={userRole} 
@@ -910,7 +949,9 @@ export default function JobInteractiveView({
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/3">
                 <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                      <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File Vault</h3>
-                     <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
+                     {isStaff && (
+                       <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
+                     )}
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
                     {assets.map((asset) => {
