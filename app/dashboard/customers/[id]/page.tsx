@@ -6,6 +6,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { formatCurrency } from '@/utils/pricing';
+import { CUSTOMER_CLASS_DEFAULTS, normalizeCustomerClass } from '@/lib/customerClass';
 
 export default function CustomerProfilePage() {
   const params = useParams();
@@ -66,7 +67,8 @@ export default function CustomerProfilePage() {
            role: 'guest',
            company: 'Guest Account',
            payment_terms: 'COD',
-           tax_status: 'Taxable'
+           tax_status: 'Taxable',
+           customer_class: 'standard'
          };
       }
     }
@@ -125,6 +127,7 @@ export default function CustomerProfilePage() {
                 phone: formData.phone,
                 payment_terms: formData.payment_terms,
                 tax_status: formData.tax_status,
+                customer_class: formData.customer_class,
                 tax_id: formData.tax_id,
                 billing_address: formData.billing_address
             })
@@ -231,6 +234,14 @@ export default function CustomerProfilePage() {
                             </select>
                         </div>
                         <div>
+                            <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Customer Class</label>
+                            <select className="w-full border rounded p-2 bg-white" value={formData.customer_class || 'standard'} onChange={e => setFormData({...formData, customer_class: e.target.value})}>
+                                <option value="trade">Trade / Reseller</option>
+                                <option value="standard">Standard Account</option>
+                                <option value="retail">Retail / Walk-In</option>
+                            </select>
+                        </div>
+                        <div>
                             <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Tax ID / Resale #</label>
                             <input className="w-full border rounded p-2" value={formData.tax_id || ''} onChange={e => setFormData({...formData, tax_id: e.target.value})} />
                         </div>
@@ -293,6 +304,11 @@ export default function CustomerProfilePage() {
                  <div>
                     <p className="text-xs font-bold uppercase text-gray-400 mb-1 flex items-center"><CreditCard size={12} className="mr-1"/> Payment Terms</p>
                     <p className="text-sm font-medium text-gray-900">{profile.payment_terms || 'COD'}</p>
+                 </div>
+                 <div>
+                    <p className="text-xs font-bold uppercase text-gray-400 mb-1 flex items-center"><Tag size={12} className="mr-1"/> Customer Class</p>
+                    <p className="text-sm font-medium text-gray-900">{CUSTOMER_CLASS_DEFAULTS[normalizeCustomerClass(profile.customer_class)].label}</p>
+                    <p className="text-xs text-gray-500 mt-1">Defaults estimator to <span className="font-bold capitalize">{CUSTOMER_CLASS_DEFAULTS[normalizeCustomerClass(profile.customer_class)].pricingProfile}</span>.</p>
                  </div>
                  <div>
                     <p className="text-xs font-bold uppercase text-gray-400 mb-1 flex items-center"><FileText size={12} className="mr-1"/> Tax ID</p>

@@ -79,6 +79,14 @@ export default function QuoteDetailsPage({ params }: { params: { id: string } })
   const breakdown = quote.cost_breakdown?.breakdown || [];
   const routes = quote.cost_breakdown?.routes || [];
   const bestRoute = quote.cost_breakdown || {};
+  const worksheet = quote.cost_breakdown?.worksheet;
+  const worksheetLines = worksheet?.lines || breakdown;
+  const worksheetTotals = worksheet?.totals || {
+    cost: quote.total_cost || 0,
+    price: quote.total_price || 0,
+    margin: (quote.total_price || 0) - (quote.total_cost || 0),
+    marginPct: quote.total_price ? (((quote.total_price || 0) - (quote.total_cost || 0)) / quote.total_price) * 100 : 0,
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -163,29 +171,46 @@ export default function QuoteDetailsPage({ params }: { params: { id: string } })
 
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="px-6 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-                        <h3 className="text-xs font-bold uppercase text-gray-500">Internal Cost Breakdown</h3>
+                        <div>
+                          <h3 className="text-xs font-bold uppercase text-gray-500">Worksheet + Economics</h3>
+                          <p className="text-sm text-gray-500">Same sheet the estimator used, carried into quote review and approval.</p>
+                        </div>
                         <span className="text-[10px] text-gray-400 bg-gray-200 px-2 py-0.5 rounded">Admin Only</span>
                     </div>
-                    <div className="divide-y divide-gray-100">
-                      {breakdown.map((item: any, i: number) => (
-                        <div key={i} className="px-6 py-4 flex flex-col md:flex-row md:items-start md:justify-between gap-2 hover:bg-gray-50">
-                          <div>
-                            <p className="text-sm font-bold text-gray-900">{item.name}</p>
-                            <p className="text-xs text-gray-500">{item.detail}</p>
-                          </div>
-                          <div className="text-right text-xs font-mono">
-                            <p className="font-bold text-gray-900">Sell ${Number(item.price || 0).toFixed(2)}</p>
-                            <p className="text-red-600">Cost ${Number(item.cost || 0).toFixed(2)}</p>
-                          </div>
-                        </div>
-                      ))}
-                      <div className="px-6 py-4 bg-gray-50 flex items-center justify-between font-bold">
-                        <div>
-                          <p className="text-sm text-gray-900">Total internal cost</p>
-                          <p className="text-xs text-gray-500">Use this to sanity-check margin before converting.</p>
-                        </div>
-                        <p className="text-red-700 font-mono">${quote.total_cost?.toFixed(2)}</p>
-                      </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-white text-gray-500 font-bold uppercase text-xs border-b border-gray-100">
+                          <tr>
+                            <th className="px-6 py-3 text-left">Line</th>
+                            <th className="px-6 py-3 text-left">Detail</th>
+                            <th className="px-6 py-3 text-left">Cost</th>
+                            <th className="px-6 py-3 text-left">Sell</th>
+                            <th className="px-6 py-3 text-right">Gross</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {worksheetLines.map((item: any, i: number) => {
+                            const margin = Number(item.price || 0) - Number(item.cost || 0);
+                            return (
+                              <tr key={i} className="hover:bg-gray-50">
+                                <td className="px-6 py-4 font-bold text-gray-900">{item.label || item.name}</td>
+                                <td className="px-6 py-4 text-xs text-gray-500">{item.detail || '—'}</td>
+                                <td className="px-6 py-4 text-xs font-mono text-red-600">${Number(item.cost || 0).toFixed(2)}</td>
+                                <td className="px-6 py-4 text-xs font-mono text-gray-900">${Number(item.price || 0).toFixed(2)}</td>
+                                <td className="px-6 py-4 text-right text-xs font-mono text-gray-600">${margin.toFixed(2)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot className="bg-gray-50 border-t border-gray-100">
+                          <tr>
+                            <td colSpan={2} className="px-6 py-4 text-right font-bold text-gray-900">Totals</td>
+                            <td className="px-6 py-4 font-mono text-red-700">${Number(worksheetTotals.cost || 0).toFixed(2)}</td>
+                            <td className="px-6 py-4 font-mono text-gray-900">${Number(worksheetTotals.price || 0).toFixed(2)}</td>
+                            <td className="px-6 py-4 text-right font-mono text-gray-700">${Number(worksheetTotals.margin || 0).toFixed(2)} ({Number(worksheetTotals.marginPct || 0).toFixed(1)}%)</td>
+                          </tr>
+                        </tfoot>
+                      </table>
                     </div>
                 </div>
 
@@ -215,9 +240,19 @@ export default function QuoteDetailsPage({ params }: { params: { id: string } })
             {/* SIDEBAR */}
             <div className="space-y-6">
                 <div className="bg-green-50 rounded-xl border border-green-200 p-6 shadow-sm">
-                    <p className="text-xs font-bold uppercase text-green-700 mb-1">Total Client Price</p>
+                    <p className="text-xs font-bold uppercase text-green-700 mb-1">Approval Economics</p>
                     <p className="text-4xl font-black text-green-900 mb-2">${quote.total_price?.toFixed(2)}</p>
                     <p className="text-sm text-green-700 font-medium">${(quote.total_price / quote.quantity).toFixed(3)} per unit</p>
+                    <div className="mt-4 pt-4 border-t border-green-200 space-y-2 text-sm">
+                      <div className="flex items-center justify-between"><span className="text-green-800">Internal cost</span><span className="font-mono text-green-900">${Number(worksheetTotals.cost || 0).toFixed(2)}</span></div>
+                      <div className="flex items-center justify-between"><span className="text-green-800">Gross margin</span><span className="font-mono text-green-900">${Number(worksheetTotals.margin || 0).toFixed(2)}</span></div>
+                      <div className="flex items-center justify-between"><span className="text-green-800">Margin %</span><span className="font-mono text-green-900">{Number(worksheetTotals.marginPct || 0).toFixed(1)}%</span></div>
+                    </div>
+                </div>
+                <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                    <p className="text-xs font-bold uppercase text-gray-500 mb-2">Approval state</p>
+                    <p className="text-sm text-gray-900 font-bold">{quote.status}</p>
+                    <p className="text-xs text-gray-500 mt-2">Sales, production, and customer approval now look at the same worksheet/economics model.</p>
                 </div>
             </div>
         </div>

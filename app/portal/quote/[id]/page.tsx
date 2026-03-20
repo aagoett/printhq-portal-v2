@@ -43,6 +43,8 @@ export default function PublicQuotePage({ params }: { params: { id: string } }) 
   const breakdown = quote.cost_breakdown?.breakdown || [];
   const routes = quote.cost_breakdown?.routes || [];
   const bestRoute: any = quote.cost_breakdown || {};
+  const worksheet = quote.cost_breakdown?.worksheet;
+  const worksheetLines = worksheet?.lines || breakdown;
   const routeComparison = routes.slice(0, 3);
 
   return (
@@ -141,15 +143,15 @@ export default function PublicQuotePage({ params }: { params: { id: string } }) 
                     </div>
                   </div>
 
-                  {breakdown.length > 0 && (
+                  {worksheetLines.length > 0 && (
                     <div>
-                      <p className="text-[11px] font-bold uppercase text-gray-500 mb-2">Price components</p>
+                      <p className="text-[11px] font-bold uppercase text-gray-500 mb-2">Worksheet summary</p>
                       <div className="grid sm:grid-cols-2 gap-2">
-                        {breakdown.map((item: any, idx: number) => (
+                        {worksheetLines.map((item: any, idx: number) => (
                           <div key={idx} className="bg-white border rounded-lg p-3 flex items-start justify-between gap-3">
                             <div>
-                              <p className="text-[11px] font-bold uppercase text-gray-500">{item.name}</p>
-                              <p className="text-sm text-gray-900">{item.detail}</p>
+                              <p className="text-[11px] font-bold uppercase text-gray-500">{item.label || item.name}</p>
+                              <p className="text-sm text-gray-900">{item.detail || 'Included in route'}</p>
                             </div>
                             <div className="text-right text-sm font-mono font-bold text-gray-900">${Number(item.price || 0).toFixed(2)}</div>
                           </div>

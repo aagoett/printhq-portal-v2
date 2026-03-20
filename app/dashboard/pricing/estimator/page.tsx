@@ -3,11 +3,12 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Trophy, DollarSign, LayoutGrid, ArrowLeft, Save, Loader2, Users, Tag, Mail, SlidersHorizontal, Table, PlusCircle, RefreshCcw, Target, Package2, Truck } from 'lucide-react';
+import { Trophy, DollarSign, LayoutGrid, ArrowLeft, Save, Loader2, Users, Tag, Mail, SlidersHorizontal, Table, PlusCircle, RefreshCcw, Target, Package2, Truck, AlertTriangle, BadgeDollarSign, Scale } from 'lucide-react';
 import Link from 'next/link';
 import { applyOverridesToList, CustomerPricingOverride, formatCurrency } from '@/utils/pricing';
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
 import { calculateProposals, EstimatorContext, RouteOption, PricingComponent, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
+import { CUSTOMER_CLASS_DEFAULTS, getCustomerClassDefaultProfile, normalizeCustomerClass } from '@/lib/customerClass';
 
 type ProfileLite = {
   id: string;
@@ -15,6 +16,7 @@ type ProfileLite = {
   first_name?: string;
   company?: string;
   role?: string;
+  customer_class?: string | null;
 };
 
 type ProductMeta = {
@@ -85,6 +87,12 @@ export default function AutoEstimatorPage() {
   const [worksheetLines, setWorksheetLines] = useState<WorksheetLine[]>([]);
   const [newLine, setNewLine] = useState<{ label: string; cost: string; price: string }>({ label: '', cost: '', price: '' });
 
+  const [validationQuotes, setValidationQuotes] = useState<any[]>([]);
+  const [validationResults, setValidationResults] = useState<any[]>([]);
+  const [validationRunning, setValidationRunning] = useState(false);
+  const [crossoverRows, setCrossoverRows] = useState<any[]>([]);
+  const [crossoverRunning, setCrossoverRunning] = useState(false);
+
   const [isSaving, setIsSaving] = useState(false);
   const [isEmailing, setIsEmailing] = useState(false);
   const [emailStatus, setEmailStatus] = useState<string | null>(null);
@@ -110,6 +118,23 @@ export default function AutoEstimatorPage() {
     if (unit === 'per_1000' || raw > threshold) return raw / 1000;
     return raw;
   };
+
+  const effectiveCustomerClass = normalizeCustomerClass(
+    customers.find((c) => c.id === selectedCustomerId)?.customer_class || currentProfile?.customer_class
+  );
+  const customerClassConfig = CUSTOMER_CLASS_DEFAULTS[effectiveCustomerClass];
+
+  const validationFeedback = useMemo(() => {
+    const issues: { level: 'error' | 'warning'; message: string }[] = [];
+    if (!quoteTitle.trim()) issues.push({ level: 'warning', message: 'Quote reference is blank. Save now and nobody will know what this is later.' });
+    if (!quantity || quantity <= 0) issues.push({ level: 'error', message: 'Quantity must be greater than zero.' });
+    if (!finishW || !finishH || finishW <= 0 || finishH <= 0) issues.push({ level: 'error', message: 'Finished size is incomplete. Enter width and height before trusting the route.' });
+    if (!winner) issues.push({ level: 'error', message: 'No valid route found. Check stock, size, or press coverage.' });
+    if (winner && winner.totalPrice <= winner.totalCost) issues.push({ level: 'warning', message: 'This quote is at or below cost. Margin needs attention before release.' });
+    if (winner && winner.method?.toLowerCase().includes('digital') && quantity >= 5000) issues.push({ level: 'warning', message: 'Large digital run. Check the crossover board—offset may deserve a second look.' });
+    if (winner && winner.method?.toLowerCase().includes('offset') && quantity <= 1000) issues.push({ level: 'warning', message: 'Small offset run. Digital may land faster and cleaner at this quantity.' });
+    return issues;
+  }, [quoteTitle, quantity, finishW, finishH, winner]);
 
   const seedWorksheetFromRoute = (route: RouteOption | null) => {
     if (!route) {
@@ -151,10 +176,14 @@ export default function AutoEstimatorPage() {
   useEffect(() => {
     if (selectedCustomerId) {
       loadOverrides(selectedCustomerId);
+      const selectedCustomer = customers.find((c) => c.id === selectedCustomerId) || (currentProfile?.id === selectedCustomerId ? currentProfile : null);
+      if (selectedCustomer?.customer_class) {
+        setPricingProfile(getCustomerClassDefaultProfile(selectedCustomer.customer_class));
+      }
     } else {
       setCustomerOverrides([]);
     }
-  }, [selectedCustomerId]);
+  }, [selectedCustomerId, customers, currentProfile]);
 
   useEffect(() => {
     if (winner) {
@@ -195,11 +224,14 @@ export default function AutoEstimatorPage() {
         setCurrentProfile(profileData);
         setIsInternal(internal);
         setSelectedCustomerId(auth.user.id);
+        if (profileData.customer_class) {
+          setPricingProfile(getCustomerClassDefaultProfile(profileData.customer_class));
+        }
 
         if (internal) {
           const { data: people } = await supabase
             .from('profiles')
-            .select('id, email, first_name, company, role')
+            .select('id, email, first_name, company, role, customer_class')
             .order('email');
           if (people) setCustomers(people);
         } else {
@@ -209,6 +241,7 @@ export default function AutoEstimatorPage() {
     }
 
     await fetchInventory();
+    await loadValidationQuotes();
     setLoadingBootstrap(false);
   };
 
@@ -229,6 +262,20 @@ export default function AutoEstimatorPage() {
     if (mData) setPresses(mData as any);
     if (fData) setFinishing(fData as any);
     if (mailData) setMailing(mailData as any);
+  };
+
+  const loadValidationQuotes = async () => {
+    const { data, error } = await supabase
+      .from("quotes")
+      .select("id, quote_number, title, quantity, width, height, total_price, status, cost_breakdown, customer_name, customer_email, production_method")
+      .in("status", ["Approved", "Converted"])
+      .order("created_at", { ascending: false })
+      .limit(6);
+    if (error) {
+      console.error("validation quotes", error.message);
+      return;
+    }
+    setValidationQuotes(data || []);
   };
 
   const loadOverrides = async (customerId: string) => {
@@ -322,6 +369,108 @@ export default function AutoEstimatorPage() {
         setWorksheetLines([]);
       }
       setLastSavedQuoteId(null);
+  };
+
+  const resolveFinishingIdsFromDetail = (detail?: string | null) => {
+    if (!detail) return [] as string[];
+    return finishingOptions
+      .filter((f) => detail.toLowerCase().includes((f.name || '').toLowerCase()))
+      .map((f) => f.id);
+  };
+
+  const resolveMailingIdFromDetail = (detail?: string | null) => {
+    if (!detail) return null;
+    const match = mailingOptions.find((m) => detail.toLowerCase().includes((m.name || '').toLowerCase()));
+    return match?.id || null;
+  };
+
+  const runValidationChecks = () => {
+    if (!validationQuotes.length) return;
+    setValidationRunning(true);
+    const rows: any[] = [];
+
+    validationQuotes.forEach((quote) => {
+      const baseline = quote.cost_breakdown || {};
+      const finishingDetail = baseline.finishingDetail || baseline.breakdown?.find((b: any) => b.name === 'Finishing')?.detail;
+      const mailingDetail = baseline.mailingDetail || baseline.breakdown?.find((b: any) => b.name === 'Mailing')?.detail;
+
+      const guessedFinishingIds = resolveFinishingIdsFromDetail(finishingDetail);
+      const guessedMailingId = resolveMailingIdFromDetail(mailingDetail);
+      const paperId = baseline.paperId || paperOptions.find((p) => p.name === baseline.paperName)?.id || paperOptions.find((p) => p.id === baseline.paperId)?.id || activePaperId;
+
+      const proposals = calculateProposals(
+        {
+          finishW: Number(quote.width),
+          finishH: Number(quote.height),
+          qtyList: [Number(quote.quantity)],
+          selectedPaperIds: paperId ? [paperId] : undefined,
+          selectedFinishingIds: guessedFinishingIds,
+          selectedMailingId: guessedMailingId,
+          templateKey: baseline?.product?.templateKey,
+          pricingProfile: baseline.pricingProfile || pricingProfile,
+        },
+        {
+          papers: paperOptions,
+          presses,
+          finishing: finishingOptions,
+          mailing: mailingOptions,
+          overrides: [],
+        }
+      );
+
+      const rerun = proposals[0]?.winner;
+      rows.push({
+        id: quote.id,
+        title: quote.title,
+        qty: quote.quantity,
+        storedPrice: quote.total_price,
+        rerunPrice: rerun?.totalPrice || null,
+        delta: rerun?.totalPrice ? rerun.totalPrice - quote.total_price : null,
+        storedMethod: baseline.method || quote.production_method,
+        rerunMethod: rerun?.method,
+        quoteNumber: quote.quote_number,
+      });
+    });
+
+    setValidationResults(rows);
+    setValidationRunning(false);
+  };
+
+  const runCrossoverTest = () => {
+    setCrossoverRunning(true);
+    const qtyList = [100, 250, 500, 1000, 2500, 5000, 7500, 10000];
+    const proposals = calculateProposals(
+      {
+        finishW,
+        finishH,
+        qtyList,
+        selectedPaperIds: showPaperAdvanced && activePaperId ? [activePaperId] : undefined,
+        selectedFinishingIds,
+        selectedMailingId,
+        templateKey: selectedTemplate,
+        pricingProfile,
+      },
+      { papers, presses, finishing, mailing, overrides: customerOverrides }
+    );
+
+    const rows = proposals.map((p) => ({
+      quantity: p.quantity,
+      method: p.winner?.method,
+      price: p.winner?.totalPrice,
+      unit: p.winner?.unitCost,
+      profile: p.winner?.pricingProfile || pricingProfile,
+    }));
+
+    let crossoverQty: number | null = null;
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i].method && rows[i - 1].method && rows[i].method !== rows[i - 1].method) {
+        crossoverQty = rows[i].quantity;
+        break;
+      }
+    }
+
+    setCrossoverRows(rows.map((r) => ({ ...r, crossover: crossoverQty === r.quantity })));
+    setCrossoverRunning(false);
   };
 
   const worksheetTotals = useMemo(() => {
@@ -468,6 +617,7 @@ export default function AutoEstimatorPage() {
             <div className="flex gap-2">
                 <Link href="/dashboard/pricing/paper-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Paper</Link>
                 <Link href="/dashboard/pricing/finishing-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><Package2 size={16}/> Finishing</Link>
+                <Link href="/dashboard/pricing/mailing-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><Truck size={16}/> Mailing</Link>
                 <Link href="/dashboard/pricing" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><DollarSign size={16}/> Costs</Link>
                 <Link href="/dashboard/quotes" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> My Quotes</Link>
             </div>
@@ -497,6 +647,21 @@ export default function AutoEstimatorPage() {
                     )}
                   </div>
                 )}
+
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase text-amber-700 flex items-center gap-2"><BadgeDollarSign size={13}/> Customer class default</p>
+                      <p className="text-sm font-bold text-amber-900 mt-1">{customerClassConfig.label}</p>
+                      <p className="text-xs text-amber-800 mt-1">Default margin profile: <span className="font-bold capitalize">{customerClassConfig.pricingProfile}</span> ×{PRICING_PROFILES[customerClassConfig.pricingProfile].toFixed(2)}</p>
+                    </div>
+                    <div className="text-right text-[11px] text-amber-700">
+                      <p>Manual override</p>
+                      <p className="font-bold text-amber-900 capitalize">{pricingProfile}</p>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-amber-800 mt-2">Estimator starts from the customer class, then you can bump it up or down quote-by-quote.</p>
+                </div>
 
                 <div>
                   <label className="block text-xs font-bold uppercase text-gray-500 mb-2 flex items-center gap-2"><Target size={14}/> Pricing Profile</label>
@@ -732,6 +897,24 @@ export default function AutoEstimatorPage() {
 
             {/* RESULTS */}
             <div className="lg:col-span-2 space-y-6">
+                {validationFeedback.length > 0 && (
+                  <div className="bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden">
+                    <div className="px-6 py-3 border-b border-amber-100 bg-amber-50 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-bold uppercase text-amber-700 flex items-center gap-2"><AlertTriangle size={14}/> Estimator validation</p>
+                        <p className="text-sm text-amber-900">Flag problems before this quote leaves the building.</p>
+                      </div>
+                    </div>
+                    <div className="divide-y divide-amber-100">
+                      {validationFeedback.map((item, idx) => (
+                        <div key={idx} className="px-6 py-3 flex items-start gap-3 text-sm">
+                          <span className={`mt-0.5 h-2.5 w-2.5 rounded-full ${item.level === 'error' ? 'bg-red-500' : 'bg-amber-500'}`}></span>
+                          <p className={item.level === 'error' ? 'text-red-700' : 'text-amber-800'}>{item.message}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {winner ? (
                     <div className="bg-green-50 rounded-xl border-2 border-green-500 p-6 relative shadow-sm">
                         <div className="flex justify-between items-start">
@@ -828,8 +1011,8 @@ export default function AutoEstimatorPage() {
                   <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                       <div>
-                        <p className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><Table size={14}/> Estimator Worksheet</p>
-                        <p className="text-sm text-gray-500">Edit line items before saving. Totals drive the quote.</p>
+                        <p className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><Table size={14}/> Worksheet + Economics</p>
+                        <p className="text-sm text-gray-500">One sheet for line edits, sell, cost, and gross before saving the quote.</p>
                       </div>
                       <div className="text-right text-sm">
                         <p className="font-semibold text-gray-900">${effectivePrice.toFixed(2)} total</p>
@@ -901,6 +1084,50 @@ export default function AutoEstimatorPage() {
                   </div>
                 )}
 
+                {winner && estimates.length > 1 && (
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><Scale size={14}/> Digital vs. offset crossover</p>
+                        <p className="text-sm text-gray-500">Show both lanes so estimators can defend the chosen route.</p>
+                      </div>
+                    </div>
+                    <div className="grid md:grid-cols-2 gap-4 p-6">
+                      {(['Digital','Offset'] as const).map((lane) => {
+                        const route = estimates.find((est) => est.method?.toLowerCase().includes(lane.toLowerCase()));
+                        return (
+                          <div key={lane} className={`rounded-xl border p-4 ${route ? 'border-gray-200 bg-gray-50' : 'border-dashed border-gray-200 bg-white'}`}>
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-[11px] font-bold uppercase text-gray-500">{lane} lane</p>
+                                <p className="text-sm font-bold text-gray-900">{route?.method || `No ${lane.toLowerCase()} route`}</p>
+                              </div>
+                              {route && winner.method === route.method && <span className="text-[10px] font-black uppercase px-2 py-1 rounded-full bg-green-100 text-green-700">Chosen</span>}
+                            </div>
+                            {route ? (
+                              <>
+                                <p className="text-xs text-gray-600 mt-2">{route.nUp}-up on {route.usableSheet || route.sheet} • {route.sheetsNeeded}+{route.overs} overs</p>
+                                <div className="mt-3 flex items-end justify-between">
+                                  <div>
+                                    <p className="text-[11px] uppercase font-bold text-gray-500">Sell</p>
+                                    <p className="text-lg font-black text-gray-900">{formatCurrency(route.totalPrice)}</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-[11px] uppercase font-bold text-gray-500">Gross</p>
+                                    <p className="text-sm font-bold text-gray-900">{formatCurrency(route.totalPrice - route.totalCost)}</p>
+                                  </div>
+                                </div>
+                              </>
+                            ) : (
+                              <p className="text-xs text-gray-400 mt-3">Current specs never generated a viable {lane.toLowerCase()} route.</p>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {/* COMPARISON TABLE */}
                 {estimates.length > 0 && (
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -965,6 +1192,93 @@ export default function AutoEstimatorPage() {
                         </table>
                     </div>
                 )}
+
+
+                {validationQuotes.length > 0 && (
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><BadgeDollarSign size={14}/> Estimator sanity checks</p>
+                        <p className="text-sm text-gray-500">Re-run recent approved quotes against today's pricing to catch drift.</p>
+                      </div>
+                      <button onClick={runValidationChecks} disabled={validationRunning} className="px-3 py-2 text-sm font-bold bg-black text-white rounded-lg hover:bg-gray-800 disabled:opacity-60">
+                        {validationRunning ? 'Running…' : 'Run checks'}
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="text-left text-xs text-gray-500 font-bold border-b border-gray-100">
+                          <tr>
+                            <th className="px-4 py-2">Quote</th>
+                            <th className="px-4 py-2">Qty</th>
+                            <th className="px-4 py-2">Stored</th>
+                            <th className="px-4 py-2">Re-run</th>
+                            <th className="px-4 py-2">Delta</th>
+                            <th className="px-4 py-2">Method</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {(validationResults.length > 0 ? validationResults : validationQuotes).map((row: any) => {
+                            const delta = row.delta ?? (row.rerunPrice && row.storedPrice ? row.rerunPrice - row.storedPrice : null);
+                            const deltaColor = delta === null ? 'text-gray-400' : delta > 10 ? 'text-red-600' : delta < -10 ? 'text-green-700' : 'text-gray-700';
+                            return (
+                              <tr key={row.id} className="hover:bg-gray-50">
+                                <td className="px-4 py-2 font-bold text-gray-900">#{row.quoteNumber || row.id?.slice(0,6)} {row.title || ''}</td>
+                                <td className="px-4 py-2 text-sm text-gray-700">{Number(row.qty || row.quantity).toLocaleString()}</td>
+                                <td className="px-4 py-2 text-sm text-gray-700">{row.storedPrice ? formatCurrency(row.storedPrice) : '--'}</td>
+                                <td className="px-4 py-2 text-sm text-gray-700">{row.rerunPrice ? formatCurrency(row.rerunPrice) : '—'}</td>
+                                <td className={`px-4 py-2 text-sm font-mono ${deltaColor}`}>
+                                  {delta === null ? '—' : `${delta >= 0 ? '+' : ''}${delta.toFixed(2)}`}
+                                </td>
+                                <td className="px-4 py-2 text-sm text-gray-700">{row.rerunMethod || row.storedMethod || '—'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><AlertTriangle size={14}/> Digital vs offset crossover test</p>
+                      <p className="text-sm text-gray-500">Run multiple quantities to see where lanes flip.</p>
+                    </div>
+                    <button onClick={runCrossoverTest} disabled={crossoverRunning} className="px-3 py-2 text-sm font-bold bg-white border rounded-lg hover:border-black">
+                      {crossoverRunning ? 'Testing…' : 'Run crossover board'}
+                    </button>
+                  </div>
+                  {crossoverRows.length === 0 ? (
+                    <div className="p-4 text-sm text-gray-500">Run the board to see digital vs offset inflection points.</div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="text-left text-xs text-gray-500 font-bold border-b border-gray-100">
+                          <tr>
+                            <th className="px-4 py-2">Qty</th>
+                            <th className="px-4 py-2">Method</th>
+                            <th className="px-4 py-2">Profile</th>
+                            <th className="px-4 py-2">Price</th>
+                            <th className="px-4 py-2">Unit</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {crossoverRows.map((row) => (
+                            <tr key={row.quantity} className={`hover:bg-gray-50 ${row.crossover ? 'bg-yellow-50' : ''}`}>
+                              <td className="px-4 py-2 font-mono font-bold text-gray-900">{row.quantity.toLocaleString()}</td>
+                              <td className="px-4 py-2 text-sm text-gray-700">{row.method || '—'} {row.crossover && <span className="ml-2 text-[10px] font-black uppercase text-yellow-800 bg-yellow-200 px-2 py-0.5 rounded">Crossover</span>}</td>
+                              <td className="px-4 py-2 text-sm capitalize text-gray-700">{row.profile}</td>
+                              <td className="px-4 py-2 text-sm text-gray-700">{row.price ? formatCurrency(row.price) : '—'}</td>
+                              <td className="px-4 py-2 text-sm text-gray-700">{row.unit ? formatCurrency(row.unit) : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
             </div>
         </div>
     </div>
