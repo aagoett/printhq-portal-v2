@@ -45,6 +45,7 @@ export default function PublicQuotePage({ params }: { params: { id: string } }) 
   const bestRoute: any = quote.cost_breakdown || {};
   const worksheet = quote.cost_breakdown?.worksheet;
   const worksheetLines = worksheet?.lines || breakdown;
+  const worksheetTotals = worksheet?.totals;
   const routeComparison = routes.slice(0, 3);
 
   return (

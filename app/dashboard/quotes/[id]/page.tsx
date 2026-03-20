@@ -88,6 +88,7 @@ export default function QuoteDetailsPage({ params }: { params: { id: string } })
     marginPct: quote.total_price ? (((quote.total_price || 0) - (quote.total_cost || 0)) / quote.total_price) * 100 : 0,
   };
 
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
         
@@ -213,6 +214,44 @@ export default function QuoteDetailsPage({ params }: { params: { id: string } })
                       </table>
                     </div>
                 </div>
+
+                {worksheetLines.length > 0 && (
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="px-6 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
+                      <h3 className="text-xs font-bold uppercase text-gray-500">Worksheet</h3>
+                      {worksheetTotals && (
+                        <div className="text-right text-xs text-gray-600">
+                          <div>Total sell: ${worksheetTotals.price?.toFixed(2)}</div>
+                          <div>Gross: ${(worksheetTotals.margin)?.toFixed(2)} ({(worksheetTotals.marginPct || 0).toFixed(1)}%)</div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="text-left text-xs text-gray-500 font-bold border-b border-gray-100">
+                          <tr>
+                            <th className="px-4 py-2">Line</th>
+                            <th className="px-4 py-2">Detail</th>
+                            <th className="px-4 py-2">Cost</th>
+                            <th className="px-4 py-2">Price</th>
+                            <th className="px-4 py-2 text-right">Margin</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {worksheetLines.map((line: any) => (
+                            <tr key={line.id} className="hover:bg-gray-50">
+                              <td className="px-4 py-2 font-semibold text-gray-900">{line.label}</td>
+                              <td className="px-4 py-2 text-sm text-gray-700">{line.detail}</td>
+                              <td className="px-4 py-2 text-sm text-red-700 font-mono">${Number(line.cost || 0).toFixed(2)}</td>
+                              <td className="px-4 py-2 text-sm text-gray-900 font-mono">${Number(line.price || 0).toFixed(2)}</td>
+                              <td className="px-4 py-2 text-right text-xs text-gray-600 font-mono">${(Number(line.price || 0) - Number(line.cost || 0)).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
 
                 {routes.length > 1 && (
                   <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">

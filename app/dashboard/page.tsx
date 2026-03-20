@@ -18,6 +18,7 @@ import CsrChatPanel from '@/components/CsrChatPanel';
 import { applyOverridesToList, parseQuantityList, formatCurrency } from '@/utils/pricing';
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
 import { applyPricingProfileToRoute, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
+import { getCustomerClassDefaultProfile, normalizeCustomerClass } from '@/lib/customerClass';
 
 
 // --- TYPES ---
@@ -51,6 +52,7 @@ type Profile = {
   last_name?: string;
   company?: string;
   department?: string;
+  customer_class?: string | null;
 };
 
 type Brand = {
@@ -1152,7 +1154,7 @@ function BotIntakePanel({ supabase, currentUser, brandList, workflowOptions, cus
   const [insidePaperId, setInsidePaperId] = useState<string>('');
   const [selectedMailingId, setSelectedMailingId] = useState<string>('');
   const [selectedFinishingIds, setSelectedFinishingIds] = useState<string[]>([]);
-  const [pricingProfile, setPricingProfile] = useState<PricingProfileKey>('competitive');
+  const [pricingProfile, setPricingProfile] = useState<PricingProfileKey>(getCustomerClassDefaultProfile(currentUser?.customer_class));
   const [attachments, setAttachments] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isEstimating, setIsEstimating] = useState(false);
@@ -1189,10 +1191,14 @@ function BotIntakePanel({ supabase, currentUser, brandList, workflowOptions, cus
   useEffect(() => {
     if (selectedCustomerId) {
       loadOverrides(selectedCustomerId);
+      const selected = customers.find((c) => c.id === selectedCustomerId) || (currentUser?.id === selectedCustomerId ? currentUser : null);
+      if (selected?.customer_class) {
+        setPricingProfile(getCustomerClassDefaultProfile(selected.customer_class));
+      }
     } else {
       setCustomerOverrides([]);
     }
-  }, [selectedCustomerId]);
+  }, [selectedCustomerId, customers, currentUser]);
 
   useEffect(() => {
     if (papers.length > 0) {
