@@ -3,11 +3,11 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Trophy, DollarSign, LayoutGrid, ArrowLeft, Save, Loader2, Users, Tag, Mail, SlidersHorizontal, ChevronDown, ChevronUp, Bug, GitCompareArrows } from 'lucide-react';
+import { Trophy, DollarSign, LayoutGrid, ArrowLeft, Save, Loader2, Users, Tag, Mail, SlidersHorizontal, Table, PlusCircle, RefreshCcw } from 'lucide-react';
 import Link from 'next/link';
 import { applyOverridesToList, CustomerPricingOverride, formatCurrency } from '@/utils/pricing';
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
-import { calculateProposals, EstimatorContext } from '@/lib/estimator';
+import { calculateProposals, EstimatorContext, RouteOption, PricingComponent } from '@/lib/estimator';
 
 type ProfileLite = {
   id: string;
@@ -15,20 +15,6 @@ type ProfileLite = {
   first_name?: string;
   company?: string;
   role?: string;
-};
-
-type PricingComponent = {
-  id: string;
-  name: string;
-  type: string;
-  price_amount: number;
-  cost_amount: number;
-  parent_sheet_width?: number;
-  parent_sheet_height?: number;
-  max_sheet_width?: number;
-  cost_unit?: string;
-  setup_minutes?: number;
-  run_speed_per_hour?: number;
 };
 
 type ProductMeta = {
@@ -45,6 +31,15 @@ type ProductMeta = {
 
 type QuoteRecord = {
   id: string;
+};
+
+type WorksheetLine = {
+  id: string;
+  label: string;
+  detail?: string;
+  cost: number;
+  price: number;
+  type?: string;
 };
 
 export default function AutoEstimatorPage() {
@@ -78,15 +73,16 @@ export default function AutoEstimatorPage() {
   const [presses, setPresses] = useState<PricingComponent[]>([]);
   const [finishing, setFinishing] = useState<PricingComponent[]>([]);
   const [mailing, setMailing] = useState<PricingComponent[]>([]);
-  const [estimates, setEstimates] = useState<any[]>([]);
-  const [winner, setWinner] = useState<any>(null);
-  const [routeOptions, setRouteOptions] = useState<any[]>([]);
+  const [estimates, setEstimates] = useState<RouteOption[]>([]);
+  const [winner, setWinner] = useState<RouteOption | null>(null);
+  const [routeOptions, setRouteOptions] = useState<RouteOption[]>([]);
   
   const [selectedFinishingIds, setSelectedFinishingIds] = useState<string[]>([]);
   const [selectedMailingId, setSelectedMailingId] = useState<string | null>(null);
   const [showPaperAdvanced, setShowPaperAdvanced] = useState(false);
-  const [showRouteDebug, setShowRouteDebug] = useState(true);
-  const [showRouteComparison, setShowRouteComparison] = useState(true);
+
+  const [worksheetLines, setWorksheetLines] = useState<WorksheetLine[]>([]);
+  const [newLine, setNewLine] = useState<{ label: string; cost: string; price: string }>({ label: '', cost: '', price: '' });
 
   const [isSaving, setIsSaving] = useState(false);
   const [isEmailing, setIsEmailing] = useState(false);
@@ -107,6 +103,22 @@ export default function AutoEstimatorPage() {
     const raw = Number(value || 0);
     if (unit === 'per_1000' || raw > threshold) return raw / 1000;
     return raw;
+  };
+
+  const seedWorksheetFromRoute = (route: RouteOption | null) => {
+    if (!route) {
+      setWorksheetLines([]);
+      return;
+    }
+    const base = (route.breakdown || []).map((item, idx) => ({
+      id: `${item.name}-${idx}`,
+      label: item.name,
+      detail: item.detail,
+      cost: Number(item.cost || 0),
+      price: Number(item.price || 0),
+      type: item.name.toLowerCase(),
+    }));
+    setWorksheetLines(base);
   };
 
   useEffect(() => {
@@ -141,6 +153,7 @@ export default function AutoEstimatorPage() {
   useEffect(() => {
     if (winner) {
       setEmailStatus(null);
+      seedWorksheetFromRoute(winner);
     }
   }, [winner]);
 
@@ -234,7 +247,8 @@ export default function AutoEstimatorPage() {
   const insidePaperName = paperOptions.find((p) => p.id === (productKey === 'booklet' ? insidePaperId : selectedPaperId))?.name;
   const selectedMailing = mailingOptions.find((m) => m.id === selectedMailingId);
   const activePaperId = productKey === 'booklet' ? (insidePaperId || selectedPaperId) : selectedPaperId;
-  const activePaperName = paperOptions.find((p) => p.id === activePaperId)?.name;
+  const activePaper = paperOptions.find((p) => p.id === activePaperId);
+  const activePaperName = activePaper?.name;
 
   const productMeta: ProductMeta = useMemo(() => {
     return {
@@ -291,19 +305,31 @@ export default function AutoEstimatorPage() {
       setEstimates(mappedRoutes);
 
       if (best) {
-        setWinner(best);
-        if (!showPaperAdvanced && best.paperId) {
-          setSelectedPaperId(best.paperId);
+        setWinner(best as any);
+        seedWorksheetFromRoute(best as any);
+        if (!showPaperAdvanced && (best as any).paperId) {
+          setSelectedPaperId((best as any).paperId);
         }
       } else {
         setWinner(null);
+        setWorksheetLines([]);
       }
       setLastSavedQuoteId(null);
   };
 
+  const worksheetTotals = useMemo(() => {
+    const cost = worksheetLines.reduce((acc, l) => acc + (Number(l.cost) || 0), 0);
+    const price = worksheetLines.reduce((acc, l) => acc + (Number(l.price) || 0), 0);
+    const margin = price - cost;
+    const marginPct = price > 0 ? (margin / price) * 100 : 0;
+    return { cost, price, margin, marginPct };
+  }, [worksheetLines]);
+
+  const effectivePrice = worksheetLines.length ? worksheetTotals.price : winner?.totalPrice || 0;
+  const effectiveCost = worksheetLines.length ? worksheetTotals.cost : winner?.totalCost || 0;
+
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
   const quoteRecipient = selectedCustomer?.email || currentProfile?.email;
-  const winningPrice = winner?.totalPrice || 0;
 
   const buildQuotePayload = () => {
     if (!winner) throw new Error('No estimate ready to save.');
@@ -316,12 +342,12 @@ export default function AutoEstimatorPage() {
 
     const finishingDetail = winner.finishingDetail || (selectedFinishingIds.length ? finishingOptions.filter((f) => selectedFinishingIds.includes(f.id)).map((f) => f.name).join(', ') : 'None');
     const mailingDetail = winner.mailingDetail || (selectedMailing?.name || 'None');
-    const breakdown = winner.breakdown || [
+    const breakdown = worksheetLines.length > 0 ? worksheetLines.map((line) => ({ name: line.label, cost: line.cost, price: line.price, detail: line.detail || '' })) : (winner.breakdown || [
       { name: 'Paper', cost: winner.paperCost || 0, price: winner.paperPrice || 0, detail: winner.paperName },
       { name: 'Press', cost: winner.pressCost || 0, price: winner.pressPrice || 0, detail: winner.detail },
       { name: 'Finishing', cost: winner.finishingCost || 0, price: winner.finishingPrice || 0, detail: finishingDetail },
       { name: 'Mailing', cost: winner.mailingCost || 0, price: winner.mailingPrice || 0, detail: mailingDetail },
-    ];
+    ]);
 
     return {
       title,
@@ -330,9 +356,9 @@ export default function AutoEstimatorPage() {
       height: finishH,
       paper_stock: combinedPaperStock,
       production_method: winner.method,
-      total_cost: winner.totalCost,
-      total_price: winner.totalPrice,
-      cost_breakdown: { ...winner, product: productMeta, breakdown, finishingDetail, mailingDetail, routes: routeOptions },
+      total_cost: effectiveCost,
+      total_price: effectivePrice,
+      cost_breakdown: { ...winner, product: productMeta, breakdown, finishingDetail, mailingDetail, routes: routeOptions, worksheet: { lines: worksheetLines, totals: worksheetTotals } },
       status: 'Draft',
       user_id: selectedCustomerId || null,
       customer_email: selectedCustomer?.email || currentProfile?.email || null,
@@ -407,6 +433,18 @@ export default function AutoEstimatorPage() {
     }
   };
 
+  const updateLine = (id: string, key: 'label' | 'detail' | 'cost' | 'price', value: string) => {
+    setWorksheetLines((prev) => prev.map((line) => line.id === id ? { ...line, [key]: key === 'label' || key === 'detail' ? value : Number(value) } : line));
+  };
+
+  const removeLine = (id: string) => setWorksheetLines((prev) => prev.filter((l) => l.id !== id));
+
+  const addCustomLine = () => {
+    if (!newLine.label.trim()) return;
+    setWorksheetLines((prev) => [...prev, { id: `custom-${Date.now()}`, label: newLine.label.trim(), cost: Number(newLine.cost || 0), price: Number(newLine.price || 0), type: 'custom' }]);
+    setNewLine({ label: '', cost: '', price: '' });
+  };
+
   if (loadingBootstrap) {
     return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
   }
@@ -421,6 +459,7 @@ export default function AutoEstimatorPage() {
                 <h1 className="text-xl font-bold text-gray-900">Auto-Estimator</h1>
             </div>
             <div className="flex gap-2">
+                <Link href="/dashboard/pricing/paper-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Paper</Link>
                 <Link href="/dashboard/pricing" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><DollarSign size={16}/> Costs</Link>
                 <Link href="/dashboard/quotes" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> My Quotes</Link>
             </div>
@@ -571,13 +610,13 @@ export default function AutoEstimatorPage() {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                             <select value={coverPaperId} onChange={(e) => setCoverPaperId(e.target.value)} className="w-full border rounded p-2 text-sm bg-white">
                               {paperOptions.map(p => {
-                                const perSheet = asPerSheet(p.price_amount, p.cost_unit, 1);
+                                const perSheet = asPerSheet(p.price_amount, (p as any).cost_unit, 1);
                                 return <option key={p.id} value={p.id}>{p.name} ({formatCurrency(perSheet)}/sht{(p as any).__override ? ' • override' : ''})</option>;
                               })}
                             </select>
                             <select value={insidePaperId} onChange={(e) => setInsidePaperId(e.target.value)} className="w-full border rounded p-2 text-sm bg-white">
                               {paperOptions.map(p => {
-                                const perSheet = asPerSheet(p.price_amount, p.cost_unit, 1);
+                                const perSheet = asPerSheet(p.price_amount, (p as any).cost_unit, 1);
                                 return <option key={p.id} value={p.id}>{p.name} ({formatCurrency(perSheet)}/sht{(p as any).__override ? ' • override' : ''})</option>;
                               })}
                             </select>
@@ -585,8 +624,11 @@ export default function AutoEstimatorPage() {
                         ) : (
                           <select value={selectedPaperId} onChange={(e) => setSelectedPaperId(e.target.value)} className="w-full border rounded p-2 text-sm bg-white">
                               {paperOptions.map(p => {
-                                const perSheet = asPerSheet(p.price_amount, p.cost_unit, 1);
-                                return <option key={p.id} value={p.id}>{p.name} ({formatCurrency(perSheet)}/sht{(p as any).__override ? ' • override' : ''})</option>;
+                                const perSheet = asPerSheet(p.price_amount, (p as any).cost_unit, 1);
+                                const brandSku = [p.brand, p.sku].filter(Boolean).join(' • ');
+                                const weight = p.weight ? `${p.weight}#` : '';
+                                const cal = p.caliper ? `${p.caliper} cal` : '';
+                                return <option key={p.id} value={p.id}>{p.name}{brandSku ? ` (${brandSku})` : ''}{weight || cal ? ` • ${[weight, cal].filter(Boolean).join(' ')}` : ''} ({formatCurrency(perSheet)}/sht{(p as any).__override ? ' • override' : ''})</option>;
                               })}
                           </select>
                         )}
@@ -614,9 +656,6 @@ export default function AutoEstimatorPage() {
                         ))}
                         {finishingOptions.length === 0 && <p className="text-xs text-gray-400 italic">No finishing options found.</p>}
                     </div>
-                    <p className="mt-2 text-[11px] text-gray-500">
-                      Selected: {selectedFinishingIds.length > 0 ? finishingOptions.filter((f) => selectedFinishingIds.includes(f.id)).map((f) => f.name).join(', ') : 'None'}
-                    </p>
                 </div>
                 <div className="border rounded-lg p-3 bg-white">
                     <div className="flex items-center justify-between mb-2">
@@ -628,10 +667,6 @@ export default function AutoEstimatorPage() {
                     <p className="text-xs text-gray-600 mb-2">
                       {selectedMailing ? `Including mailing: ${selectedMailing.name}` : 'Choose a mailing option to add addressing/postage.'}
                     </p>
-                    <div className="mb-2 grid grid-cols-2 gap-2 text-[11px]">
-                      <div className="rounded border bg-gray-50 px-2 py-1 text-gray-600">Product: <span className="font-bold text-gray-900">{productMeta.customLabel || productMeta.label}</span></div>
-                      <div className="rounded border bg-gray-50 px-2 py-1 text-gray-600">Mailing status: <span className="font-bold text-gray-900">{selectedMailing ? 'Applied to route pricing' : 'Not included'}</span></div>
-                    </div>
                     <select 
                         value={selectedMailingId || ''} 
                         onChange={(e) => setSelectedMailingId(e.target.value || null)} 
@@ -669,8 +704,9 @@ export default function AutoEstimatorPage() {
                               </div>
                             <div className="text-right">
                                 <p className="text-xs font-bold text-green-600 uppercase mb-1">Client Price</p>
-                                <p className="text-4xl font-black text-green-900">${winner.totalPrice.toFixed(2)}</p>
-                                <p className="text-xs text-green-700 font-mono mt-1">${winner.unitCost.toFixed(3)} / unit</p>
+                                <p className="text-4xl font-black text-green-900">${effectivePrice.toFixed(2)}</p>
+                                <p className="text-xs text-green-700 font-mono mt-1">${(effectivePrice / quantity).toFixed(3)} / unit</p>
+                                <p className="text-[11px] text-green-700">Gross: ${(effectivePrice - effectiveCost >= 0 ? '' : '-')}${Math.abs(effectivePrice - effectiveCost).toFixed(2)} ({(effectivePrice ? ((effectivePrice - effectiveCost) / effectivePrice) * 100 : 0).toFixed(1)}%)</p>
                             </div>
                         </div>
 
@@ -712,17 +748,17 @@ export default function AutoEstimatorPage() {
                         )}
                         
                         <div className="mt-6 flex gap-1 h-2 rounded-full overflow-hidden">
-                            <div className="bg-blue-400 h-full" style={{ width: `${(winner.paperPrice / winner.totalPrice) * 100}%` }}></div>
-                            <div className="bg-orange-400 h-full" style={{ width: `${(winner.pressPrice / winner.totalPrice) * 100}%` }}></div>
+                            <div className="bg-blue-400 h-full" style={{ width: `${(winner.paperPrice / (winner.totalPrice || 1)) * 100}%` }}></div>
+                            <div className="bg-orange-400 h-full" style={{ width: `${(winner.pressPrice / (winner.totalPrice || 1)) * 100}%` }}></div>
                         </div>
                         
                         <div className="mt-6 pt-6 border-t border-green-200 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
                             <button onClick={handleSaveQuote} disabled={isSaving} className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg flex items-center gap-2 shadow-lg transition-all">
-                                {isSaving ? <Loader2 className="animate-spin" size={20}/> : <Save size={20}/>}
+                                {isSaving ? <Loader2 className="animate-spin" size={20}/> : <Save size={20}/>} 
                                 Save as Quote
                             </button>
                             <button onClick={handleEmailQuote} disabled={isEmailing || !quoteRecipient} className="bg-white border border-gray-300 hover:border-black text-gray-800 font-bold py-3 px-6 rounded-lg flex items-center gap-2 shadow-sm transition-all disabled:opacity-60">
-                                {isEmailing ? <Loader2 className="animate-spin" size={20}/> : <Mail size={20}/>}
+                                {isEmailing ? <Loader2 className="animate-spin" size={20}/> : <Mail size={20}/>} 
                                 Email quote
                             </button>
                         </div>
@@ -735,111 +771,125 @@ export default function AutoEstimatorPage() {
                     </div>
                 )}
 
-                {/* COMPARISON + DEBUG */}
+                {/* Worksheet */}
+                {winner && (
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><Table size={14}/> Estimator Worksheet</p>
+                        <p className="text-sm text-gray-500">Edit line items before saving. Totals drive the quote.</p>
+                      </div>
+                      <div className="text-right text-sm">
+                        <p className="font-semibold text-gray-900">${effectivePrice.toFixed(2)} total</p>
+                        <p className="text-xs text-gray-500">Gross {worksheetLines.length ? worksheetTotals.margin.toFixed(2) : (winner.totalPrice - winner.totalCost).toFixed(2)} ({worksheetLines.length ? worksheetTotals.marginPct.toFixed(1) : ((winner.totalPrice - winner.totalCost) / (winner.totalPrice || 1) * 100).toFixed(1)}%)</p>
+                      </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="text-left text-xs text-gray-500 font-bold border-b border-gray-100">
+                          <tr>
+                            <th className="px-4 py-2">Line</th>
+                            <th className="px-4 py-2">Detail</th>
+                            <th className="px-4 py-2">Cost</th>
+                            <th className="px-4 py-2">Price</th>
+                            <th className="px-4 py-2 text-right">Margin</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {worksheetLines.map((line) => (
+                            <tr key={line.id}>
+                              <td className="px-4 py-2">
+                                <input value={line.label} onChange={(e) => updateLine(line.id, 'label', e.target.value)} className="w-full border rounded px-2 py-1 text-sm" />
+                              </td>
+                              <td className="px-4 py-2">
+                                <input value={line.detail || ''} onChange={(e) => updateLine(line.id, 'detail', e.target.value)} className="w-full border rounded px-2 py-1 text-sm" />
+                              </td>
+                              <td className="px-4 py-2">
+                                <input type="number" value={line.cost} onChange={(e) => updateLine(line.id, 'cost', e.target.value)} className="w-full border rounded px-2 py-1 text-sm bg-red-50" />
+                              </td>
+                              <td className="px-4 py-2">
+                                <input type="number" value={line.price} onChange={(e) => updateLine(line.id, 'price', e.target.value)} className="w-full border rounded px-2 py-1 text-sm bg-green-50" />
+                              </td>
+                              <td className="px-4 py-2 text-right text-xs text-gray-500">
+                                {(line.price - line.cost).toFixed(2)}
+                                <button onClick={() => removeLine(line.id)} className="ml-2 text-gray-300 hover:text-red-600">×</button>
+                              </td>
+                            </tr>
+                          ))}
+                          {worksheetLines.length === 0 && (
+                            <tr><td colSpan={5} className="text-center text-gray-400 py-4">No worksheet entries yet. Using route economics.</td></tr>
+                          )}
+                        </tbody>
+                        <tfoot className="bg-gray-50 text-sm">
+                          <tr>
+                            <td colSpan={2} className="px-4 py-2 text-right font-bold">Totals</td>
+                            <td className="px-4 py-2 font-mono">${(worksheetLines.length ? worksheetTotals.cost : winner.totalCost).toFixed(2)}</td>
+                            <td className="px-4 py-2 font-mono">${(effectivePrice).toFixed(2)}</td>
+                            <td className="px-4 py-2 text-right font-mono text-gray-600">{(worksheetLines.length ? worksheetTotals.margin : (winner.totalPrice - winner.totalCost)).toFixed(2)} ({(worksheetLines.length ? worksheetTotals.marginPct : ((winner.totalPrice - winner.totalCost)/(winner.totalPrice||1)*100)).toFixed(1)}%)</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                    <div className="px-4 py-4 flex flex-col gap-3 border-t border-gray-100">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
+                        <input value={newLine.label} onChange={(e) => setNewLine({ ...newLine, label: e.target.value })} placeholder="Add line item" className="md:col-span-2 border rounded px-3 py-2 text-sm" />
+                        <input type="number" value={newLine.cost} onChange={(e) => setNewLine({ ...newLine, cost: e.target.value })} placeholder="Cost" className="border rounded px-3 py-2 text-sm" />
+                        <input type="number" value={newLine.price} onChange={(e) => setNewLine({ ...newLine, price: e.target.value })} placeholder="Price" className="border rounded px-3 py-2 text-sm" />
+                      </div>
+                      <div className="flex flex-wrap gap-2 justify-between items-center">
+                        <div className="flex gap-2">
+                          <button onClick={addCustomLine} className="px-3 py-2 bg-black text-white rounded-lg text-sm font-bold flex items-center gap-2"><PlusCircle size={16}/> Add Line</button>
+                          <button onClick={() => seedWorksheetFromRoute(winner)} className="px-3 py-2 bg-white border rounded-lg text-sm font-bold flex items-center gap-2 text-gray-700"><RefreshCcw size={14}/> Reset to Route</button>
+                        </div>
+                        <div className="text-right text-xs text-gray-600">
+                          <p>Unit sell: ${(effectivePrice / quantity).toFixed(3)} • Unit cost: ${(effectiveCost / quantity).toFixed(3)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* COMPARISON TABLE */}
                 {estimates.length > 0 && (
-                    <div className="space-y-4">
-                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                            <button
-                              type="button"
-                              onClick={() => setShowRouteComparison(!showRouteComparison)}
-                              className="w-full px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between text-left"
-                            >
-                              <div>
-                                <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><GitCompareArrows size={14}/> Route Comparison</h3>
-                                <p className="text-sm text-gray-600 mt-1">Make the production decision obvious. Winner first, then deltas against it.</p>
-                              </div>
-                              {showRouteComparison ? <ChevronUp size={18} className="text-gray-500" /> : <ChevronDown size={18} className="text-gray-500" />}
-                            </button>
-
-                            {showRouteComparison && (
-                              <div className="p-4 space-y-3 bg-gray-50/60">
-                                {estimates.map((est, i) => {
-                                  const delta = (est.totalPrice || 0) - winningPrice;
-                                  const isWinner = i === 0;
-                                  return (
-                                    <div key={i} className={`rounded-xl border p-4 ${isWinner ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white'}`}>
-                                      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
-                                        <div className="space-y-2">
-                                          <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="text-base font-bold text-gray-900">{est.method}</span>
-                                            {isWinner && <span className="bg-green-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">CHEAPEST</span>}
-                                            {!isWinner && <span className="bg-gray-100 text-gray-700 text-[10px] px-2 py-0.5 rounded-full font-bold">+{formatCurrency(delta)} vs winner</span>}
-                                          </div>
-                                          <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-2 text-xs">
-                                            <div className="rounded-lg border bg-white/80 px-3 py-2"><span className="block text-gray-500 uppercase font-bold text-[10px]">Layout</span><span className="font-semibold text-gray-900">{est.nUp}-up on {est.usableSheet}</span></div>
-                                            <div className="rounded-lg border bg-white/80 px-3 py-2"><span className="block text-gray-500 uppercase font-bold text-[10px]">Sheets</span><span className="font-semibold text-gray-900">{est.sheetsNeeded} + {est.overs} = {est.totalSheets}</span></div>
-                                            <div className="rounded-lg border bg-white/80 px-3 py-2"><span className="block text-gray-500 uppercase font-bold text-[10px]">Paper</span><span className="font-semibold text-gray-900">{est.paperName}</span></div>
-                                            <div className="rounded-lg border bg-white/80 px-3 py-2"><span className="block text-gray-500 uppercase font-bold text-[10px]">Mailing</span><span className="font-semibold text-gray-900">{est.mailingDetail || 'None'}</span></div>
-                                          </div>
-                                          <p className="text-xs text-gray-600">{est.detail}</p>
-                                        </div>
-                                        <div className="lg:text-right min-w-[150px]">
-                                          <p className="text-[11px] uppercase font-bold text-gray-500">Sell Price</p>
-                                          <p className="text-2xl font-black text-gray-900">{formatCurrency(est.totalPrice)}</p>
-                                          <p className="text-xs text-gray-500 font-mono">{formatCurrency(est.unitCost)}/ea</p>
-                                        </div>
-                                      </div>
-                                      <div className="mt-3 grid sm:grid-cols-4 gap-2 text-xs">
-                                        <div className="rounded-lg bg-white border px-3 py-2"><span className="block text-[10px] uppercase font-bold text-gray-500">Paper</span><span className="font-semibold text-gray-900">{formatCurrency(est.paperPrice)}</span></div>
-                                        <div className="rounded-lg bg-white border px-3 py-2"><span className="block text-[10px] uppercase font-bold text-gray-500">Press</span><span className="font-semibold text-gray-900">{formatCurrency(est.pressPrice)}</span></div>
-                                        <div className="rounded-lg bg-white border px-3 py-2"><span className="block text-[10px] uppercase font-bold text-gray-500">Finishing</span><span className="font-semibold text-gray-900">{formatCurrency(est.finishingPrice)}</span></div>
-                                        <div className="rounded-lg bg-white border px-3 py-2"><span className="block text-[10px] uppercase font-bold text-gray-500">Mailing</span><span className="font-semibold text-gray-900">{formatCurrency(est.mailingPrice)}</span></div>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                        <div className="px-6 py-3 border-b border-gray-100 bg-gray-50">
+                            <h3 className="text-xs font-bold uppercase text-gray-500">Comparison Logic</h3>
                         </div>
-
-                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                            <button
-                              type="button"
-                              onClick={() => setShowRouteDebug(!showRouteDebug)}
-                              className="w-full px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between text-left"
-                            >
-                              <div>
-                                <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><Bug size={14}/> Debug Breakdown</h3>
-                                <p className="text-sm text-gray-600 mt-1">For estimators only. Raw cost lines so you can spot bad units, weird overs, or a broken route.</p>
-                              </div>
-                              {showRouteDebug ? <ChevronUp size={18} className="text-gray-500" /> : <ChevronDown size={18} className="text-gray-500" />}
-                            </button>
-
-                            {showRouteDebug && (
-                              <div className="divide-y divide-gray-100">
+                        <table className="w-full text-sm">
+                            <thead className="text-left text-xs text-gray-400 font-bold border-b border-gray-100">
+                                <tr>
+                                    <th className="px-6 py-2">Method</th>
+                                    <th className="px-6 py-2">Layout</th>
+                                    <th className="px-6 py-2">Sheets</th>
+                                    <th className="px-6 py-2">Details</th>
+                                    <th className="px-6 py-2 text-right">Price</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-50">
                                 {estimates.map((est, i) => (
-                                  <div key={i} className="p-4">
-                                    <div className="flex items-center justify-between mb-3">
-                                      <div>
-                                        <p className="font-bold text-gray-900">{est.method} {i === 0 && <span className="ml-2 bg-green-200 text-green-800 text-[9px] px-1.5 py-0.5 rounded">WINNER</span>}</p>
-                                        <p className="text-xs text-gray-500">{est.paperName} • {est.nUp}-up • {est.sheetsNeeded}+{est.overs} overs</p>
-                                      </div>
-                                      <div className="text-right">
-                                        <p className="text-sm font-bold text-gray-900">{formatCurrency(est.totalPrice)}</p>
-                                        <p className="text-[11px] text-gray-500">Cost {formatCurrency(est.totalCost)}</p>
-                                      </div>
-                                    </div>
-                                    <div className="grid md:grid-cols-2 gap-3">
-                                      {(est.breakdown || []).map((item: any) => (
-                                        <div key={item.name} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                                          <div className="flex items-start justify-between gap-3">
-                                            <div>
-                                              <p className="text-[10px] uppercase font-bold text-gray-500">{item.name}</p>
-                                              <p className="text-sm font-medium text-gray-900">{item.detail}</p>
-                                            </div>
-                                            <div className="text-right text-xs font-mono">
-                                              <p className="font-bold text-gray-900">Sell {formatCurrency(item.price)}</p>
-                                              <p className="text-gray-500">Cost {formatCurrency(item.cost)}</p>
-                                            </div>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
+                                    <tr key={i} className={`hover:bg-gray-50 ${i === 0 ? 'bg-green-50/50' : ''}`}>
+                                        <td className="px-6 py-3 font-bold text-gray-900">
+                                            {est.method}
+                                            {i === 0 && <span className="ml-2 bg-green-200 text-green-800 text-[9px] px-1.5 py-0.5 rounded">WINNER</span>}
+                                        </td>
+                                        <td className="px-6 py-3 text-gray-600 text-xs">
+                                            {est.nUp}-up on {est.usableSheet} usable ({est.sheet})
+                                        </td>
+                                        <td className="px-6 py-3 text-gray-600 text-xs">
+                                            {est.sheetsNeeded} + {est.overs} overs = {est.totalSheets}
+                                        </td>
+                                        <td className="px-6 py-3 text-gray-500 text-xs">
+                                          {est.detail}
+                                          {est.mailingDetail && est.mailingDetail !== 'None' && <span className="ml-2 text-gray-600">• Mailing: {est.mailingDetail}</span>}
+                                        </td>
+                                        <td className="px-6 py-3 text-right font-mono font-bold text-gray-900">
+                                            ${est.totalPrice.toFixed(2)}
+                                            <div className="text-[11px] text-gray-500">${est.unitCost.toFixed(3)} ea</div>
+                                        </td>
+                                    </tr>
                                 ))}
-                              </div>
-                            )}
-                        </div>
+                            </tbody>
+                        </table>
                     </div>
                 )}
             </div>

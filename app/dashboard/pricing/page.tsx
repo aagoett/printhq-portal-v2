@@ -24,6 +24,12 @@ export default function PricingBuilderPage() {
   const [sheetW, setSheetW] = useState('');
   const [sheetH, setSheetH] = useState('');
 
+  const asPerSheet = (value: number, unit?: string) => {
+    const val = Number(value || 0);
+    return unit === 'per_1000' ? val / 1000 : val;
+  };
+  const fmtMoney = (value: number) => `$${Number(value || 0).toFixed(value >= 1 ? 2 : 4)}`;
+
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -72,6 +78,7 @@ export default function PricingBuilderPage() {
       if (error) alert(error.message);
       else {
           setNewName(''); setNewCost(''); setNewPrice('');
+          setNewUnit('per_sheet');
           setSetupMins(''); setRunSpeed(''); setSheetW(''); setSheetH('');
           fetchData();
       }
@@ -100,6 +107,7 @@ export default function PricingBuilderPage() {
             </div>
             <div className="flex gap-2">
                 <Link href="/dashboard/pricing" className="px-4 py-2 bg-black text-white rounded-lg text-sm font-bold flex items-center gap-2"><DollarSign size={16}/> Costs</Link>
+                <Link href="/dashboard/pricing/paper-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Paper Catalog</Link>
                 <Link href="/dashboard/pricing/products" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Recipes</Link>
                 <Link href="/dashboard/pricing/estimator" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><Calculator size={16}/> Estimator</Link>
             </div>
@@ -141,6 +149,16 @@ export default function PricingBuilderPage() {
                                 <input type="number" placeholder="0.10" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} className="w-full border border-green-100 bg-green-50 rounded-lg pl-6 pr-3 py-2 text-sm outline-none focus:border-green-500"/>
                             </div>
                         </div>
+
+                        {isPaper && (
+                          <div>
+                            <label className="block text-xs font-bold text-purple-700 mb-1">Price Basis</label>
+                            <select value={newUnit} onChange={(e) => setNewUnit(e.target.value)} className="w-full border border-purple-200 bg-purple-50 rounded-lg px-3 py-2 text-sm font-bold text-purple-800">
+                              <option value="per_sheet">Per Sheet</option>
+                              <option value="per_1000">Per 1,000</option>
+                            </select>
+                          </div>
+                        )}
 
                         {/* TYPE SELECTOR (Crucial Fix) */}
                         {isPress && (
@@ -188,11 +206,27 @@ export default function PricingBuilderPage() {
                                         {comp.name}
                                         {comp.type !== 'other' && <span className="ml-2 text-[10px] uppercase bg-gray-100 px-1.5 py-0.5 rounded text-gray-500 font-bold">{comp.type.replace('press_', '')}</span>}
                                     </td>
-                                    <td className="px-6 py-4 text-red-600 font-mono text-xs">${comp.cost_amount}</td>
-                                    <td className="px-6 py-4"><span className="bg-green-50 text-green-700 px-2 py-1 rounded border border-green-200 font-mono font-bold">${comp.price_amount}</span></td>
+                                    <td className="px-6 py-4 text-red-600 font-mono text-xs">
+                                      {isPaper ? (
+                                        <>
+                                          {fmtMoney(asPerSheet(comp.cost_amount, comp.cost_unit))} /sht
+                                          <span className="text-gray-400"> ({fmtMoney(asPerSheet(comp.cost_amount, comp.cost_unit) * 1000)} /M)</span>
+                                        </>
+                                      ) : `$${comp.cost_amount}`}
+                                    </td>
+                                    <td className="px-6 py-4">
+                                      {isPaper ? (
+                                        <span className="bg-green-50 text-green-700 px-2 py-1 rounded border border-green-200 font-mono font-bold">
+                                          {fmtMoney(asPerSheet(comp.price_amount, comp.cost_unit))} /sht
+                                        </span>
+                                      ) : (
+                                        <span className="bg-green-50 text-green-700 px-2 py-1 rounded border border-green-200 font-mono font-bold">${comp.price_amount}</span>
+                                      )}
+                                    </td>
                                     <td className="px-6 py-4 text-xs text-gray-500">
                                         {comp.parent_sheet_width > 0 && <span>{comp.parent_sheet_width}x{comp.parent_sheet_height}"</span>}
-                                        {comp.run_speed_per_hour > 0 && <span>{comp.run_speed_per_hour}/hr</span>}
+                                        {comp.run_speed_per_hour > 0 && <span className="ml-2">{comp.run_speed_per_hour}/hr</span>}
+                                        {comp.cost_unit && <span className="ml-2 uppercase text-[10px] text-gray-400">{comp.cost_unit}</span>}
                                     </td>
                                     <td className="px-6 py-4 text-right"><button onClick={() => handleDelete(comp.id)} className="text-gray-300 hover:text-red-600"><Trash2 size={16} /></button></td>
                                 </tr>
