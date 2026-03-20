@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
   Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, 
-  Briefcase, Plus, ShoppingCart, Clock, ChevronRight, Layers, Ruler,
+  Briefcase, Building2, Plus, ShoppingCart, Clock, ChevronRight, Layers, Ruler,
   ArrowUpDown, ArrowUp, ArrowDown, ExternalLink, Calculator, MessageSquare, Send, Sparkles, Paperclip, Bot
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -1161,9 +1161,11 @@ export default function Dashboard() {
           {isInternal && <NavItem icon={<MessageSquare size={20} />} label="Intake" href="/dashboard/intake" />}
           {isInternal && <NavItem icon={<Calculator size={20} />} label="Estimator" href="/dashboard/pricing/estimator" />}
           <NavItem icon={<FileText size={20} />} label="Quotes" href="/dashboard/quotes" />
-          {isInternal && <NavItem icon={<Briefcase size={20} />} label="Invoices" href="/dashboard/invoices" />}
+          {isInternal ? <NavItem icon={<Briefcase size={20} />} label="Invoices" href="/dashboard/invoices" /> : <NavItem icon={<Briefcase size={20} />} label="Invoices" href="/dashboard/invoices" />}
+          {!isInternal && <NavItem icon={<MessageSquare size={20} />} label="Messages" href="/dashboard/messages" />}
+          {isInternal && <NavItem icon={<Building2 size={20} />} label="Organizations" href="/dashboard/organizations" />}
           {isInternal && <NavItem icon={<User size={20} />} label="Customers" href="/dashboard/customers" />}
-          {isInternal && <NavItem icon={<Settings size={20} />} label="Settings" href="/dashboard/settings" />}
+          <NavItem icon={<Settings size={20} />} label="Settings" href="/dashboard/settings" />
         </nav>
         <div className="p-4 border-t border-gray-100">
           <button onClick={handleSignOut} className="flex w-full items-center px-4 py-3 text-sm font-medium text-gray-500 hover:text-red-600 transition-colors"><LogOut size={20} className="mr-3" /> Sign out</button>
