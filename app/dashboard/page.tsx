@@ -19,6 +19,14 @@ import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTempl
 import { applyPricingProfileToRoute, calculateProposals, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
 import { getCustomerClassDefaultProfile, normalizeCustomerClass } from '@/lib/customerClass';
 
+// --- ROUTING VOCABULARY ---
+const DEFAULT_ROUTE_LIBRARY: { group: string; steps: string[] }[] = [
+  { group: 'Prepress', steps: ['Prepress', 'Proof'] },
+  { group: 'Press', steps: ['Digital Press', 'Offset Press', 'Wide Format'] },
+  { group: 'Bindery', steps: ['Cut/Trim', 'Score', 'Fold', 'Perf', 'Booklet Stitch', 'Drill', 'Lamination', 'Shrinkwrap / Kitting'] },
+  { group: 'Mailing', steps: ['Addressing', 'Tabbing', 'Mail Prep'] },
+  { group: 'QC & Ship', steps: ['QC', 'Ready for Pickup/Ship'] },
+];
 
 // --- TYPES ---
 type Job = {
@@ -120,6 +128,13 @@ export default function Dashboard() {
   const [jobQty, setJobQty] = useState('');
   const [jobSize, setJobSize] = useState('');
   const [jobNotes, setJobNotes] = useState('');
+  const [routeStepsDraft, setRouteStepsDraft] = useState<string[]>([]);
+  const [routeDraftLocked, setRouteDraftLocked] = useState(false);
+  const [routePresets, setRoutePresets] = useState<Record<string, string[]>>({});
+  const [routeStepPicker, setRouteStepPicker] = useState('');
+  const [routeEditItemId, setRouteEditItemId] = useState<string | null>(null);
+  const [routeEditDraft, setRouteEditDraft] = useState<string[]>([]);
+  const [routeEditPicker, setRouteEditPicker] = useState('');
     
   // PAPER STOCK LOGIC
   const [selectedStockId, setSelectedStockId] = useState('');
@@ -157,6 +172,10 @@ export default function Dashboard() {
   }, [selectedTemplate]);
 
   useEffect(() => {
+    setRouteDraftLocked(false);
+  }, [selectedTemplate?.key]);
+
+  useEffect(() => {
     fetchDashboardData();
   }, []);
 
@@ -168,16 +187,39 @@ export default function Dashboard() {
 
   const buildRoutePreview = (template: any, finishing: string[] = [], mailing?: boolean) => {
     const steps: string[] = ['Prepress'];
-    if (template?.name) steps.push(template.name);
-    steps.push('Print');
-    if (finishing && finishing.length > 0) steps.push('Finishing');
+    const pressStep = template?.key === 'wide_format' ? 'Wide Format Press' : 'Press';
+    steps.push(pressStep);
+    if (finishing && finishing.length > 0) steps.push('Bindery / Finishing');
     if (mailing) steps.push('Mail Prep');
     steps.push('QC');
     steps.push('Ready for Pickup/Ship');
     return steps;
   };
 
-  const currentRoutePreview = useMemo(() => buildRoutePreview(selectedTemplate, fieldValues.finishing || [], fieldValues.mailing), [selectedTemplate, fieldValues]);
+  const routeVocabulary = useMemo(() => {
+    if (workflowOptions && workflowOptions.length > 0) {
+      return workflowOptions
+        .map((queue) => ({
+          group: queue.queue_name || queue.name || 'Steps',
+          steps: Array.isArray(queue.steps) && queue.steps.length ? queue.steps : (queue.name ? [queue.name] : []),
+        }))
+        .filter((g) => g.steps.length);
+    }
+    return DEFAULT_ROUTE_LIBRARY;
+  }, [workflowOptions]);
+
+  const defaultRouteForDraft = useMemo(() => {
+    const presetKey = (selectedTemplate?.key as string) || '';
+    const preset = presetKey && routePresets[presetKey];
+    if (preset && preset.length) return preset;
+    return buildRoutePreview(selectedTemplate, fieldValues.finishing || [], fieldValues.mailing);
+  }, [selectedTemplate, fieldValues?.finishing, fieldValues?.mailing, routePresets]);
+
+  useEffect(() => {
+    if (!routeDraftLocked) {
+      setRouteStepsDraft(defaultRouteForDraft);
+    }
+  }, [defaultRouteForDraft, routeDraftLocked]);
 
   const fetchDashboardData = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -383,6 +425,9 @@ export default function Dashboard() {
     setJobQty('');
     setJobSize('');
     setJobNotes('');
+    setRouteDraftLocked(false);
+    setRouteStepsDraft(defaultRouteForDraft);
+    setRouteStepPicker('');
     if (stockLibrary.length > 0) setSelectedStockId(stockLibrary[0].name);
     setCustomStockValue('');
     setFieldValues({});
@@ -430,6 +475,82 @@ export default function Dashboard() {
     }
   };
 
+  const reorderSteps = (steps: string[], index: number, direction: 'up' | 'down') => {
+    const newSteps = [...steps];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= newSteps.length) return newSteps;
+    [newSteps[index], newSteps[targetIndex]] = [newSteps[targetIndex], newSteps[index]];
+    return newSteps;
+  };
+
+  const addRouteStep = (step: string) => {
+    if (!step) return;
+    setRouteDraftLocked(true);
+    setRouteStepsDraft(prev => [...prev, step]);
+    setRouteStepPicker('');
+  };
+
+  const removeRouteStep = (index: number) => {
+    setRouteDraftLocked(true);
+    setRouteStepsDraft(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const moveRouteStep = (index: number, direction: 'up' | 'down') => {
+    setRouteDraftLocked(true);
+    setRouteStepsDraft(prev => reorderSteps(prev, index, direction));
+  };
+
+  const resetRouteDraft = () => {
+    setRouteDraftLocked(false);
+    setRouteStepsDraft(defaultRouteForDraft);
+    setRouteStepPicker('');
+  };
+
+  const saveRoutePresetForProduct = () => {
+    if (!selectedTemplate?.key) return;
+    setRoutePresets(prev => ({ ...prev, [selectedTemplate.key]: routeStepsDraft }));
+  };
+
+  const openRouteEditorForItem = (item: CartItem) => {
+    setRouteEditItemId(item.id);
+    const template = getTemplate(item.product_key as ProductTemplateKey, PRODUCT_TEMPLATES);
+    const preset = routePresets[item.product_key as string];
+    const fallback = preset && preset.length ? preset : buildRoutePreview(template, item.finishing || [], item.mailing);
+    setRouteEditDraft(item.route_steps && item.route_steps.length ? item.route_steps : fallback);
+    setRouteEditPicker('');
+  };
+
+  const applyRouteEditToItem = () => {
+    if (!routeEditItemId) return;
+    setCart(prev => prev.map(item => item.id === routeEditItemId ? { ...item, route_steps: routeEditDraft } : item));
+    setRouteEditItemId(null);
+    setRouteEditDraft([]);
+  };
+
+  const resetRouteEditToDefault = () => {
+    if (!routeEditItemId) return;
+    const item = cart.find(c => c.id === routeEditItemId);
+    if (!item) return;
+    const template = getTemplate(item.product_key as ProductTemplateKey, PRODUCT_TEMPLATES);
+    const preset = routePresets[item.product_key as string];
+    const fallback = preset && preset.length ? preset : buildRoutePreview(template, item.finishing || [], item.mailing);
+    setRouteEditDraft(fallback);
+  };
+
+  const addRouteEditStep = (step: string) => {
+    if (!step) return;
+    setRouteEditDraft(prev => [...prev, step]);
+    setRouteEditPicker('');
+  };
+
+  const removeRouteEditStep = (index: number) => {
+    setRouteEditDraft(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const moveRouteEditStep = (index: number, direction: 'up' | 'down') => {
+    setRouteEditDraft(prev => reorderSteps(prev, index, direction));
+  };
+
   const updateFieldValue = (key: string, value: any) => {
     setFieldValues(prev => ({ ...prev, [key]: value }));
   };
@@ -452,7 +573,7 @@ export default function Dashboard() {
       ? `${customWidth} x ${customHeight}`
       : (selectedSizeLabel || jobSize || 'N/A');
 
-    const routeSteps = buildRoutePreview(selectedTemplate, fieldValues.finishing || [], fieldValues.mailing);
+    const routeSteps = routeStepsDraft.length ? routeStepsDraft : defaultRouteForDraft;
 
     const newItem: CartItem = {
       id: Math.random().toString(36),
@@ -467,7 +588,7 @@ export default function Dashboard() {
       finishing: fieldValues.finishing || [],
       mailing: !!fieldValues.mailing,
       mailingNotes: fieldValues.mailingNotes,
-      route_steps: routeSteps,
+      route_steps: [...routeSteps],
       artworkStatus: waitingOnArt || !currentFile ? 'Waiting on Art' : 'Uploaded'
     };
 
@@ -477,6 +598,10 @@ export default function Dashboard() {
 
   const handleRemoveFromCart = (id: string) => {
     setCart(cart.filter(item => item.id !== id));
+    if (routeEditItemId === id) {
+      setRouteEditItemId(null);
+      setRouteEditDraft([]);
+    }
   };
 
   // --- SUBMIT LOGIC ---
@@ -734,11 +859,43 @@ export default function Dashboard() {
                                {item.finishing && item.finishing.length > 0 && <span className="px-2 py-1 rounded-full bg-blue-50 border border-blue-100">Finishing: {item.finishing.join(', ')}</span>}
                                {item.mailing && <span className="px-2 py-1 rounded-full bg-purple-50 border border-purple-100">Mailing</span>}
                              </div>
-                             <div className="flex flex-wrap gap-1 mt-1">
-                               {item.route_steps?.map((step) => (
-                                 <span key={step} className="text-[10px] px-2 py-1 rounded-full bg-gray-50 border border-gray-200 text-gray-600 font-bold uppercase tracking-wide">{step}</span>
+                             <div className="flex flex-wrap gap-2 mt-1 items-center">
+                               <span className="text-[10px] font-black uppercase text-gray-400">Route</span>
+                               {item.route_steps?.map((step, idx) => (
+                                 <span key={`${step}-${idx}`} className="text-[10px] px-2 py-1 rounded-full bg-gray-50 border border-gray-200 text-gray-600 font-bold uppercase tracking-wide">{step}</span>
                                ))}
+                               <button onClick={() => openRouteEditorForItem(item)} className="text-[10px] font-bold text-blue-600 hover:underline">Edit Route</button>
                              </div>
+                             {routeEditItemId === item.id && (
+                               <div className="mt-2 w-full bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
+                                 <div className="flex flex-col gap-2">
+                                   {routeEditDraft.map((step, idx) => (
+                                     <div key={`${step}-${idx}`} className="flex items-center gap-2">
+                                       <div className="flex flex-col">
+                                         <button onClick={() => moveRouteEditStep(idx, 'up')} disabled={idx === 0} className="p-1 rounded bg-white border text-[10px] disabled:opacity-30">↑</button>
+                                         <button onClick={() => moveRouteEditStep(idx, 'down')} disabled={idx === routeEditDraft.length - 1} className="p-1 rounded bg-white border text-[10px] disabled:opacity-30">↓</button>
+                                       </div>
+                                       <span className="flex-1 text-xs font-bold bg-white border border-gray-200 rounded-full px-3 py-1">{step}</span>
+                                       <button onClick={() => removeRouteEditStep(idx)} className="text-[11px] text-red-500 font-bold px-2">×</button>
+                                     </div>
+                                   ))}
+                                   {routeEditDraft.length === 0 && <p className="text-[11px] text-gray-400">No steps yet.</p>}
+                                 </div>
+                                 <div className="flex flex-wrap gap-2 items-center">
+                                   <select value={routeEditPicker} onChange={(e) => setRouteEditPicker(e.target.value)} className="flex-1 text-xs p-2 rounded-lg border border-gray-300 bg-white">
+                                     <option value="">+ Add step...</option>
+                                     {routeVocabulary.map((group) => (
+                                       <optgroup key={group.group} label={group.group}>
+                                         {group.steps.map((s) => (<option key={s} value={s}>{s}</option>))}
+                                       </optgroup>
+                                     ))}
+                                   </select>
+                                   <button type="button" onClick={() => addRouteEditStep(routeEditPicker)} disabled={!routeEditPicker} className="text-[11px] px-3 py-2 rounded bg-black text-white font-bold disabled:opacity-40">Add</button>
+                                   <button type="button" onClick={resetRouteEditToDefault} className="text-[11px] px-3 py-2 rounded bg-white border font-bold">Reset Default</button>
+                                   <button type="button" onClick={applyRouteEditToItem} className="text-[11px] px-3 py-2 rounded bg-blue-600 text-white font-bold">Save</button>
+                                 </div>
+                               </div>
+                             )}
                            </div>
                          </div>
                          <div className="flex items-center gap-4">
@@ -937,11 +1094,41 @@ export default function Dashboard() {
                     </div>
 
                     <div className="space-y-2">
-                      <p className="text-[11px] font-bold uppercase text-gray-500">Route Preview</p>
-                      <div className="flex flex-wrap gap-2">
-                        {currentRoutePreview.map(step => (
-                          <span key={step} className="px-3 py-1 rounded-full bg-gray-50 border border-gray-200 text-[11px] font-bold text-gray-700 uppercase tracking-wide">{step}</span>
-                        ))}
+                      <div className="flex items-center justify-between">
+                        <p className="text-[11px] font-bold uppercase text-gray-500">Route Plan</p>
+                        <div className="flex items-center gap-2 text-[10px]">
+                          <button type="button" onClick={resetRouteDraft} className="px-2 py-1 rounded bg-white border text-gray-600 font-bold hover:bg-gray-100">Reset to Auto</button>
+                          {selectedTemplate?.key && (
+                            <button type="button" onClick={saveRoutePresetForProduct} className="px-2 py-1 rounded bg-gray-900 text-white font-bold">Save as Product Default</button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="space-y-2 bg-gray-50 border border-gray-200 rounded-xl p-3">
+                        <div className="flex flex-col gap-2">
+                          {routeStepsDraft.map((step, idx) => (
+                            <div key={`${step}-${idx}`} className="flex items-center gap-2">
+                              <div className="flex flex-col">
+                                <button type="button" onClick={() => moveRouteStep(idx, 'up')} disabled={idx === 0} className="p-1 rounded bg-white border text-[10px] disabled:opacity-30">↑</button>
+                                <button type="button" onClick={() => moveRouteStep(idx, 'down')} disabled={idx === routeStepsDraft.length - 1} className="p-1 rounded bg-white border text-[10px] disabled:opacity-30">↓</button>
+                              </div>
+                              <span className="flex-1 text-xs font-bold bg-white border border-gray-200 rounded-full px-3 py-1">{step}</span>
+                              <button type="button" onClick={() => removeRouteStep(idx)} className="text-[11px] text-red-500 font-bold px-2">×</button>
+                            </div>
+                          ))}
+                          {routeStepsDraft.length === 0 && <p className="text-[11px] text-gray-400">Add steps to define the route.</p>}
+                        </div>
+                        <div className="flex flex-wrap gap-2 items-center">
+                          <select value={routeStepPicker} onChange={(e) => setRouteStepPicker(e.target.value)} className="flex-1 text-xs p-2 rounded-lg border border-gray-300 bg-white">
+                            <option value="">+ Add step...</option>
+                            {routeVocabulary.map((group) => (
+                              <optgroup key={group.group} label={group.group}>
+                                {group.steps.map((s) => (<option key={s} value={s}>{s}</option>))}
+                              </optgroup>
+                            ))}
+                          </select>
+                          <button type="button" onClick={() => addRouteStep(routeStepPicker)} disabled={!routeStepPicker} className="text-[11px] px-3 py-2 rounded bg-black text-white font-bold disabled:opacity-40">Add Step</button>
+                          <span className="text-[10px] text-gray-400">Auto-built from product/finishing/mailing. Edits stay per item.</span>
+                        </div>
                       </div>
                     </div>
                     
