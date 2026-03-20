@@ -119,6 +119,15 @@ export default function AutoEstimatorPage() {
     return raw;
   };
 
+  const paperSellPerSheet = (paper: any) => {
+    const baseCost = asPerSheet(paper?.cost_amount, (paper as any)?.cost_unit, 1);
+    const overrideValue = paper?.price_override ?? paper?.price_amount;
+    const baseSell = overrideValue != null
+      ? asPerSheet(overrideValue, (paper as any)?.price_unit || (paper as any)?.cost_unit, 1)
+      : baseCost;
+    return overrideValue != null ? baseSell : baseCost * (PRICING_PROFILES[pricingProfile] ?? 1);
+  };
+
   const effectiveCustomerClass = normalizeCustomerClass(
     customers.find((c) => c.id === selectedCustomerId)?.customer_class || currentProfile?.customer_class
   );
@@ -246,7 +255,7 @@ export default function AutoEstimatorPage() {
   };
 
   const fetchInventory = async () => {
-    const { data: pData } = await supabase.from('pricing_components').select('*').eq('type', 'paper').order('name');
+    const { data: pData } = await supabase.from('paper_catalog').select('*').order('name');
     const { data: mData } = await supabase.from('pricing_components').select('*').in('type', ['press_digital', 'press_offset']);
     const { data: fData } = await supabase.from('pricing_components').select('*').eq('type', 'finishing').order('name');
     const { data: mailData } = await supabase.from('pricing_components').select('*').eq('type', 'mailing').order('name');
@@ -823,13 +832,13 @@ export default function AutoEstimatorPage() {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                             <select value={coverPaperId} onChange={(e) => setCoverPaperId(e.target.value)} className="w-full border rounded p-2 text-sm bg-white">
                               {paperOptions.map(p => {
-                                const perSheet = asPerSheet(p.price_amount, (p as any).cost_unit, 1);
+                                const perSheet = paperSellPerSheet(p);
                                 return <option key={p.id} value={p.id}>{p.name} ({formatCurrency(perSheet)}/sht{(p as any).__override ? ' • override' : ''})</option>;
                               })}
                             </select>
                             <select value={insidePaperId} onChange={(e) => setInsidePaperId(e.target.value)} className="w-full border rounded p-2 text-sm bg-white">
                               {paperOptions.map(p => {
-                                const perSheet = asPerSheet(p.price_amount, (p as any).cost_unit, 1);
+                                const perSheet = paperSellPerSheet(p);
                                 return <option key={p.id} value={p.id}>{p.name} ({formatCurrency(perSheet)}/sht{(p as any).__override ? ' • override' : ''})</option>;
                               })}
                             </select>
@@ -837,7 +846,7 @@ export default function AutoEstimatorPage() {
                         ) : (
                           <select value={selectedPaperId} onChange={(e) => setSelectedPaperId(e.target.value)} className="w-full border rounded p-2 text-sm bg-white">
                               {paperOptions.map(p => {
-                                const perSheet = asPerSheet(p.price_amount, (p as any).cost_unit, 1);
+                                const perSheet = paperSellPerSheet(p);
                                 const brandSku = [p.brand, p.sku].filter(Boolean).join(' • ');
                                 const weight = p.weight ? `${p.weight}#` : '';
                                 const cal = p.caliper ? `${p.caliper} cal` : '';

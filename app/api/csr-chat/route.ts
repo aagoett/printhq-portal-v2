@@ -43,8 +43,9 @@ export async function POST(req: NextRequest) {
 
   const supabase = createClient();
 
+  const { data: paperRows = [] } = await supabase.from('paper_catalog').select('*');
   const { data: pricingRows = [] } = await supabase.from('pricing_components').select('*');
-  const papers = pricingRows.filter((p: any) => p.type === 'paper');
+  const papers = (paperRows || []).map((p: any) => ({ ...p, type: 'paper' }));
   const presses = pricingRows.filter((p: any) => p.type === 'press_digital' || p.type === 'press_offset');
   const finishing = pricingRows.filter((p: any) => p.type === 'finishing');
   const mailing = pricingRows.filter((p: any) => p.type === 'mailing');

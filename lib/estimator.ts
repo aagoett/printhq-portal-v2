@@ -3,9 +3,9 @@ import { applyOverridesToList, CustomerPricingOverride } from '@/utils/pricing';
 export type PricingComponent = {
   id: string;
   name: string;
-  type: string;
-  price_amount: number;
-  cost_amount: number;
+  type?: string;
+  price_amount?: number | null;
+  cost_amount?: number | null;
   parent_sheet_width?: number;
   parent_sheet_height?: number;
   max_sheet_width?: number;
@@ -17,6 +17,7 @@ export type PricingComponent = {
   weight?: number | null;
   caliper?: number | null;
   price_unit?: string | null;
+  price_override?: number | null;
 };
 
 export type PricingProfileKey = 'wholesale' | 'competitive' | 'retail';
@@ -80,6 +81,11 @@ export type RouteOption = {
   breakdown?: { name: string; cost: number; price: number; detail: string }[];
   basePrice?: number;
   baseUnitPrice?: number;
+  paperUsesOverride?: boolean;
+  paperPriceBase?: number;
+  pressPriceBase?: number;
+  finishingPriceBase?: number;
+  mailingPriceBase?: number;
 };
 
 export type EstimatorContext = {
@@ -114,11 +120,13 @@ const applyOverrides = (
 ) => applyOverridesToList(list, overrides || [], { templateKey, componentType });
 
 const normalizePaper = (paper: PricingComponent) => {
-  const needsPerThousand = paper.cost_unit === 'per_1000' || (paper.price_amount || 0) > 1 || (paper.cost_amount || 0) > 1;
+  const needsPerThousand =
+    paper.cost_unit === 'per_1000' || (paper.price_override ?? paper.price_amount ?? 0) > 1 || (paper.cost_amount || 0) > 1;
   const divisor = needsPerThousand ? 1000 : 1;
   return {
     ...paper,
     price_amount: (paper.price_amount || 0) / divisor,
+    price_override: paper.price_override != null ? paper.price_override / divisor : paper.price_override,
     cost_amount: (paper.cost_amount || 0) / divisor,
     cost_unit: needsPerThousand ? 'per_1000' : paper.cost_unit || 'per_sheet',
     price_unit: paper.price_unit || (needsPerThousand ? 'per_1000' : 'per_sheet'),
@@ -196,22 +204,39 @@ export function applyPricingProfileToRoute(
 ): RouteOption {
   const factor = PRICING_PROFILES[profile] ?? 1;
   const qty = quantity || (route as any).quantity || 1;
-  const mutate = (value?: number) => (value || 0) * factor;
 
-  const profiledBreakdown = route.breakdown?.map((b) => ({ ...b, price: mutate(b.price) }));
+  const basePaper = (route as any).paperPriceBase ?? route.paperPrice ?? 0;
+  const basePress = (route as any).pressPriceBase ?? route.pressPrice ?? 0;
+  const baseFinishing = (route as any).finishingPriceBase ?? route.finishingPrice ?? 0;
+  const baseMailing = (route as any).mailingPriceBase ?? route.mailingPrice ?? 0;
+  const paperUsesOverride = Boolean((route as any).paperUsesOverride);
+
+  const paperPrice = paperUsesOverride ? basePaper : basePaper * factor;
+  const pressPrice = basePress * factor;
+  const finishingPrice = baseFinishing * factor;
+  const mailingPrice = baseMailing * factor;
+  const totalPrice = paperPrice + pressPrice + finishingPrice + mailingPrice;
+  const basePrice = (route as any).basePrice ?? basePaper + basePress + baseFinishing + baseMailing;
+
+  const profiledBreakdown = route.breakdown?.map((b) => {
+    const base = (b as any).basePrice ?? b.price ?? 0;
+    const isPaper = (b.name || '').toLowerCase() === 'paper';
+    const price = isPaper && paperUsesOverride ? base : base * factor;
+    return { ...b, price };
+  });
 
   return {
     ...route,
     pricingProfile: profile,
     profileFactor: factor,
-    basePrice: route.basePrice ?? route.totalPrice,
-    baseUnitPrice: route.baseUnitPrice ?? route.unitCost,
-    paperPrice: mutate(route.paperPrice),
-    pressPrice: mutate(route.pressPrice),
-    finishingPrice: mutate(route.finishingPrice),
-    mailingPrice: mutate(route.mailingPrice),
-    totalPrice: mutate(route.totalPrice),
-    unitCost: mutate(route.totalPrice) / qty,
+    basePrice,
+    baseUnitPrice: route.baseUnitPrice ?? basePrice / qty,
+    paperPrice,
+    pressPrice,
+    finishingPrice,
+    mailingPrice,
+    totalPrice,
+    unitCost: totalPrice / qty,
     breakdown: profiledBreakdown,
   };
 }
@@ -290,8 +315,11 @@ export function calculateProposals(
         const sheetsNeeded = Math.ceil(quantity / nUp);
         const overs = Math.max(Math.ceil(sheetsNeeded * OVERAGE_PCT), MIN_OVERS);
         const sheetsWithWaste = sheetsNeeded + overs;
+        const hasExplicitPrice = paper.price_override != null || paper.price_amount != null;
+        const paperSellRate = hasExplicitPrice ? (paper.price_override ?? paper.price_amount ?? 0) : (paper.cost_amount || 0);
+        const paperUsesOverride = hasExplicitPrice;
         const paperCost = sheetsWithWaste * (paper.cost_amount || 0);
-        const paperPrice = sheetsWithWaste * (paper.price_amount || 0);
+        const paperPriceBase = sheetsWithWaste * paperSellRate;
 
         const finishingCost = selectedFinishes.reduce((acc, f) => {
           const unit = f.cost_unit || 'flat';
@@ -362,15 +390,15 @@ export function calculateProposals(
         }
 
         const totalCost = paperCost + pressCost + finishingCost + mailingCost;
-        const basePrice = paperPrice + pressPrice + finishingPrice + mailingPrice;
+        const basePrice = paperPriceBase + pressPrice + finishingPrice + mailingPrice;
         const totalPrice = basePrice;
         const safeDetail = totalPrice / quantity > SANITY_UNIT_PRICE_THRESHOLD ? `${detail} • check pricing (> $${SANITY_UNIT_PRICE_THRESHOLD.toFixed(2)}/ea)` : detail;
 
         const breakdown = [
-          { name: 'Paper', cost: paperCost, price: paperPrice, detail: `${sheetsWithWaste} sheets (${sheetsNeeded} + ${overs} overs)` },
-          { name: 'Press', cost: pressCost, price: pressPrice, detail: safeDetail },
-          { name: 'Finishing', cost: finishingCost, price: finishingPrice, detail: finishingDetail || 'None' },
-          { name: 'Mailing', cost: mailingCost, price: mailingPrice, detail: mailDetail || 'None' },
+          { name: 'Paper', cost: paperCost, price: paperPriceBase, detail: `${sheetsWithWaste} sheets (${sheetsNeeded} + ${overs} overs)`, basePrice: paperPriceBase },
+          { name: 'Press', cost: pressCost, price: pressPrice, detail: safeDetail, basePrice: pressPrice },
+          { name: 'Finishing', cost: finishingCost, price: finishingPrice, detail: finishingDetail || 'None', basePrice: finishingPrice },
+          { name: 'Mailing', cost: mailingCost, price: mailingPrice, detail: mailDetail || 'None', basePrice: mailingPrice },
         ];
 
         let candidate: RouteOption = {
@@ -387,7 +415,7 @@ export function calculateProposals(
           sheetsNeeded,
           overs,
           paperName: paper.name,
-          paperPrice,
+          paperPrice: paperPriceBase,
           paperCost,
           pressPrice,
           pressCost,
@@ -405,6 +433,11 @@ export function calculateProposals(
           breakdown,
           basePrice,
           baseUnitPrice: basePrice / quantity,
+          paperUsesOverride,
+          paperPriceBase,
+          pressPriceBase: pressPrice,
+          finishingPriceBase: finishingPrice,
+          mailingPriceBase: mailingPrice,
         };
 
         if (pricingProfile) {

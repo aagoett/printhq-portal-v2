@@ -25,7 +25,7 @@ export function formatCurrency(value?: number | null) {
   return `$${value.toFixed(2)}`;
 }
 
-export function applyOverridesToList<T extends { id?: string; name?: string; type?: string; sku?: string; price_amount?: number; cost_amount?: number }>(
+export function applyOverridesToList<T extends { id?: string; name?: string; type?: string; sku?: string; price_amount?: number; cost_amount?: number; price_override?: number | null }>(
   list: T[],
   overrides: CustomerPricingOverride[],
   opts: { templateKey?: string; componentType?: string }
@@ -59,9 +59,12 @@ export function applyOverridesToList<T extends { id?: string; name?: string; typ
       match.price_override ?? match.price_amount ?? (match as any).price ?? (match as any).client_price ?? item.price_amount;
     const cost = match.cost_override ?? match.cost_amount ?? (match as any).cost ?? item.cost_amount;
 
+    const priceOverride = price ?? item.price_override ?? item.price_amount;
+
     return {
       ...item,
       price_amount: price ?? item.price_amount,
+      price_override: priceOverride ?? null,
       cost_amount: cost ?? item.cost_amount,
       __override: match,
     } as any;

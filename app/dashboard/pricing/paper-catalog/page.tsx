@@ -31,10 +31,12 @@ type PaperRow = {
   parent_sheet_height?: number | null;
   cost_amount?: number | null;
   price_amount?: number | null;
+  price_override?: number | null;
   cost_unit?: string | null;
   price_unit?: string | null;
   weight?: number | null;
   caliper?: number | null;
+  notes?: string | null;
 };
 
 export default function PaperCatalogPage() {
@@ -53,9 +55,8 @@ export default function PaperCatalogPage() {
   const fetchPapers = async () => {
     setLoading(true);
     const { data, error } = await supabase
-      .from('pricing_components')
+      .from('paper_catalog')
       .select('*')
-      .eq('type', 'paper')
       .order('brand', { ascending: true })
       .order('name', { ascending: true });
     if (error) {
@@ -78,13 +79,12 @@ export default function PaperCatalogPage() {
     setSaving(true);
     const payload: any = {
       name: form.name.trim(),
-      type: 'paper',
       brand: form.brand?.trim() || null,
       sku: form.sku?.trim() || null,
       parent_sheet_width: parseFloat(form.parentWidth) || null,
       parent_sheet_height: parseFloat(form.parentHeight) || null,
       cost_amount: parseFloat(form.cost || '0') || 0,
-      price_amount: parseFloat(form.price || form.cost || '0') || 0,
+      price_override: form.price ? parseFloat(form.price) : null,
       cost_unit: form.costUnit,
       price_unit: form.priceUnit || form.costUnit,
       weight: form.weight ? parseFloat(form.weight) : null,
@@ -92,8 +92,8 @@ export default function PaperCatalogPage() {
     };
 
     const query = form.id
-      ? supabase.from('pricing_components').update(payload).eq('id', form.id)
-      : supabase.from('pricing_components').insert(payload);
+      ? supabase.from('paper_catalog').update(payload).eq('id', form.id)
+      : supabase.from('paper_catalog').insert(payload);
 
     const { error } = await query;
     setSaving(false);
@@ -116,7 +116,7 @@ export default function PaperCatalogPage() {
       parentWidth: row.parent_sheet_width?.toString() || '',
       parentHeight: row.parent_sheet_height?.toString() || '',
       cost: row.cost_amount?.toString() || '',
-      price: row.price_amount?.toString() || '',
+      price: (row.price_override ?? row.price_amount)?.toString() || '',
       costUnit: row.cost_unit || 'per_sheet',
       priceUnit: row.price_unit || row.cost_unit || 'per_sheet',
       weight: row.weight?.toString() || '',
@@ -126,7 +126,7 @@ export default function PaperCatalogPage() {
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this paper stock?')) return;
-    const { error } = await supabase.from('pricing_components').delete().eq('id', id);
+    const { error } = await supabase.from('paper_catalog').delete().eq('id', id);
     if (error) alert(error.message);
     fetchPapers();
   };
@@ -227,7 +227,7 @@ export default function PaperCatalogPage() {
                 <input type="number" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm bg-red-50 border-red-100" placeholder="0.045" />
               </label>
               <label className="block text-sm">
-                <span className="text-xs font-bold text-gray-600">Client Price</span>
+                <span className="text-xs font-bold text-gray-600">Sell override (optional)</span>
                 <input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm bg-green-50 border-green-100" placeholder="0.09" />
               </label>
             </div>
@@ -295,19 +295,25 @@ export default function PaperCatalogPage() {
                     </td>
                     <td className="px-4 py-3 text-gray-700 text-xs">
                       {(() => {
-                        const sell = perSheet(paper, paper.price_amount, 'price_unit');
+                        const baseCostPerSheet = perSheet(paper, paper.cost_amount, 'cost_unit');
+                        const overrideValue = paper.price_override ?? paper.price_amount;
+                        const baseSell = overrideValue != null ? perSheet(paper, overrideValue, 'price_unit') : baseCostPerSheet;
+                        const isOverride = overrideValue != null;
                         return (
                           <>
                             <div>
-                              <span className="font-mono font-bold">${sell.toFixed(4)}</span> /sht
-                              <span className="text-gray-400 ml-1">({paper.price_unit || paper.cost_unit || 'per_sheet'})</span>
+                              <span className="font-mono font-bold">${baseSell.toFixed(4)}</span> /sht
+                              <span className="text-gray-400 ml-1">{isOverride ? 'override' : '(profile-based)'}</span>
                             </div>
                             <div className="flex flex-wrap gap-1 mt-1 text-[10px] text-gray-600">
-                              {Object.entries(PRICING_PROFILES).map(([k, v]) => (
-                                <span key={k} className="px-2 py-0.5 bg-gray-50 border border-gray-200 rounded">
-                                  {k.substring(0,3)} {formatCurrency(sell * v)}/sht
-                                </span>
-                              ))}
+                              {Object.entries(PRICING_PROFILES).map(([k, v]) => {
+                                const price = isOverride ? baseSell : baseCostPerSheet * v;
+                                return (
+                                  <span key={k} className="px-2 py-0.5 bg-gray-50 border border-gray-200 rounded">
+                                    {k.substring(0,3)} {formatCurrency(price)}/sht
+                                  </span>
+                                );
+                              })}
                             </div>
                           </>
                         );

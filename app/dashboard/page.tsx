@@ -17,7 +17,7 @@ import ItemDetailDrawer from '@/components/ItemDetailDrawer';
 import CsrChatPanel from '@/components/CsrChatPanel';
 import { applyOverridesToList, parseQuantityList, formatCurrency } from '@/utils/pricing';
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
-import { applyPricingProfileToRoute, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
+import { applyPricingProfileToRoute, calculateProposals, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
 import { getCustomerClassDefaultProfile, normalizeCustomerClass } from '@/lib/customerClass';
 
 
@@ -1209,7 +1209,7 @@ function BotIntakePanel({ supabase, currentUser, brandList, workflowOptions, cus
   }, [papers, selectedPaperId, insidePaperId, coverPaperId]);
 
   const fetchPricing = async () => {
-    const { data: pData } = await supabase.from('pricing_components').select('*').eq('type', 'paper').order('name');
+    const { data: pData } = await supabase.from('paper_catalog').select('*').order('name');
     const { data: mData } = await supabase.from('pricing_components').select('*').in('type', ['press_digital', 'press_offset']);
     const { data: fData } = await supabase.from('pricing_components').select('*').eq('type', 'finishing').order('name');
     const { data: mailData } = await supabase.from('pricing_components').select('*').eq('type', 'mailing').order('name');
@@ -1247,125 +1247,42 @@ function BotIntakePanel({ supabase, currentUser, brandList, workflowOptions, cus
     customLabel: customProductName || undefined,
   };
 
+  const paperSellPerSheet = (paper: any) => {
+    const baseCost = Number(paper?.cost_amount || 0) / ((paper?.cost_unit === 'per_1000' || Number(paper?.cost_amount || 0) > 1) ? 1000 : 1);
+    const overrideValue = paper?.price_override ?? paper?.price_amount;
+    const priceUnit = paper?.price_unit || paper?.cost_unit;
+    const divisor = priceUnit === 'per_1000' || Number(overrideValue || 0) > 1 ? 1000 : 1;
+    const baseSell = overrideValue != null ? Number(overrideValue || 0) / divisor : baseCost;
+    return overrideValue != null ? baseSell : baseCost * (PRICING_PROFILES[pricingProfile] ?? 1);
+  };
+
   const calculateWinner = (qty: number) => {
     const activePaperId = productKey === 'booklet' ? (insidePaperId || selectedPaperId) : selectedPaperId;
-    const paper = papersWithOverrides.find((p) => p.id === activePaperId) || papersWithOverrides[0];
-    if (!paper || qty <= 0) return null;
+    const selectedPaperIds = activePaperId ? [activePaperId] : undefined;
 
-    const fitNormal = Math.floor((paper.parent_sheet_width || 0) / finishW) * Math.floor((paper.parent_sheet_height || 0) / finishH);
-    const fitRotated = Math.floor((paper.parent_sheet_width || 0) / finishH) * Math.floor((paper.parent_sheet_height || 0) / finishW);
-    const nUp = Math.max(fitNormal, fitRotated);
-    if (nUp === 0) return null;
-
-    const sheetsNeeded = Math.ceil(qty / nUp);
-    const overs = Math.max(Math.ceil(sheetsNeeded * 0.1), 50);
-    const sheetsWithWaste = sheetsNeeded + overs;
-    const paperCost = sheetsWithWaste * (paper.cost_amount || 0);
-    const paperPrice = sheetsWithWaste * (paper.price_amount || 0);
-
-    const selectedFinishes = finishingWithOverrides.filter((f) => selectedFinishingIds.includes(f.id));
-    const finishingDetail = selectedFinishes.map((f) => f.name).join(', ');
-    const finishingCost = selectedFinishes.reduce((acc, f) => {
-      const unit = f.cost_unit || 'flat';
-      if (unit === 'per_sheet') return acc + sheetsWithWaste * (f.cost_amount || 0);
-      if (unit === 'per_1000') return acc + (sheetsWithWaste / 1000) * (f.cost_amount || 0);
-      if (unit === 'per_item' || unit === 'per_piece') return acc + qty * (f.cost_amount || 0);
-      return acc + (f.cost_amount || 0);
-    }, 0);
-    const finishingPrice = selectedFinishes.reduce((acc, f) => {
-      const unit = f.cost_unit || 'flat';
-      if (unit === 'per_sheet') return acc + sheetsWithWaste * (f.price_amount || 0);
-      if (unit === 'per_1000') return acc + (sheetsWithWaste / 1000) * (f.price_amount || 0);
-      if (unit === 'per_item' || unit === 'per_piece') return acc + qty * (f.price_amount || 0);
-      return acc + (f.price_amount || 0);
-    }, 0);
-
-    let mailingCost = 0;
-    let mailingPrice = 0;
-    let mailingDetail = '';
-    const selectedMailing = mailingWithOverrides.find((m) => m.id === (selectedMailingId as any));
-    if (selectedMailing) {
-      const unit = selectedMailing.cost_unit || 'flat';
-      if (unit === 'per_piece' || unit === 'per_item') {
-        mailingCost = qty * (selectedMailing.cost_amount || 0);
-        mailingPrice = qty * (selectedMailing.price_amount || 0);
-        mailingDetail = `${selectedMailing.name} • per piece`;
-      } else if (unit === 'per_1000') {
-        mailingCost = (qty / 1000) * (selectedMailing.cost_amount || 0);
-        mailingPrice = (qty / 1000) * (selectedMailing.price_amount || 0);
-        mailingDetail = `${selectedMailing.name} • per M`;
-      } else if (unit === 'per_sheet') {
-        mailingCost = sheetsWithWaste * (selectedMailing.cost_amount || 0);
-        mailingPrice = sheetsWithWaste * (selectedMailing.price_amount || 0);
-        mailingDetail = `${selectedMailing.name} • per sheet`;
-      } else {
-        mailingCost = selectedMailing.cost_amount || 0;
-        mailingPrice = selectedMailing.price_amount || 0;
-        mailingDetail = `${selectedMailing.name} • flat`;
+    const proposals = calculateProposals(
+      {
+        finishW,
+        finishH,
+        qtyList: [qty],
+        selectedPaperIds,
+        selectedFinishingIds,
+        selectedMailingId,
+        templateKey,
+        pricingProfile,
+      },
+      {
+        papers: papersWithOverrides as any,
+        presses: pressesWithOverrides as any,
+        finishing: finishingWithOverrides as any,
+        mailing: mailingWithOverrides as any,
+        overrides: [],
       }
-    }
+    );
 
-    let best: any = null;
-    pressesWithOverrides.forEach((press) => {
-      if (paper.parent_sheet_width > (press as any).max_sheet_width && (press as any).max_sheet_width > 0) return;
-      let pressCost = 0;
-      let pressPrice = 0;
-      let detail = '';
-
-      if (press.type === 'press_digital') {
-        pressCost = sheetsWithWaste * (press.cost_amount || 0);
-        pressPrice = Math.max(25, sheetsWithWaste * (press.price_amount || 0));
-        detail = `Digital | ${sheetsWithWaste} sheets`;
-      } else {
-        const setupHr = (press.setup_minutes || 0) / 60;
-        const runHr = sheetsWithWaste / (press.run_speed_per_hour || 5000);
-        const totalHr = setupHr + runHr;
-        const runRate = press.price_amount || 550;
-        const runCost = press.cost_amount || runRate * 0.6;
-        pressPrice = 50 + totalHr * runRate;
-        pressCost = 15 + totalHr * runCost;
-        detail = `Offset | ${totalHr.toFixed(2)} hrs`;
-      }
-
-      const totalCost = paperCost + pressCost + finishingCost + mailingCost;
-      const basePrice = paperPrice + pressPrice + finishingPrice + mailingPrice;
-
-      const breakdown = [
-        { name: 'Paper', cost: paperCost, price: paperPrice, detail: `${sheetsWithWaste} sheets (${sheetsNeeded}+${overs} overs)` },
-        { name: 'Press', cost: pressCost, price: pressPrice, detail },
-        { name: 'Finishing', cost: finishingCost, price: finishingPrice, detail: finishingDetail || 'None' },
-        { name: 'Mailing', cost: mailingCost, price: mailingPrice, detail: mailingDetail || 'None' },
-      ];
-
-      const baseRoute = {
-        method: press.name,
-        sheet: `${paper.parent_sheet_width}x${paper.parent_sheet_height}`,
-        nUp,
-        totalSheets: sheetsWithWaste,
-        sheetsNeeded,
-        overs,
-        paperPrice,
-        pressPrice,
-        finishingPrice,
-        mailingPrice,
-        totalPrice: basePrice,
-        totalCost,
-        unitCost: basePrice / qty,
-        detail,
-        paperName: paper.name,
-        finishingDetail,
-        mailingDetail,
-        breakdown,
-        basePrice,
-      };
-
-      const candidate = applyPricingProfileToRoute(baseRoute as any, pricingProfile, qty);
-      if (!best || candidate.totalPrice < best.totalPrice) {
-        best = candidate;
-      }
-    });
-
-    return best;
+    const winnerRoute = proposals[0]?.winner;
+    if (!winnerRoute) return null;
+    return { ...winnerRoute, product: productMeta } as any;
   };
 
   const handleEstimate = () => {
@@ -1660,9 +1577,12 @@ Price: ${formatCurrency(chosen.winner.totalPrice)}`,
           <div>
             <label className="block text-[11px] font-bold uppercase text-gray-500">Paper</label>
             <select value={productKey === 'booklet' ? insidePaperId : selectedPaperId} onChange={(e) => productKey === 'booklet' ? setInsidePaperId(e.target.value) : setSelectedPaperId(e.target.value)} className="w-full border rounded px-3 py-2 text-sm bg-white">
-              {papersWithOverrides.map((p) => (
-                <option key={p.id} value={p.id}>{p.name} ({formatCurrency(p.price_amount)}/sht{p.__override ? ' • override' : ''})</option>
-              ))}
+              {papersWithOverrides.map((p) => {
+                const perSheet = paperSellPerSheet(p);
+                const overrideTag = p.price_override != null || p.price_amount != null;
+                const suffix = overrideTag ? 'override' : `${pricingProfile} profile`;
+                return (<option key={p.id} value={p.id}>{p.name} ({formatCurrency(perSheet)}/sht • {suffix}{p.__override ? ' • customer' : ''})</option>);
+              })}
             </select>
             {productKey === 'booklet' && coverPaperId && (
               <p className="text-[11px] text-gray-500 mt-1">Cover: {coverPaperName || 'Select'} · Inside: {insidePaperName || 'Select'}</p>
