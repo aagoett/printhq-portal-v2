@@ -817,7 +817,7 @@ export default function Dashboard() {
           <NavItem icon={<FileText size={20} />} label="Quotes" href="/dashboard/quotes" />
           {isInternal && <NavItem icon={<Briefcase size={20} />} label="Invoices" href="/dashboard/invoices" />}
           {isInternal && <NavItem icon={<User size={20} />} label="Customers" href="/dashboard/customers" />}
-          <NavItem icon={<Settings size={20} />} label="Settings" href="/dashboard/settings" />
+          {isInternal && <NavItem icon={<Settings size={20} />} label="Settings" href="/dashboard/settings" />}
         </nav>
         <div className="p-4 border-t border-gray-100">
           <button onClick={handleSignOut} className="flex w-full items-center px-4 py-3 text-sm font-medium text-gray-500 hover:text-red-600 transition-colors"><LogOut size={20} className="mr-3" /> Sign out</button>
