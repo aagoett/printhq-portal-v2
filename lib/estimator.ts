@@ -20,6 +20,11 @@ export type PricingComponent = {
 };
 
 export type PricingProfileKey = 'wholesale' | 'competitive' | 'retail';
+export const PRICING_PROFILES: Record<PricingProfileKey, number> = {
+  wholesale: 0.88, // lean margin for trade partners
+  competitive: 1, // default house pricing
+  retail: 1.15, // walk-in / retail lift
+};
 
 export type EstimatorInputs = {
   finishW: number;
@@ -49,7 +54,7 @@ export type RouteOption = {
   paperCaliper?: number | null;
   method: string;
   pricingProfile?: PricingProfileKey;
-  pricingMultiplier?: number;
+  profileFactor?: number;
   sheet: string;
   nUp: number;
   totalSheets: number;
@@ -73,6 +78,8 @@ export type RouteOption = {
   finishingDetail?: string;
   mailingDetail?: string;
   breakdown?: { name: string; cost: number; price: number; detail: string }[];
+  basePrice?: number;
+  baseUnitPrice?: number;
 };
 
 export type EstimatorContext = {
@@ -98,11 +105,6 @@ const OFFSET_SPEED = 7000;
 const OFFSET_COST_FACTOR = 0.6; // assume 40% gross margin
 const DIGITAL_COST_FACTOR = 0.7;
 const SANITY_UNIT_PRICE_THRESHOLD = 2; // flag if above $2 each
-const PRICING_PROFILE_MULTIPLIERS: Record<PricingProfileKey, number> = {
-  wholesale: 0.9,
-  competitive: 1,
-  retail: 1.18,
-};
 
 const applyOverrides = (
   list: PricingComponent[],
@@ -187,6 +189,33 @@ const calculateNUpWithBleed = (
   return Math.max(across * down, acrossRot * downRot);
 };
 
+export function applyPricingProfileToRoute(
+  route: RouteOption,
+  profile: PricingProfileKey,
+  quantity?: number
+): RouteOption {
+  const factor = PRICING_PROFILES[profile] ?? 1;
+  const qty = quantity || (route as any).quantity || 1;
+  const mutate = (value?: number) => (value || 0) * factor;
+
+  const profiledBreakdown = route.breakdown?.map((b) => ({ ...b, price: mutate(b.price) }));
+
+  return {
+    ...route,
+    pricingProfile: profile,
+    profileFactor: factor,
+    basePrice: route.basePrice ?? route.totalPrice,
+    baseUnitPrice: route.baseUnitPrice ?? route.unitCost,
+    paperPrice: mutate(route.paperPrice),
+    pressPrice: mutate(route.pressPrice),
+    finishingPrice: mutate(route.finishingPrice),
+    mailingPrice: mutate(route.mailingPrice),
+    totalPrice: mutate(route.totalPrice),
+    unitCost: mutate(route.totalPrice) / qty,
+    breakdown: profiledBreakdown,
+  };
+}
+
 export function calculateProposals(
   inputs: EstimatorInputs,
   context: EstimatorContext
@@ -200,7 +229,7 @@ export function calculateProposals(
     selectedFinishingIds = [],
     selectedMailingId = null,
     templateKey,
-    pricingProfile = 'competitive',
+    pricingProfile,
     bleed = DEFAULT_BLEED,
     gutter = DEFAULT_GUTTER,
   } = inputs;
@@ -229,7 +258,6 @@ export function calculateProposals(
   qtyList.forEach((quantity) => {
     if (!quantity || quantity <= 0) return;
 
-    const pricingMultiplier = PRICING_PROFILE_MULTIPLIERS[pricingProfile] || 1;
     let best: RouteOption | null = null;
     const routes: RouteOption[] = [];
 
@@ -266,14 +294,18 @@ export function calculateProposals(
         const paperPrice = sheetsWithWaste * (paper.price_amount || 0);
 
         const finishingCost = selectedFinishes.reduce((acc, f) => {
-          if (f.cost_unit === 'per_sheet') return acc + sheetsWithWaste * (f.cost_amount || 0);
-          if (f.cost_unit === 'per_1000') return acc + (sheetsWithWaste / 1000) * (f.cost_amount || 0);
+          const unit = f.cost_unit || 'flat';
+          if (unit === 'per_sheet') return acc + sheetsWithWaste * (f.cost_amount || 0);
+          if (unit === 'per_1000') return acc + (sheetsWithWaste / 1000) * (f.cost_amount || 0);
+          if (unit === 'per_item' || unit === 'per_piece') return acc + quantity * (f.cost_amount || 0);
           return acc + (f.cost_amount || 0);
         }, 0);
         const finishingPrice = selectedFinishes.reduce((acc, f) => {
           if (f.price_amount === undefined) return acc;
-          if (f.cost_unit === 'per_sheet') return acc + sheetsWithWaste * (f.price_amount || 0);
-          if (f.cost_unit === 'per_1000') return acc + (sheetsWithWaste / 1000) * (f.price_amount || 0);
+          const unit = f.cost_unit || 'flat';
+          if (unit === 'per_sheet') return acc + sheetsWithWaste * (f.price_amount || 0);
+          if (unit === 'per_1000') return acc + (sheetsWithWaste / 1000) * (f.price_amount || 0);
+          if (unit === 'per_item' || unit === 'per_piece') return acc + quantity * (f.price_amount || 0);
           return acc + (f.price_amount || 0);
         }, 0);
 
@@ -284,17 +316,24 @@ export function calculateProposals(
         if (selectedMailingId) {
           const mail = mailingOptions.find((m) => m.id === selectedMailingId);
           if (mail) {
-            if (mail.cost_unit === 'per_piece' || mail.cost_unit === 'per_item') {
+            const unit = mail.cost_unit || 'flat';
+            if (unit === 'per_piece' || unit === 'per_item') {
               mailingCost = quantity * (mail.cost_amount || 0);
               mailingPrice = quantity * (mail.price_amount || 0);
-            } else if (mail.cost_unit === 'per_1000') {
+              mailDetail = `${mail.name} • ${quantity} pieces`;
+            } else if (unit === 'per_1000') {
               mailingCost = (quantity / 1000) * (mail.cost_amount || 0);
               mailingPrice = (quantity / 1000) * (mail.price_amount || 0);
+              mailDetail = `${mail.name} • per M`;
+            } else if (unit === 'per_sheet') {
+              mailingCost = sheetsWithWaste * (mail.cost_amount || 0);
+              mailingPrice = sheetsWithWaste * (mail.price_amount || 0);
+              mailDetail = `${mail.name} • by sheet`;
             } else {
               mailingCost = mail.cost_amount || 0;
               mailingPrice = mail.price_amount || 0;
+              mailDetail = `${mail.name} • flat`;
             }
-            mailDetail = mail.name;
             mailingName = mail.name;
           }
         }
@@ -324,7 +363,7 @@ export function calculateProposals(
 
         const totalCost = paperCost + pressCost + finishingCost + mailingCost;
         const basePrice = paperPrice + pressPrice + finishingPrice + mailingPrice;
-        const totalPrice = basePrice * pricingMultiplier;
+        const totalPrice = basePrice;
         const safeDetail = totalPrice / quantity > SANITY_UNIT_PRICE_THRESHOLD ? `${detail} • check pricing (> $${SANITY_UNIT_PRICE_THRESHOLD.toFixed(2)}/ea)` : detail;
 
         const breakdown = [
@@ -332,18 +371,15 @@ export function calculateProposals(
           { name: 'Press', cost: pressCost, price: pressPrice, detail: safeDetail },
           { name: 'Finishing', cost: finishingCost, price: finishingPrice, detail: finishingDetail || 'None' },
           { name: 'Mailing', cost: mailingCost, price: mailingPrice, detail: mailDetail || 'None' },
-          { name: 'Profile Adjustment', cost: 0, price: totalPrice - basePrice, detail: `${pricingProfile} × ${pricingMultiplier.toFixed(2)}` },
         ];
 
-        const candidate: RouteOption = {
+        let candidate: RouteOption = {
           paperId: paper.id,
           paperSku: paper.sku || null,
           paperBrand: paper.brand || null,
           paperWeight: paper.weight ?? null,
           paperCaliper: paper.caliper ?? null,
           method: press.name,
-          pricingProfile,
-          pricingMultiplier,
           sheet: `${paper.parent_sheet_width || sheetW}x${paper.parent_sheet_height || sheetH}`,
           usableSheet: `${usableW.toFixed(2)}x${usableH.toFixed(2)}`,
           nUp,
@@ -367,7 +403,13 @@ export function calculateProposals(
           finishingDetail,
           mailingDetail: mailDetail || 'None',
           breakdown,
+          basePrice,
+          baseUnitPrice: basePrice / quantity,
         };
+
+        if (pricingProfile) {
+          candidate = applyPricingProfileToRoute(candidate, pricingProfile, quantity);
+        }
 
         routes.push(candidate);
 

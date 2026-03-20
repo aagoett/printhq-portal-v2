@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { createBrowserClient } from '@supabase/ssr';
 import { ArrowLeft, Layers, Save, RefreshCcw, Trash2, Edit2, FileSpreadsheet, Ruler, Weight, Tag, Building2, Search, Filter } from 'lucide-react';
+import { PRICING_PROFILES } from '@/lib/estimator';
+import { formatCurrency } from '@/utils/pricing';
 
 const emptyForm = {
   id: null as string | null,
@@ -292,8 +294,24 @@ export default function PaperCatalogPage() {
                       <span className="text-gray-400 ml-1">({paper.cost_unit || 'per_sheet'})</span>
                     </td>
                     <td className="px-4 py-3 text-gray-700 text-xs">
-                      <span className="font-mono font-bold">${perSheet(paper, paper.price_amount, 'price_unit').toFixed(4)}</span> /sht
-                      <span className="text-gray-400 ml-1">({paper.price_unit || paper.cost_unit || 'per_sheet'})</span>
+                      {(() => {
+                        const sell = perSheet(paper, paper.price_amount, 'price_unit');
+                        return (
+                          <>
+                            <div>
+                              <span className="font-mono font-bold">${sell.toFixed(4)}</span> /sht
+                              <span className="text-gray-400 ml-1">({paper.price_unit || paper.cost_unit || 'per_sheet'})</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1 mt-1 text-[10px] text-gray-600">
+                              {Object.entries(PRICING_PROFILES).map(([k, v]) => (
+                                <span key={k} className="px-2 py-0.5 bg-gray-50 border border-gray-200 rounded">
+                                  {k.substring(0,3)} {formatCurrency(sell * v)}/sht
+                                </span>
+                              ))}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-right space-x-2">
                       <button onClick={() => handleEdit(paper)} className="text-gray-400 hover:text-black"><Edit2 size={16}/></button>

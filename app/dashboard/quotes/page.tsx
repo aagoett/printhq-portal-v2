@@ -46,14 +46,18 @@ export default function QuotesListPage() {
                             {(() => {
                               const product = quote.cost_breakdown?.product;
                               const productLabel = product?.customLabel || product?.label;
+                              const profile = quote.cost_breakdown?.pricingProfile;
+                              const factor = quote.cost_breakdown?.profileFactor;
                               return (
                                 <>
-                                  <h3 className="font-bold text-lg text-gray-900">{quote.title || `Quote #${quote.quote_number}`}</h3>
+                                  <div className="flex items-center gap-2">
+                                    <h3 className="font-bold text-lg text-gray-900">{quote.title || `Quote #${quote.quote_number}`}</h3>
+                                    {profile && <span className="ml-2 rounded bg-blue-50 px-2 py-0.5 text-blue-700 capitalize text-[10px] font-black">{profile}{factor ? ` ×${Number(factor).toFixed(2)}` : ''}</span>}
+                                  </div>
                                   <p className="text-xs text-gray-500 flex items-center gap-2 mt-1">
                                       <span className="bg-gray-100 px-2 py-0.5 rounded text-gray-600 font-mono font-bold">{quote.quantity} qty</span>
                                       <span className="text-gray-400">•</span>
                                       <span>{productLabel ? `${productLabel} ${product?.sizeLabel || ''}` : `${quote.width}x${quote.height}"`} on {quote.paper_stock}</span>
-                                      {quote.cost_breakdown?.pricingProfile && <span className="ml-2 rounded bg-blue-50 px-2 py-0.5 text-blue-700 capitalize">{quote.cost_breakdown.pricingProfile}</span>}
                                   </p>
                                 </>
                               );

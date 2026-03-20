@@ -7,7 +7,7 @@ import { Trophy, DollarSign, LayoutGrid, ArrowLeft, Save, Loader2, Users, Tag, M
 import Link from 'next/link';
 import { applyOverridesToList, CustomerPricingOverride, formatCurrency } from '@/utils/pricing';
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
-import { calculateProposals, EstimatorContext, RouteOption, PricingComponent, PricingProfileKey } from '@/lib/estimator';
+import { calculateProposals, EstimatorContext, RouteOption, PricingComponent, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
 
 type ProfileLite = {
   id: string;
@@ -55,12 +55,12 @@ export default function AutoEstimatorPage() {
   const [finishW, setFinishW] = useState(defaultSize?.width || 8.5);
   const [finishH, setFinishH] = useState(defaultSize?.height || 11);
   const [quantity, setQuantity] = useState(5000);
+  const [pricingProfile, setPricingProfile] = useState<PricingProfileKey>('competitive');
   const [selectedPaperId, setSelectedPaperId] = useState('');
   const [coverPaperId, setCoverPaperId] = useState('');
   const [insidePaperId, setInsidePaperId] = useState('');
   const [quoteTitle, setQuoteTitle] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState('');
-  const [pricingProfile, setPricingProfile] = useState<PricingProfileKey>('competitive');
 
   // Customer context for overrides
   const [currentProfile, setCurrentProfile] = useState<ProfileLite | null>(null);
@@ -365,7 +365,7 @@ export default function AutoEstimatorPage() {
       production_method: winner.method,
       total_cost: effectiveCost,
       total_price: effectivePrice,
-      cost_breakdown: { ...winner, pricingProfile, product: productMeta, breakdown, finishingDetail, mailingDetail, routes: routeOptions, worksheet: { lines: worksheetLines, totals: worksheetTotals } },
+      cost_breakdown: { ...winner, pricingProfile, profileFactor: PRICING_PROFILES[pricingProfile], product: productMeta, breakdown, finishingDetail, mailingDetail, routes: routeOptions, worksheet: { lines: worksheetLines, totals: worksheetTotals } },
       status: 'Draft',
       user_id: selectedCustomerId || null,
       customer_email: selectedCustomer?.email || currentProfile?.email || null,
@@ -467,6 +467,7 @@ export default function AutoEstimatorPage() {
             </div>
             <div className="flex gap-2">
                 <Link href="/dashboard/pricing/paper-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Paper</Link>
+                <Link href="/dashboard/pricing/finishing-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><Package2 size={16}/> Finishing</Link>
                 <Link href="/dashboard/pricing" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><DollarSign size={16}/> Costs</Link>
                 <Link href="/dashboard/quotes" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> My Quotes</Link>
             </div>
@@ -614,10 +615,33 @@ export default function AutoEstimatorPage() {
                     <label className="block text-xs font-bold uppercase text-gray-500 mb-2">2. Quantity</label>
                     <input type="number" value={quantity} onChange={(e) => setQuantity(parseInt(e.target.value))} className="w-full border rounded p-3 text-lg font-bold"/>
                 </div>
+                <div>
+                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2 flex items-center gap-2">3. Pricing Profile <span className="text-[10px] text-gray-400">markup policy</span></label>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                      {(['wholesale','competitive','retail'] as PricingProfileKey[]).map((key) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setPricingProfile(key)}
+                          className={`border rounded-lg px-3 py-2 text-sm font-bold text-left ${pricingProfile === key ? 'bg-black text-white border-black shadow-sm' : 'bg-white text-gray-700 hover:border-black'}`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="capitalize">{key}</span>
+                            <span className="text-[11px] font-mono">×{PRICING_PROFILES[key].toFixed(2)}</span>
+                          </div>
+                          <p className={`text-[11px] ${pricingProfile === key ? 'text-gray-200' : 'text-gray-500'}`}>
+                            {key === 'wholesale' && 'Trade/volume pricing'}
+                            {key === 'competitive' && 'House default'}
+                            {key === 'retail' && 'Walk-in / rush'}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                </div>
                 <div className="border rounded-lg p-3 bg-gray-50">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2 text-xs font-bold uppercase text-gray-500">
-                        <span>3. Paper Stock</span>
+                        <span>4. Paper Stock</span>
                         <span className="text-[10px] font-medium text-gray-400">{showPaperAdvanced ? 'Manual' : 'Auto-selected'}</span>
                       </div>
                       <button type="button" onClick={() => setShowPaperAdvanced(!showPaperAdvanced)} className="text-xs font-bold text-blue-600 flex items-center gap-1">
@@ -660,7 +684,7 @@ export default function AutoEstimatorPage() {
                     )}
                 </div>
                 <div>
-                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2 flex items-center gap-2"><Package2 size={14}/> 4. Finishing Catalog</label>
+                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2 flex items-center gap-2"><Package2 size={14}/> 5. Finishing Catalog</label>
                     <div className="space-y-2 max-h-40 overflow-y-auto p-2 border rounded bg-gray-50">
                         {finishingOptions.map(f => (
                             <label key={f.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-white p-1 rounded transition-colors">
@@ -683,7 +707,7 @@ export default function AutoEstimatorPage() {
                 </div>
                 <div className="border rounded-lg p-3 bg-white">
                     <div className="flex items-center justify-between mb-2">
-                      <label className="block text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><Truck size={14}/> 5. Mailing Model</label>
+                      <label className="block text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><Truck size={14}/> 6. Mailing Model</label>
                       <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${selectedMailing ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
                         {selectedMailing ? 'Selected' : 'Optional'}
                       </span>
@@ -715,6 +739,9 @@ export default function AutoEstimatorPage() {
                                 <div className="flex items-center gap-2 mb-1">
                                     <Trophy size={16} className="text-green-600"/>
                                     <span className="text-xs font-bold uppercase text-green-600 tracking-wider">Best Production Route</span>
+                                    <span className="px-2 py-0.5 rounded-full bg-white/60 text-[10px] font-black uppercase text-green-700 border border-green-200">
+                                      {pricingProfile} ×{PRICING_PROFILES[pricingProfile].toFixed(2)}
+                                    </span>
                                 </div>
                                 <h2 className="text-3xl font-black text-green-900 uppercase">{productMeta.customLabel || productMeta.label}</h2>
                                 <p className="text-sm font-bold text-green-700 mt-1">
@@ -925,11 +952,12 @@ export default function AutoEstimatorPage() {
                                         </td>
                                         <td className="px-6 py-3 text-gray-500 text-xs">
                                           <div className="font-semibold text-gray-700 capitalize">{est.pricingProfile || pricingProfile}</div>
-                                          <div>{est.pricingMultiplier ? `${est.pricingMultiplier.toFixed(2)}x` : '1.00x'}</div>
+                                          <div>{(est.profileFactor || PRICING_PROFILES[pricingProfile]).toFixed(2)}x</div>
                                         </td>
                                         <td className="px-6 py-3 text-right font-mono font-bold text-gray-900">
                                             ${est.totalPrice.toFixed(2)}
                                             <div className="text-[11px] text-gray-500">${est.unitCost.toFixed(3)} ea</div>
+                                            <div className="text-[11px] text-green-700">Gross ${(est.totalPrice - est.totalCost).toFixed(2)}</div>
                                         </td>
                                     </tr>
                                 ))}

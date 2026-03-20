@@ -14,7 +14,10 @@ import Link from 'next/link';
 // Use the new name and the @ alias so it always finds the right spot
 import { sendOrderConfirmation } from '../server-actions';
 import ItemDetailDrawer from '@/components/ItemDetailDrawer';
+import CsrChatPanel from '@/components/CsrChatPanel';
 import { applyOverridesToList, parseQuantityList, formatCurrency } from '@/utils/pricing';
+import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
+import { applyPricingProfileToRoute, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
 
 
 // --- TYPES ---
@@ -840,6 +843,12 @@ export default function Dashboard() {
 
           {isInternal && (
             <div className="mb-8">
+              <CsrChatPanel customers={customers} brandList={brandList} currentUser={user} />
+            </div>
+          )}
+
+          {isInternal && (
+            <div className="mb-8">
               <BotIntakePanel
                 supabase={supabase}
                 currentUser={user}
@@ -1126,14 +1135,24 @@ function BotIntakePanel({ supabase, currentUser, brandList, workflowOptions, cus
   const [contactEmail, setContactEmail] = useState('');
   const [contactName, setContactName] = useState('');
   const [itemTitle, setItemTitle] = useState('Bot Intake Job');
-  const [finishW, setFinishW] = useState(8.5);
-  const [finishH, setFinishH] = useState(11);
+
+  const defaultProductSize = getDefaultSizeForTemplate('flyer');
+  const [productKey, setProductKey] = useState<ProductTemplateKey>('flyer');
+  const [productSizeLabel, setProductSizeLabel] = useState<string>(defaultProductSize?.label || '');
+  const [customProductName, setCustomProductName] = useState('');
+  const [pageCount, setPageCount] = useState(8);
+  const [finishW, setFinishW] = useState(defaultProductSize?.width || 8.5);
+  const [finishH, setFinishH] = useState(defaultProductSize?.height || 11);
   const [qtyInput, setQtyInput] = useState('250,500,1000');
   const [templateKey, setTemplateKey] = useState('');
   const [selectedBrandId, setSelectedBrandId] = useState<string>(brandList?.[0]?.id || '');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>(currentUser?.id || '');
   const [selectedPaperId, setSelectedPaperId] = useState<string>('');
+  const [coverPaperId, setCoverPaperId] = useState<string>('');
+  const [insidePaperId, setInsidePaperId] = useState<string>('');
+  const [selectedMailingId, setSelectedMailingId] = useState<string>('');
   const [selectedFinishingIds, setSelectedFinishingIds] = useState<string[]>([]);
+  const [pricingProfile, setPricingProfile] = useState<PricingProfileKey>('competitive');
   const [attachments, setAttachments] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isEstimating, setIsEstimating] = useState(false);
@@ -1153,6 +1172,15 @@ function BotIntakePanel({ supabase, currentUser, brandList, workflowOptions, cus
   }, []);
 
   useEffect(() => {
+    const defaultSz = getDefaultSizeForTemplate(productKey);
+    if (defaultSz) {
+      setProductSizeLabel(defaultSz.label);
+      setFinishW(defaultSz.width);
+      setFinishH(defaultSz.height);
+    }
+  }, [productKey]);
+
+  useEffect(() => {
     if (brandList?.length && !selectedBrandId) {
       setSelectedBrandId(brandList[0].id);
     }
@@ -1167,10 +1195,12 @@ function BotIntakePanel({ supabase, currentUser, brandList, workflowOptions, cus
   }, [selectedCustomerId]);
 
   useEffect(() => {
-    if (!selectedPaperId && papers.length > 0) {
-      setSelectedPaperId(papers[0].id);
+    if (papers.length > 0) {
+      if (!selectedPaperId) setSelectedPaperId(papers[0].id);
+      if (!insidePaperId) setInsidePaperId(papers[0].id);
+      if (!coverPaperId) setCoverPaperId(papers[0].id);
     }
-  }, [papers, selectedPaperId]);
+  }, [papers, selectedPaperId, insidePaperId, coverPaperId]);
 
   const fetchPricing = async () => {
     const { data: pData } = await supabase.from('pricing_components').select('*').eq('type', 'paper').order('name');
@@ -1198,34 +1228,74 @@ function BotIntakePanel({ supabase, currentUser, brandList, workflowOptions, cus
   const finishingWithOverrides = useMemo(() => applyOverridesToList(finishing, customerOverrides, { templateKey, componentType: 'finishing' }), [finishing, customerOverrides, templateKey]);
   const mailingWithOverrides = useMemo(() => applyOverridesToList(mailing, customerOverrides, { templateKey, componentType: 'mailing' }), [mailing, customerOverrides, templateKey]);
 
+  const coverPaperName = papersWithOverrides.find((p) => p.id === coverPaperId)?.name;
+  const insidePaperName = papersWithOverrides.find((p) => p.id === (productKey === 'booklet' ? insidePaperId : selectedPaperId))?.name;
+  const productMeta = {
+    key: productKey,
+    label: getTemplate(productKey).name,
+    sizeLabel: productSizeLabel || `${finishW}x${finishH}`,
+    size: { width: finishW, height: finishH },
+    pageCount: productKey === 'booklet' ? pageCount : undefined,
+    coverStock: productKey === 'booklet' ? coverPaperName : undefined,
+    insideStock: productKey === 'booklet' ? insidePaperName : undefined,
+    customLabel: customProductName || undefined,
+  };
+
   const calculateWinner = (qty: number) => {
-    const paper = papersWithOverrides.find((p) => p.id === selectedPaperId) || papersWithOverrides[0];
+    const activePaperId = productKey === 'booklet' ? (insidePaperId || selectedPaperId) : selectedPaperId;
+    const paper = papersWithOverrides.find((p) => p.id === activePaperId) || papersWithOverrides[0];
     if (!paper || qty <= 0) return null;
 
-    const fitNormal = Math.floor(paper.parent_sheet_width / finishW) * Math.floor(paper.parent_sheet_height / finishH);
-    const fitRotated = Math.floor(paper.parent_sheet_width / finishH) * Math.floor(paper.parent_sheet_height / finishW);
+    const fitNormal = Math.floor((paper.parent_sheet_width || 0) / finishW) * Math.floor((paper.parent_sheet_height || 0) / finishH);
+    const fitRotated = Math.floor((paper.parent_sheet_width || 0) / finishH) * Math.floor((paper.parent_sheet_height || 0) / finishW);
     const nUp = Math.max(fitNormal, fitRotated);
     if (nUp === 0) return null;
 
     const sheetsNeeded = Math.ceil(qty / nUp);
-    const sheetsWithWaste = Math.ceil(sheetsNeeded * 1.1);
-    const paperCost = sheetsWithWaste * paper.cost_amount;
-    const paperPrice = sheetsWithWaste * paper.price_amount;
+    const overs = Math.max(Math.ceil(sheetsNeeded * 0.1), 50);
+    const sheetsWithWaste = sheetsNeeded + overs;
+    const paperCost = sheetsWithWaste * (paper.cost_amount || 0);
+    const paperPrice = sheetsWithWaste * (paper.price_amount || 0);
 
     const selectedFinishes = finishingWithOverrides.filter((f) => selectedFinishingIds.includes(f.id));
-    const finishingCost = selectedFinishes.reduce((acc, f) => acc + (f.cost_unit === 'per_sheet' ? sheetsWithWaste * f.cost_amount : f.cost_amount), 0);
-    const finishingPrice = selectedFinishes.reduce((acc, f) => acc + (f.cost_unit === 'per_sheet' ? sheetsWithWaste * f.price_amount : f.price_amount), 0);
+    const finishingDetail = selectedFinishes.map((f) => f.name).join(', ');
+    const finishingCost = selectedFinishes.reduce((acc, f) => {
+      const unit = f.cost_unit || 'flat';
+      if (unit === 'per_sheet') return acc + sheetsWithWaste * (f.cost_amount || 0);
+      if (unit === 'per_1000') return acc + (sheetsWithWaste / 1000) * (f.cost_amount || 0);
+      if (unit === 'per_item' || unit === 'per_piece') return acc + qty * (f.cost_amount || 0);
+      return acc + (f.cost_amount || 0);
+    }, 0);
+    const finishingPrice = selectedFinishes.reduce((acc, f) => {
+      const unit = f.cost_unit || 'flat';
+      if (unit === 'per_sheet') return acc + sheetsWithWaste * (f.price_amount || 0);
+      if (unit === 'per_1000') return acc + (sheetsWithWaste / 1000) * (f.price_amount || 0);
+      if (unit === 'per_item' || unit === 'per_piece') return acc + qty * (f.price_amount || 0);
+      return acc + (f.price_amount || 0);
+    }, 0);
 
-    const mail = mailingWithOverrides.find((m) => m.id === null);
     let mailingCost = 0;
     let mailingPrice = 0;
-    if (mail) {
-      if (mail.cost_unit === 'per_piece' || mail.cost_unit === 'per_item') {
-        mailingCost = qty * mail.cost_amount;
-        mailingPrice = qty * mail.price_amount;
+    let mailingDetail = '';
+    const selectedMailing = mailingWithOverrides.find((m) => m.id === (selectedMailingId as any));
+    if (selectedMailing) {
+      const unit = selectedMailing.cost_unit || 'flat';
+      if (unit === 'per_piece' || unit === 'per_item') {
+        mailingCost = qty * (selectedMailing.cost_amount || 0);
+        mailingPrice = qty * (selectedMailing.price_amount || 0);
+        mailingDetail = `${selectedMailing.name} • per piece`;
+      } else if (unit === 'per_1000') {
+        mailingCost = (qty / 1000) * (selectedMailing.cost_amount || 0);
+        mailingPrice = (qty / 1000) * (selectedMailing.price_amount || 0);
+        mailingDetail = `${selectedMailing.name} • per M`;
+      } else if (unit === 'per_sheet') {
+        mailingCost = sheetsWithWaste * (selectedMailing.cost_amount || 0);
+        mailingPrice = sheetsWithWaste * (selectedMailing.price_amount || 0);
+        mailingDetail = `${selectedMailing.name} • per sheet`;
       } else {
-        mailingCost = mail.cost_amount;
-        mailingPrice = mail.price_amount;
+        mailingCost = selectedMailing.cost_amount || 0;
+        mailingPrice = selectedMailing.price_amount || 0;
+        mailingDetail = `${selectedMailing.name} • flat`;
       }
     }
 
@@ -1237,41 +1307,53 @@ function BotIntakePanel({ supabase, currentUser, brandList, workflowOptions, cus
       let detail = '';
 
       if (press.type === 'press_digital') {
-        pressCost = sheetsWithWaste * press.cost_amount;
-        pressPrice = sheetsWithWaste * press.price_amount;
+        pressCost = sheetsWithWaste * (press.cost_amount || 0);
+        pressPrice = Math.max(25, sheetsWithWaste * (press.price_amount || 0));
         detail = `Digital | ${sheetsWithWaste} sheets`;
       } else {
         const setupHr = (press.setup_minutes || 0) / 60;
         const runHr = sheetsWithWaste / (press.run_speed_per_hour || 5000);
         const totalHr = setupHr + runHr;
-        if (press.price_amount < 50) {
-          pressPrice = 50 + (sheetsWithWaste / 1000) * press.price_amount;
-          pressCost = 15 + (sheetsWithWaste / 1000) * press.cost_amount;
-          detail = `Offset | ${totalHr.toFixed(2)} hrs`;
-        } else {
-          pressPrice = 50 + totalHr * press.price_amount;
-          pressCost = 15 + totalHr * press.cost_amount;
-          detail = `Offset | ${totalHr.toFixed(2)} hrs`;
-        }
+        const runRate = press.price_amount || 550;
+        const runCost = press.cost_amount || runRate * 0.6;
+        pressPrice = 50 + totalHr * runRate;
+        pressCost = 15 + totalHr * runCost;
+        detail = `Offset | ${totalHr.toFixed(2)} hrs`;
       }
 
       const totalCost = paperCost + pressCost + finishingCost + mailingCost;
-      const totalPrice = paperPrice + pressPrice + finishingPrice + mailingPrice;
-      const candidate = {
+      const basePrice = paperPrice + pressPrice + finishingPrice + mailingPrice;
+
+      const breakdown = [
+        { name: 'Paper', cost: paperCost, price: paperPrice, detail: `${sheetsWithWaste} sheets (${sheetsNeeded}+${overs} overs)` },
+        { name: 'Press', cost: pressCost, price: pressPrice, detail },
+        { name: 'Finishing', cost: finishingCost, price: finishingPrice, detail: finishingDetail || 'None' },
+        { name: 'Mailing', cost: mailingCost, price: mailingPrice, detail: mailingDetail || 'None' },
+      ];
+
+      const baseRoute = {
         method: press.name,
         sheet: `${paper.parent_sheet_width}x${paper.parent_sheet_height}`,
         nUp,
         totalSheets: sheetsWithWaste,
+        sheetsNeeded,
+        overs,
         paperPrice,
         pressPrice,
         finishingPrice,
         mailingPrice,
-        totalPrice,
+        totalPrice: basePrice,
         totalCost,
-        unitCost: totalPrice / qty,
+        unitCost: basePrice / qty,
         detail,
         paperName: paper.name,
+        finishingDetail,
+        mailingDetail,
+        breakdown,
+        basePrice,
       };
+
+      const candidate = applyPricingProfileToRoute(baseRoute as any, pricingProfile, qty);
       if (!best || candidate.totalPrice < best.totalPrice) {
         best = candidate;
       }
@@ -1309,18 +1391,23 @@ function BotIntakePanel({ supabase, currentUser, brandList, workflowOptions, cus
         .single();
       if (orderError || !order) throw orderError;
 
+      const combinedPaperStock = productKey === 'booklet'
+        ? `Cover: ${coverPaperName || insidePaperName || chosen.winner.paperName} / Inside: ${insidePaperName || chosen.winner.paperName}`
+        : chosen.winner.paperName || null;
+      const productNote = `Product: ${productMeta.customLabel || productMeta.label} ${productMeta.sizeLabel}${productMeta.pageCount ? ` • ${productMeta.pageCount} pages` : ''}${productMeta.coverStock ? ` • Cover ${productMeta.coverStock}` : ''}${productMeta.insideStock ? ` • Inside ${productMeta.insideStock}` : ''}`;
+
       const { data: job, error: jobError } = await supabase
         .from('jobs')
         .insert({
           order_id: order.id,
           user_id: selectedCustomerId || null,
           guest_email: selectedCustomerId ? null : (contactEmail || null),
-          title: itemTitle || 'Bot Intake Job',
+          title: itemTitle || productMeta.customLabel || productMeta.label || 'Bot Intake Job',
           quantity: selectedQuantity,
           status: 'Pending Review',
           created_by: currentUser?.id || null,
-          notes: transcript,
-          paper_stock: chosen.winner.paperName || null,
+          notes: [transcript, productNote].filter(Boolean).join('\n'),
+          paper_stock: combinedPaperStock,
           size: `${finishW}x${finishH}`,
         })
         .select()
@@ -1331,11 +1418,11 @@ function BotIntakePanel({ supabase, currentUser, brandList, workflowOptions, cus
         .from('job_items')
         .insert({
           job_id: job.id,
-          description: itemTitle || 'Bot Intake Item',
+          description: itemTitle || productMeta.customLabel || productMeta.label || 'Bot Intake Item',
           quantity: selectedQuantity,
-          paper_stock: chosen.winner.paperName || null,
+          paper_stock: combinedPaperStock,
           size: `${finishW}x${finishH}`,
-          internal_notes: transcript,
+          internal_notes: [transcript, productNote].filter(Boolean).join('\n'),
           status: 'Pending',
         })
         .select()
@@ -1477,26 +1564,103 @@ Price: ${formatCurrency(chosen.winner.totalPrice)}`,
               <input value={itemTitle} onChange={(e) => setItemTitle(e.target.value)} className="w-full border rounded px-3 py-2 text-sm" />
             </div>
             <div>
+              <label className="block text-[11px] font-bold uppercase text-gray-500">Product</label>
+              <select value={productKey} onChange={(e) => setProductKey(e.target.value as ProductTemplateKey)} className="w-full border rounded px-3 py-2 text-sm bg-white">
+                {PRODUCT_TEMPLATES.map((t) => (
+                  <option key={t.key} value={t.key}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold uppercase text-gray-500">Preset Size</label>
+              <select
+                value={productSizeLabel || 'custom'}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === 'custom') {
+                    setProductSizeLabel('Custom');
+                  } else {
+                    setProductSizeLabel(val);
+                    const opt = getTemplate(productKey).sizes.find((s) => s.label === val);
+                    if (opt) {
+                      setFinishW(opt.width);
+                      setFinishH(opt.height);
+                    }
+                  }
+                }}
+                className="w-full border rounded px-3 py-2 text-sm bg-white"
+              >
+                {getTemplate(productKey).sizes.map((s) => (
+                  <option key={s.label} value={s.label}>{s.label}</option>
+                ))}
+                <option value="custom">Custom Size</option>
+              </select>
+            </div>
+            <div className="col-span-2">
               <label className="block text-[11px] font-bold uppercase text-gray-500">Finished Size</label>
               <div className="flex gap-2 items-center">
-                <input type="number" value={finishW} onChange={(e) => setFinishW(parseFloat(e.target.value))} className="w-full border rounded px-2 py-2 text-sm" />
+                <input type="number" value={finishW} onChange={(e) => { setFinishW(parseFloat(e.target.value)); setProductSizeLabel('Custom'); }} className="w-full border rounded px-2 py-2 text-sm" />
                 <span className="text-gray-400">×</span>
-                <input type="number" value={finishH} onChange={(e) => setFinishH(parseFloat(e.target.value))} className="w-full border rounded px-2 py-2 text-sm" />
+                <input type="number" value={finishH} onChange={(e) => { setFinishH(parseFloat(e.target.value)); setProductSizeLabel('Custom'); }} className="w-full border rounded px-2 py-2 text-sm" />
               </div>
             </div>
+            {productKey === 'other' && (
+              <div className="col-span-2">
+                <label className="block text-[11px] font-bold uppercase text-gray-500">Custom Product</label>
+                <input value={customProductName} onChange={(e) => setCustomProductName(e.target.value)} className="w-full border rounded px-3 py-2 text-sm" placeholder="Describe the product" />
+              </div>
+            )}
+            {productKey === 'booklet' && (
+              <div className="col-span-2 grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-gray-500">Page Count</label>
+                  <input type="number" value={pageCount} onChange={(e) => setPageCount(parseInt(e.target.value) || 0)} className="w-full border rounded px-3 py-2 text-sm" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase text-gray-500">Cover Stock</label>
+                    <select value={coverPaperId} onChange={(e) => setCoverPaperId(e.target.value)} className="w-full border rounded px-2 py-2 text-sm bg-white">
+                      {papersWithOverrides.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase text-gray-500">Inside Stock</label>
+                    <select value={insidePaperId} onChange={(e) => setInsidePaperId(e.target.value)} className="w-full border rounded px-2 py-2 text-sm bg-white">
+                      {papersWithOverrides.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
             <div>
               <label className="block text-[11px] font-bold uppercase text-gray-500">Quantity Breaks</label>
               <input value={qtyInput} onChange={(e) => setQtyInput(e.target.value)} className="w-full border rounded px-3 py-2 text-sm" placeholder="250,500,1000" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold uppercase text-gray-500">Pricing Profile</label>
+              <div className="grid grid-cols-3 gap-2">
+                {(['wholesale','competitive','retail'] as PricingProfileKey[]).map((k) => (
+                  <button key={k} type="button" onClick={() => setPricingProfile(k)} className={`border rounded-lg px-2 py-2 text-sm font-bold ${pricingProfile === k ? 'bg-black text-white border-black' : 'bg-white text-gray-700 hover:border-black'}`}>
+                    <div className="flex items-center justify-between">
+                      <span className="capitalize">{k}</span>
+                      <span className="text-[10px] font-mono">×{PRICING_PROFILES[k].toFixed(2)}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
           <div>
             <label className="block text-[11px] font-bold uppercase text-gray-500">Paper</label>
-            <select value={selectedPaperId} onChange={(e) => setSelectedPaperId(e.target.value)} className="w-full border rounded px-3 py-2 text-sm bg-white">
+            <select value={productKey === 'booklet' ? insidePaperId : selectedPaperId} onChange={(e) => productKey === 'booklet' ? setInsidePaperId(e.target.value) : setSelectedPaperId(e.target.value)} className="w-full border rounded px-3 py-2 text-sm bg-white">
               {papersWithOverrides.map((p) => (
                 <option key={p.id} value={p.id}>{p.name} ({formatCurrency(p.price_amount)}/sht{p.__override ? ' • override' : ''})</option>
               ))}
             </select>
+            {productKey === 'booklet' && coverPaperId && (
+              <p className="text-[11px] text-gray-500 mt-1">Cover: {coverPaperName || 'Select'} · Inside: {insidePaperName || 'Select'}</p>
+            )}
           </div>
 
           <div>
@@ -1516,6 +1680,20 @@ Price: ${formatCurrency(chosen.winner.totalPrice)}`,
             </div>
           </div>
 
+          <div>
+            <label className="block text-[11px] font-bold uppercase text-gray-500">Mailing</label>
+            <select value={selectedMailingId} onChange={(e) => setSelectedMailingId(e.target.value)} className="w-full border rounded px-3 py-2 text-sm bg-white">
+              <option value="">No mailing</option>
+              {mailingWithOverrides.map((m) => {
+                const unitLabel = (m.cost_unit || 'per_job').replace('per_', '');
+                const rate = m.cost_unit === 'per_1000' ? (m.price_amount || 0) / 1000 : m.price_amount;
+                return (
+                  <option key={m.id} value={m.id}>{m.name} ({formatCurrency(rate)}/{unitLabel}{m.__override ? ' • override' : ''})</option>
+                );
+              })}
+            </select>
+          </div>
+
           <div className="flex items-center gap-2">
             <button onClick={handleEstimate} disabled={isEstimating} className="flex-1 bg-white border border-gray-300 rounded-lg px-4 py-2 text-sm font-bold hover:border-black flex items-center justify-center gap-2">
               {isEstimating ? <Loader2 className="animate-spin" size={16}/> : <Sparkles size={16}/>} Run Estimator
@@ -1532,6 +1710,7 @@ Price: ${formatCurrency(chosen.winner.totalPrice)}`,
                   <div>
                     <p className="text-sm font-bold text-gray-900">{p.quantity.toLocaleString()} qty</p>
                     <p className="text-xs text-gray-500">{p.winner.method} • {p.winner.sheet} • {p.winner.nUp}-up</p>
+                    <p className="text-[10px] text-gray-500 capitalize">Profile: {p.winner.pricingProfile || pricingProfile} ×{(p.winner.profileFactor || PRICING_PROFILES[pricingProfile]).toFixed(2)}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-lg font-black text-gray-900">{formatCurrency(p.winner.totalPrice)}</p>
