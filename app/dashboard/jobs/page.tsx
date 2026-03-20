@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Briefcase, Clock, ArrowRight, MessageSquare } from 'lucide-react';
 import CustomerPortalShell from '@/components/CustomerPortalShell';
+import { filterCustomerVisibleJobs } from '@/lib/customerJobs';
 
 export default function CustomerJobsPage() {
   const router = useRouter();
@@ -64,6 +65,11 @@ export default function CustomerJobsPage() {
 
   const isInternal = role === 'admin' || role === 'staff';
 
+  const customerJobs = useMemo(
+    () => (isInternal ? jobs : filterCustomerVisibleJobs(jobs)),
+    [jobs, isInternal]
+  );
+
   const formatDate = (dateString?: string | null) => {
     if (!dateString) return '--';
     return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -116,7 +122,7 @@ export default function CustomerJobsPage() {
           <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-12 text-center text-gray-400">
             Loading jobs…
           </div>
-        ) : jobs.length === 0 ? (
+        ) : customerJobs.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-gray-200 bg-white p-12 text-center">
             <Briefcase className="mx-auto mb-3 text-gray-300" size={36} />
             <h2 className="text-lg font-bold text-gray-900">No jobs yet</h2>
@@ -124,7 +130,7 @@ export default function CustomerJobsPage() {
           </div>
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
-            {jobs.map((job) => {
+            {customerJobs.map((job) => {
               const due = getDueStatus(job.due_date);
               return (
                 <Link

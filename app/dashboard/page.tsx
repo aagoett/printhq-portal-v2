@@ -19,6 +19,7 @@ import { applyOverridesToList, parseQuantityList, formatCurrency } from '@/utils
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
 import { applyPricingProfileToRoute, calculateProposals, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
 import { getCustomerClassDefaultProfile, normalizeCustomerClass } from '@/lib/customerClass';
+import { filterCustomerVisibleJobs, normalizeStatus as normalizeJobStatus } from '@/lib/customerJobs';
 
 // --- ROUTING VOCABULARY ---
 const DEFAULT_ROUTE_LIBRARY: { group: string; steps: string[] }[] = [
@@ -766,9 +767,13 @@ export default function Dashboard() {
   const sortedFilteredJobs = getSortedJobs(filteredJobs);
 
   if (!isInternal) {
-    const activeJobs = jobs.filter((job) => !['Completed', 'Cancelled'].includes(job.status || ''));
-    const recentJobs = jobs.slice(0, 3);
-    const dueSoon = jobs.filter((job) => {
+    const customerJobs = filterCustomerVisibleJobs(jobs);
+    const activeJobs = customerJobs.filter((job) => {
+      const status = normalizeJobStatus(job.status);
+      return status !== 'completed' && status !== 'cancelled' && status !== 'archived';
+    });
+    const recentJobs = customerJobs.slice(0, 3);
+    const dueSoon = customerJobs.filter((job) => {
       if (!job.due_date) return false;
       const due = new Date(job.due_date);
       const now = new Date();
@@ -777,6 +782,9 @@ export default function Dashboard() {
       const diffDays = (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
       return diffDays >= 0 && diffDays <= 3;
     }).length;
+    const quotesWaiting = customerJobs.filter(
+      (job) => normalizeJobStatus(job.status) === 'pending review'
+    ).length;
 
     return (
       <CustomerPortalShell
@@ -798,7 +806,7 @@ export default function Dashboard() {
             </div>
             <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
               <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Quotes waiting</p>
-              <p className="mt-3 text-4xl font-black tracking-tight text-gray-900">{jobs.filter((job) => job.status === 'Pending Review').length}</p>
+              <p className="mt-3 text-4xl font-black tracking-tight text-gray-900">{quotesWaiting}</p>
               <p className="mt-2 text-sm text-gray-500">Use Quotes to approve pricing or kick questions back before we press go.</p>
             </div>
             <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
