@@ -6,6 +6,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { ArrowLeft, Layers, Save, RefreshCcw, Trash2, Edit2, FileSpreadsheet, Ruler, Weight, Tag, Building2, Search, Filter } from 'lucide-react';
 import { PRICING_PROFILES } from '@/lib/estimator';
 import { formatCurrency } from '@/utils/pricing';
+import { coerceDecimal, parseDecimalInput } from '@/utils/number';
 
 const emptyForm = {
   id: null as string | null,
@@ -62,7 +63,17 @@ export default function PaperCatalogPage() {
     if (error) {
       console.error('load papers', error.message);
     }
-    setPapers(data || []);
+    const normalized = (data || []).map((row) => ({
+      ...row,
+      parent_sheet_width: coerceDecimal(row.parent_sheet_width),
+      parent_sheet_height: coerceDecimal(row.parent_sheet_height),
+      weight: coerceDecimal(row.weight),
+      caliper: coerceDecimal(row.caliper),
+      cost_amount: coerceDecimal(row.cost_amount) ?? 0,
+      price_amount: coerceDecimal(row.price_amount),
+      price_override: coerceDecimal(row.price_override),
+    })) as PaperRow[];
+    setPapers(normalized);
     setLoading(false);
   };
 
@@ -77,18 +88,39 @@ export default function PaperCatalogPage() {
     if (!form.parentWidth || !form.parentHeight) return alert('Parent sheet size required');
 
     setSaving(true);
+
+    let parentWidth: number;
+    let parentHeight: number;
+    let costValue: number;
+    let priceOverride: number | null;
+    let weightValue: number | null;
+    let caliperValue: number | null;
+
+    try {
+      parentWidth = parseDecimalInput(form.parentWidth, { fieldName: 'Parent width' }) ?? 0;
+      parentHeight = parseDecimalInput(form.parentHeight, { fieldName: 'Parent height' }) ?? 0;
+      costValue = parseDecimalInput(form.cost, { defaultValue: 0, fieldName: 'Internal cost' }) ?? 0;
+      priceOverride = parseDecimalInput(form.price, { allowNull: true, fieldName: 'Sell override' });
+      weightValue = parseDecimalInput(form.weight, { allowNull: true, fieldName: 'Weight' });
+      caliperValue = parseDecimalInput(form.caliper, { allowNull: true, fieldName: 'Caliper' });
+    } catch (err: any) {
+      setSaving(false);
+      alert(err?.message || 'Please enter valid numeric values.');
+      return;
+    }
+
     const payload: any = {
       name: form.name.trim(),
       brand: form.brand?.trim() || null,
       sku: form.sku?.trim() || null,
-      parent_sheet_width: parseFloat(form.parentWidth) || null,
-      parent_sheet_height: parseFloat(form.parentHeight) || null,
-      cost_amount: parseFloat(form.cost || '0') || 0,
-      price_override: form.price ? parseFloat(form.price) : null,
+      parent_sheet_width: parentWidth,
+      parent_sheet_height: parentHeight,
+      cost_amount: costValue,
+      price_override: priceOverride,
       cost_unit: form.costUnit,
       price_unit: form.priceUnit || form.costUnit,
-      weight: form.weight ? parseFloat(form.weight) : null,
-      caliper: form.caliper ? parseFloat(form.caliper) : null,
+      weight: weightValue,
+      caliper: caliperValue,
     };
 
     const query = form.id

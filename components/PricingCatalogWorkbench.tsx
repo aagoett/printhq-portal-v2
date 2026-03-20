@@ -6,6 +6,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { ArrowLeft, Package2, Truck, Save, RefreshCcw, Trash2, DollarSign, LayoutGrid, Calculator } from 'lucide-react';
 import { PRICING_PROFILES } from '@/lib/estimator';
 import { formatCurrency } from '@/utils/pricing';
+import { coerceDecimal, parseDecimalInput } from '@/utils/number';
 
 const UNIT_OPTIONS = [
   { value: 'per_sheet', label: 'Per sheet' },
@@ -85,7 +86,11 @@ export default function PricingCatalogWorkbench({ catalogType }: { catalogType: 
       .eq('type', catalogType)
       .order('name');
     if (error) console.error(`${catalogType} load`, error.message);
-    setRows(data || []);
+    setRows((data || []).map((row) => ({
+      ...row,
+      cost_amount: coerceDecimal(row.cost_amount) ?? 0,
+      price_amount: coerceDecimal(row.price_amount) ?? 0,
+    })) as Row[]);
     setLoading(false);
   };
 
@@ -103,11 +108,25 @@ export default function PricingCatalogWorkbench({ catalogType }: { catalogType: 
   const handleSave = async () => {
     if (!form.name.trim()) return alert('Name required');
     setSaving(true);
+
+    let costValue: number;
+    let priceValue: number;
+
+    try {
+      costValue = parseDecimalInput(form.cost, { defaultValue: 0, fieldName: 'Cost' }) ?? 0;
+      const priceSource = form.price.trim() !== '' ? form.price : form.cost;
+      priceValue = parseDecimalInput(priceSource, { defaultValue: costValue, fieldName: 'Price' }) ?? costValue;
+    } catch (err: any) {
+      setSaving(false);
+      alert(err?.message || 'Please enter valid decimal values.');
+      return;
+    }
+
     const payload: any = {
       name: form.name.trim(),
       type: catalogType,
-      cost_amount: parseFloat(form.cost || '0') || 0,
-      price_amount: parseFloat(form.price || form.cost || '0') || 0,
+      cost_amount: costValue,
+      price_amount: priceValue,
       cost_unit: form.costUnit,
       price_unit: form.priceUnit || form.costUnit,
       notes: form.notes?.trim() || null,
