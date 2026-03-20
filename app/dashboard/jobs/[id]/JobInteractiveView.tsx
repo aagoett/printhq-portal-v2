@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
+import CustomerPortalShell from '@/components/CustomerPortalShell';
 // Fix: Use relative path (3 dots) for Dashboard folder
 import { sendProofNotification } from '../../../server-actions'; 
 
@@ -737,6 +738,159 @@ export default function JobInteractiveView({
   const currentAsset = visibleAssets.find(a => a.id === viewingAssetId) || visibleAssets[0] || assets.find(a => a.id === viewingAssetId);
   const isApprovedAsset = currentAsset?.status === 'approved';
   const originalAsset = assets.find(a => a.asset_type === 'source');
+
+  if (!isStaff) {
+    const sharedProofs = visibleAssets.filter((asset: any) => asset.asset_type === 'proof');
+
+    return (
+      <CustomerPortalShell
+        title={job.title}
+        description="Job-safe view: progress, shared proofs/files, line items, and the conversation thread. Internal production controls stay hidden."
+        activeHref="/dashboard/jobs"
+        backHref="/dashboard/jobs"
+        backLabel="All jobs"
+        eyebrow="Job workspace"
+        meta={
+          <>
+            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-black uppercase text-gray-600">{job.status || 'In Progress'}</span>
+            <span>#{jobId.substring(0, 8).toUpperCase()}</span>
+          </>
+        }
+      >
+        <div className="space-y-6">
+          <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+            <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Overview</p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                <div className="rounded-2xl bg-gray-50 p-4">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Status</p>
+                  <p className="mt-2 text-lg font-black text-gray-900">{job.status || 'In Progress'}</p>
+                </div>
+                <div className="rounded-2xl bg-gray-50 p-4">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Items</p>
+                  <p className="mt-2 text-lg font-black text-gray-900">{items.length}</p>
+                </div>
+                <div className="rounded-2xl bg-gray-50 p-4">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Total qty</p>
+                  <p className="mt-2 text-lg font-black text-gray-900">{(itemAggregate.totalQty || job.quantity || 0).toLocaleString()}</p>
+                </div>
+              </div>
+              <div className="mt-5 flex flex-wrap gap-2 text-xs text-gray-500">
+                <span className="rounded-full border border-gray-200 bg-white px-3 py-1">Brand {job.orders?.brand || 'PrintHQ'}</span>
+                {job.due_date ? <span className="rounded-full border border-gray-200 bg-white px-3 py-1">Due {new Date(job.due_date).toLocaleDateString()}</span> : null}
+                {job.profiles?.email ? <span className="rounded-full border border-gray-200 bg-white px-3 py-1">Customer {job.profiles.email}</span> : null}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">What you can do here</p>
+              <div className="mt-4 space-y-3 text-sm text-gray-600">
+                <div className="rounded-2xl bg-gray-50 p-4">Open a proof or shared file and confirm approval when it looks right.</div>
+                <div className="rounded-2xl bg-gray-50 p-4">Reply in the job thread so every update stays attached to this order.</div>
+                <div className="rounded-2xl bg-gray-50 p-4">See line items and customer-safe production status without the shop’s internal notes.</div>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Line items</p>
+                <h2 className="mt-1 text-xl font-black text-gray-900">What’s in this job</h2>
+              </div>
+              <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-black text-gray-600">{items.length} items</span>
+            </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {items.length === 0 ? <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-sm text-gray-400 md:col-span-2 xl:col-span-3">No line items added yet.</div> : items.map((item) => (
+                <div key={item.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-black text-gray-900">{item.description}</p>
+                      <p className="mt-1 text-[11px] uppercase text-gray-500">Qty {item.quantity?.toLocaleString() || 0}</p>
+                    </div>
+                    <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-black uppercase text-blue-700">{item.status || 'Pending'}</span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-gray-500">
+                    {item.size ? <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1">{item.size}</span> : null}
+                    {item.paper_stock ? <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1">{item.paper_stock}</span> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+            <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Shared files</p>
+                  <h2 className="mt-1 text-xl font-black text-gray-900">Proofs and downloads</h2>
+                </div>
+                <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-black text-gray-600">{sharedProofs.length}</span>
+              </div>
+
+              <div className="mt-5 space-y-3">
+                {sharedProofs.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-sm text-gray-400">No shared proofs yet.</div>
+                ) : (
+                  sharedProofs.map((asset) => (
+                    <button key={asset.id} type="button" onClick={() => loadPreview(asset)} className={`flex w-full items-center justify-between rounded-2xl border p-4 text-left transition ${viewingAssetId === asset.id ? 'border-black bg-gray-50' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-gray-900">{asset.file_name}</p>
+                        <p className="mt-1 text-[11px] text-gray-500">{new Date(asset.created_at).toLocaleString()}</p>
+                      </div>
+                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${asset.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'}`}>
+                        {asset.status === 'approved' ? 'Approved' : 'Proof'}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              {previewUrl ? (
+                <div className="mt-5 overflow-hidden rounded-3xl border border-gray-200 bg-gray-100">
+                  <div className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-3">
+                    <div>
+                      <p className="text-sm font-bold text-gray-900">{currentAsset?.file_name}</p>
+                      <p className="text-[11px] text-gray-500">{currentAsset?.status === 'approved' ? 'Approved proof' : 'Shared proof'}</p>
+                    </div>
+                    {previewUrl ? <a href={previewUrl} target="_blank" className="rounded-full border border-gray-200 px-3 py-1.5 text-xs font-bold text-gray-700 hover:border-black hover:text-black">Open file</a> : null}
+                  </div>
+                  <div className="flex min-h-[420px] items-center justify-center p-4">
+                    {previewType === 'image' ? <img src={previewUrl} className="max-h-[540px] max-w-full rounded-2xl bg-white shadow-sm" /> : <iframe src={`${previewUrl}#toolbar=0`} className="h-[540px] w-full rounded-2xl bg-white" />}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-3xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+              <div className="border-b border-gray-200 px-6 py-5">
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Messages</p>
+                <h2 className="mt-1 text-xl font-black text-gray-900">Job conversation</h2>
+              </div>
+              <div className="max-h-[620px] overflow-y-auto px-6 py-5 space-y-3">
+                {messages.length === 0 ? <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-sm text-gray-400">No messages yet.</div> : messages.map((msg) => (
+                  <div key={msg.id} className={`flex flex-col ${msg.user_id === user?.id ? 'items-end' : 'items-start'}`}>
+                    <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm ${msg.user_id === user?.id ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>
+                      {msg.content}
+                    </div>
+                    <span className="mt-1 text-[11px] text-gray-400">{msg.profiles?.email?.split('@')[0] || 'PrintHQ'}</span>
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
+              <div className="border-t border-gray-100 bg-gray-50 p-4">
+                <div className="flex gap-2">
+                  <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm focus:border-black focus:outline-none" placeholder="Reply on this job..." />
+                  <button onClick={handleSendMessage} className="inline-flex items-center justify-center rounded-2xl bg-black px-4 text-white hover:bg-gray-800"><Send size={16} /></button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </CustomerPortalShell>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col relative">

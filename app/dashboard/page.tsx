@@ -14,6 +14,7 @@ import Link from 'next/link';
 // Use the new name and the @ alias so it always finds the right spot
 import { sendOrderConfirmation } from '../server-actions';
 import ItemDetailDrawer from '@/components/ItemDetailDrawer';
+import CustomerPortalShell from '@/components/CustomerPortalShell';
 import { applyOverridesToList, parseQuantityList, formatCurrency } from '@/utils/pricing';
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
 import { applyPricingProfileToRoute, calculateProposals, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
@@ -763,6 +764,92 @@ export default function Dashboard() {
   });
 
   const sortedFilteredJobs = getSortedJobs(filteredJobs);
+
+  if (!isInternal) {
+    const activeJobs = jobs.filter((job) => !['Completed', 'Cancelled'].includes(job.status || ''));
+    const recentJobs = jobs.slice(0, 3);
+    const dueSoon = jobs.filter((job) => {
+      if (!job.due_date) return false;
+      const due = new Date(job.due_date);
+      const now = new Date();
+      due.setHours(23, 59, 59, 999);
+      now.setHours(0, 0, 0, 0);
+      const diffDays = (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+      return diffDays >= 0 && diffDays <= 3;
+    }).length;
+
+    return (
+      <CustomerPortalShell
+        title="Customer home"
+        description="One clean place to track your print work, watch proofs, and keep the shop conversation moving."
+        activeHref="/dashboard"
+        actions={
+          <Link href="/dashboard/jobs" className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-sm font-bold text-white transition hover:bg-gray-800">
+            View all jobs
+          </Link>
+        }
+      >
+        <div className="space-y-6">
+          <section className="grid gap-4 md:grid-cols-3">
+            <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Active jobs</p>
+              <p className="mt-3 text-4xl font-black tracking-tight text-gray-900">{activeJobs.length}</p>
+              <p className="mt-2 text-sm text-gray-500">Jobs currently moving through review, proofing, or production.</p>
+            </div>
+            <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Quotes waiting</p>
+              <p className="mt-3 text-4xl font-black tracking-tight text-gray-900">{jobs.filter((job) => job.status === 'Pending Review').length}</p>
+              <p className="mt-2 text-sm text-gray-500">Use Quotes to approve pricing or kick questions back before we press go.</p>
+            </div>
+            <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Due soon</p>
+              <p className="mt-3 text-4xl font-black tracking-tight text-gray-900">{dueSoon}</p>
+              <p className="mt-2 text-sm text-gray-500">Jobs due in the next three days so you can stay ahead of timing.</p>
+            </div>
+          </section>
+
+          <section className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
+            <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Recent jobs</p>
+                  <h2 className="mt-2 text-xl font-black text-gray-900">What’s moving right now</h2>
+                </div>
+                <Link href="/dashboard/jobs" className="text-sm font-bold text-gray-600 hover:text-black">Open jobs →</Link>
+              </div>
+              <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {recentJobs.length > 0 ? recentJobs.map((job) => (
+                  <StatusCard key={job.id} job={job} formatDate={formatDate} dueStatus={getDueStatus(job.due_date)} />
+                )) : (
+                  <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-sm text-gray-400 md:col-span-2 xl:col-span-3">No jobs yet. When the first order lands, it will show here.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Navigation</p>
+                <div className="mt-4 space-y-3 text-sm text-gray-600">
+                  <div className="rounded-2xl bg-gray-50 p-4"><span className="font-bold text-gray-900">Jobs</span><p className="mt-1">Track status, proofs, files, and the full message thread.</p></div>
+                  <div className="rounded-2xl bg-gray-50 p-4"><span className="font-bold text-gray-900">Quotes & invoices</span><p className="mt-1">Keep approvals and billing separate from live production updates.</p></div>
+                  <div className="rounded-2xl bg-gray-50 p-4"><span className="font-bold text-gray-900">Messages</span><p className="mt-1">Open the exact job conversation instead of hunting through email.</p></div>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Need something fast?</p>
+                <p className="mt-3 text-sm leading-6 text-gray-600">If a proof is waiting or a spec changed, open the job and reply there. That keeps the production trail attached to the work.</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Link href="/dashboard/messages" className="rounded-full border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700 hover:border-black hover:text-black">Open messages</Link>
+                  <Link href="/dashboard/quotes" className="rounded-full border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700 hover:border-black hover:text-black">Review quotes</Link>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </CustomerPortalShell>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-gray-50 relative">
