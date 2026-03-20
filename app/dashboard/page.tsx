@@ -60,13 +60,20 @@ type Brand = {
 };
 
 type CartItem = {
-  id: string; 
-  file: File;
+  id: string;
+  file: File | null;
   title: string;
   quantity: number;
   size: string;
   notes: string;
   paper_stock: string;
+  product_key: ProductTemplateKey | string;
+  product_name: string;
+  finishing?: string[];
+  mailing?: boolean;
+  mailingNotes?: string;
+  route_steps: string[];
+  artworkStatus: 'Uploaded' | 'Waiting on Art';
 };
 
 type PaperStock = {
@@ -100,7 +107,14 @@ export default function Dashboard() {
   // --- CART STATE ---
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedBrandId, setSelectedBrandId] = useState('');
-    
+
+  const [selectedProductKey, setSelectedProductKey] = useState<ProductTemplateKey | string>('postcard');
+  const [selectedSizeLabel, setSelectedSizeLabel] = useState<string>('');
+  const [customWidth, setCustomWidth] = useState<string>('');
+  const [customHeight, setCustomHeight] = useState<string>('');
+  const [fieldValues, setFieldValues] = useState<Record<string, any>>({});
+  const [waitingOnArt, setWaitingOnArt] = useState<boolean>(false);
+  
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [jobTitle, setJobTitle] = useState('');
   const [jobQty, setJobQty] = useState('');
@@ -129,9 +143,41 @@ export default function Dashboard() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
+  const selectedTemplate = useMemo(() => getTemplate(selectedProductKey as ProductTemplateKey, PRODUCT_TEMPLATES), [selectedProductKey]);
+  const sizeOptions = useMemo(() => selectedTemplate?.sizes || [], [selectedTemplate]);
+
+  useEffect(() => {
+    if (selectedTemplate) {
+      const defaultSize = selectedTemplate.sizes[0];
+      setSelectedSizeLabel(defaultSize?.label || '');
+      setJobSize(defaultSize?.label || '');
+      setCustomWidth('');
+      setCustomHeight('');
+    }
+  }, [selectedTemplate]);
+
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  useEffect(() => {
+    if (selectedSizeLabel && selectedSizeLabel !== 'custom') {
+      setJobSize(selectedSizeLabel);
+    }
+  }, [selectedSizeLabel]);
+
+  const buildRoutePreview = (template: any, finishing: string[] = [], mailing?: boolean) => {
+    const steps: string[] = ['Prepress'];
+    if (template?.name) steps.push(template.name);
+    steps.push('Print');
+    if (finishing && finishing.length > 0) steps.push('Finishing');
+    if (mailing) steps.push('Mail Prep');
+    steps.push('QC');
+    steps.push('Ready for Pickup/Ship');
+    return steps;
+  };
+
+  const currentRoutePreview = useMemo(() => buildRoutePreview(selectedTemplate, fieldValues.finishing || [], fieldValues.mailing), [selectedTemplate, fieldValues]);
 
   const fetchDashboardData = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -326,17 +372,24 @@ export default function Dashboard() {
     resetForm();
     setIsNewCustomer(false);
     setNewCustomerEmail('');
+    setSelectedProductKey('postcard');
     setShowModal(true);
   };
 
   const resetForm = () => {
     setCurrentFile(null);
+    setWaitingOnArt(false);
     setJobTitle('');
     setJobQty('');
     setJobSize('');
     setJobNotes('');
     if (stockLibrary.length > 0) setSelectedStockId(stockLibrary[0].name);
     setCustomStockValue('');
+    setFieldValues({});
+    const defaultSize = selectedTemplate?.sizes?.[0];
+    setSelectedSizeLabel(defaultSize?.label || '');
+    setCustomWidth('');
+    setCustomHeight('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -347,6 +400,7 @@ export default function Dashboard() {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       setCurrentFile(file);
+      setWaitingOnArt(false);
       if (!jobTitle) setJobTitle(file.name.split('.').slice(0, -1).join('.'));
     }
   };
@@ -371,13 +425,18 @@ export default function Dashboard() {
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
         const file = e.dataTransfer.files[0];
         setCurrentFile(file);
+        setWaitingOnArt(false);
         if (!jobTitle) setJobTitle(file.name.split('.').slice(0, -1).join('.'));
     }
   };
 
+  const updateFieldValue = (key: string, value: any) => {
+    setFieldValues(prev => ({ ...prev, [key]: value }));
+  };
+
   const handleAddToCart = () => {
-    if (!currentFile) return alert("Please upload a file.");
-    if (!jobQty) return alert("Please enter quantity.");
+    const qty = parseInt(jobQty);
+    if (!qty || qty <= 0) return alert("Please enter quantity.");
 
     let finalStock = selectedStockId;
     if (selectedStockId === 'custom') {
@@ -385,14 +444,31 @@ export default function Dashboard() {
         finalStock = customStockValue;
     }
 
+    if (!currentFile && !waitingOnArt) {
+      setWaitingOnArt(true);
+    }
+
+    const selectedSize = selectedSizeLabel === 'custom' && customWidth && customHeight
+      ? `${customWidth} x ${customHeight}`
+      : (selectedSizeLabel || jobSize || 'N/A');
+
+    const routeSteps = buildRoutePreview(selectedTemplate, fieldValues.finishing || [], fieldValues.mailing);
+
     const newItem: CartItem = {
       id: Math.random().toString(36),
-      file: currentFile,
-      title: jobTitle,
-      quantity: parseInt(jobQty),
-      size: jobSize || 'N/A', 
+      file: waitingOnArt ? null : currentFile,
+      title: jobTitle || selectedTemplate?.name || 'Untitled Item',
+      quantity: qty,
+      size: selectedSize,
       notes: jobNotes,
-      paper_stock: finalStock
+      paper_stock: finalStock,
+      product_key: selectedTemplate?.key || 'other',
+      product_name: selectedTemplate?.name || 'Custom',
+      finishing: fieldValues.finishing || [],
+      mailing: !!fieldValues.mailing,
+      mailingNotes: fieldValues.mailingNotes,
+      route_steps: routeSteps,
+      artworkStatus: waitingOnArt || !currentFile ? 'Waiting on Art' : 'Uploaded'
     };
 
     setCart([...cart, newItem]);
@@ -460,8 +536,7 @@ export default function Dashboard() {
 
       // 5. Process Items
       for (const item of cart) {
-        
-        // A. Insert Item
+        const initialStatus = item.route_steps?.[0] || 'Pending';
         const { data: newItem, error: itemError } = await supabase
             .from('job_items')
             .insert({
@@ -471,39 +546,49 @@ export default function Dashboard() {
                 paper_stock: item.paper_stock,
                 size: item.size,
                 internal_notes: item.notes,
-                status: 'Pending'
+                status: initialStatus
             })
             .select().single();
 
         if (itemError) throw itemError;
 
-        // B. Handle File Upload
-        const fileExt = item.file.name.split('.').pop();
-        const fileName = `${newJob.id}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-        const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, item.file);
-        
-        if (uploadError) console.error("File upload failed for " + item.title, uploadError);
-
-        // C. Create Asset
-        if (fileData) {
-            await supabase.from('job_assets').insert({
-                job_id: newJob.id,
-                job_item_id: newItem.id,
-                uploader_id: user.id,
-                file_url: fileData.path,
-                file_name: item.file.name,
-                asset_type: 'source',
-                status: 'pending'
-            });
+        if (item.file) {
+          const fileExt = item.file.name.split('.').pop();
+          const fileName = `${newJob.id}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+          const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, item.file);
+          if (uploadError) console.error("File upload failed for " + item.title, uploadError);
+          if (fileData) {
+              await supabase.from('job_assets').insert({
+                  job_id: newJob.id,
+                  job_item_id: newItem.id,
+                  uploader_id: user.id,
+                  file_url: fileData.path,
+                  file_name: item.file.name,
+                  asset_type: 'source',
+                  status: 'pending'
+              });
+          }
+        } else {
+          await supabase.from('job_logs').insert({
+            job_id: newJob.id,
+            user_id: user.id,
+            action: 'Waiting on Art',
+            details: `${item.title} marked as waiting on art`,
+            job_item_id: newItem.id
+          });
         }
 
-        // D. Create Initial Step
-        await supabase.from('job_item_steps').insert({
+        // Seed steps from route preview
+        const stepsToInsert = item.route_steps && item.route_steps.length > 0 ? item.route_steps : ['Prepress'];
+        for (let idx = 0; idx < stepsToInsert.length; idx++) {
+          const stepName = stepsToInsert[idx];
+          await supabase.from('job_item_steps').insert({
             job_item_id: newItem.id,
-            step_name: 'Prepress',
-            status: 'Pending',
+            step_name: stepName,
+            status: idx === 0 ? 'Pending' : 'Pending',
             is_internal: true
-        });
+          });
+        }
       }
 
       // 6. Send Email
@@ -705,12 +790,22 @@ export default function Dashboard() {
                    </div>
                    <div className="divide-y divide-gray-100">
                      {cart.map((item) => (
-                       <div key={item.id} className="p-3 bg-white flex justify-between items-center">
-                         <div className="flex items-center overflow-hidden">
-                           <FileText size={16} className="text-blue-500 mr-3 flex-shrink-0" />
-                           <div className="truncate">
+                       <div key={item.id} className="p-3 bg-white flex justify-between items-start gap-3">
+                         <div className="flex items-start overflow-hidden gap-3">
+                           <FileText size={16} className="text-blue-500 mt-1 flex-shrink-0" />
+                           <div className="truncate space-y-1">
                              <p className="text-sm font-bold text-gray-900 truncate">{item.title}</p>
-                             <p className="text-xs text-gray-400">{item.size} • {item.paper_stock}</p>
+                             <p className="text-[11px] text-gray-500 font-semibold truncate">{item.product_name} • {item.size} • {item.paper_stock}</p>
+                             <div className="flex flex-wrap gap-1 items-center text-[10px] text-gray-500 font-semibold">
+                               <span className="px-2 py-1 rounded-full bg-gray-100 border">{item.artworkStatus}</span>
+                               {item.finishing && item.finishing.length > 0 && <span className="px-2 py-1 rounded-full bg-blue-50 border border-blue-100">Finishing: {item.finishing.join(', ')}</span>}
+                               {item.mailing && <span className="px-2 py-1 rounded-full bg-purple-50 border border-purple-100">Mailing</span>}
+                             </div>
+                             <div className="flex flex-wrap gap-1 mt-1">
+                               {item.route_steps?.map((step) => (
+                                 <span key={step} className="text-[10px] px-2 py-1 rounded-full bg-gray-50 border border-gray-200 text-gray-600 font-bold uppercase tracking-wide">{step}</span>
+                               ))}
+                             </div>
                            </div>
                          </div>
                          <div className="flex items-center gap-4">
@@ -729,65 +824,196 @@ export default function Dashboard() {
                   </h4>
                   
                   <div className="space-y-4">
-                    {!currentFile ? (
-                      <div 
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
-                        onClick={triggerFilePicker} 
-                        className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 
-                          ${isDragging ? 'border-blue-500 bg-blue-50 scale-[1.02]' : 'border-gray-300 hover:border-black hover:bg-gray-50'}`}
-                      >
-                        <UploadCloud className={`mx-auto h-8 w-8 mb-2 ${isDragging ? 'text-blue-500' : 'text-gray-400'}`} />
-                        <p className={`text-sm font-bold ${isDragging ? 'text-blue-700' : 'text-gray-600'}`}>
-                          {isDragging ? 'Drop file here!' : 'Click or Drag artwork here'}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl text-blue-900 border border-blue-100 animate-in fade-in slide-in-from-top-2">
-                        <div className="flex items-center overflow-hidden">
-                          <FileText size={20} className="mr-3 text-blue-600 flex-shrink-0" />
-                          <p className="text-sm font-medium truncate">{currentFile.name}</p>
-                        </div>
-                        <button type="button" onClick={() => setCurrentFile(null)} className="ml-2 text-blue-400 hover:text-red-500"><X size={16} /></button>
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className="col-span-3">
-                        <input type="text" placeholder="Item Title (e.g. Business Cards)" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] font-bold uppercase text-gray-500">Product</label>
+                        <select
+                          value={selectedProductKey}
+                          onChange={(e) => setSelectedProductKey(e.target.value)}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:border-black"
+                        >
+                          {PRODUCT_TEMPLATES.map((p) => (
+                            <option key={p.key} value={p.key}>{p.name}</option>
+                          ))}
+                        </select>
                       </div>
                       <div>
+                        <label className="text-[11px] font-bold uppercase text-gray-500">Quantity</label>
                         <input type="number" placeholder="Qty" value={jobQty} onChange={(e) => setJobQty(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
                       </div>
-                      <div className="col-span-2">
-                        <input type="text" placeholder="Size (e.g. 8.5x11)" value={jobSize} onChange={(e) => setJobSize(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-bold uppercase text-gray-500">Item Title</label>
+                      <input type="text" placeholder="Item Title (e.g. Business Cards)" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="col-span-1 md:col-span-2">
+                        <label className="text-[11px] font-bold uppercase text-gray-500">Size</label>
+                        <select
+                          value={selectedSizeLabel}
+                          onChange={(e) => setSelectedSizeLabel(e.target.value)}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:border-black"
+                        >
+                          {sizeOptions.map((s) => (
+                            <option key={s.label} value={s.label}>{s.label}</option>
+                          ))}
+                          {selectedTemplate?.allowCustom && <option value="custom">Custom</option>}
+                        </select>
+                      </div>
+                      {selectedSizeLabel === 'custom' && (
+                        <div className="col-span-1 md:col-span-1 grid grid-cols-2 gap-2">
+                          <input type="number" placeholder="W" value={customWidth} onChange={(e) => setCustomWidth(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
+                          <input type="number" placeholder="H" value={customHeight} onChange={(e) => setCustomHeight(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-3">
+                      {selectedTemplate?.fields?.map((field) => {
+                        if (field.type === 'paper') {
+                          return (
+                            <div key={field.key} className="space-y-1">
+                              <label className="text-[11px] font-bold uppercase text-gray-500">{field.label}</label>
+                              <select
+                                value={fieldValues[field.key] || selectedStockId}
+                                onChange={(e) => { setSelectedStockId(e.target.value); updateFieldValue(field.key, e.target.value); }}
+                                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:border-black"
+                              >
+                                {stockLibrary.map((s) => (<option key={s.id} value={s.name}>{s.name}</option>))}
+                                <option value="custom">-- Custom / Other --</option>
+                              </select>
+                              {(fieldValues[field.key] === 'custom' || selectedStockId === 'custom') && (
+                                <input
+                                  type="text"
+                                  placeholder="Enter custom paper details..."
+                                  value={customStockValue}
+                                  onChange={(e) => setCustomStockValue(e.target.value)}
+                                  className="w-full rounded-lg border border-blue-300 px-3 py-2 text-sm bg-blue-50 focus:bg-white transition-colors"
+                                />
+                              )}
+                            </div>
+                          );
+                        }
+                        if (field.type === 'select') {
+                          return (
+                            <div key={field.key} className="space-y-1">
+                              <label className="text-[11px] font-bold uppercase text-gray-500">{field.label}</label>
+                              <select
+                                value={fieldValues[field.key] || ''}
+                                onChange={(e) => updateFieldValue(field.key, e.target.value)}
+                                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:border-black"
+                              >
+                                <option value="">Select...</option>
+                                {field.options?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                              </select>
+                              {field.helper && <p className="text-[11px] text-gray-400">{field.helper}</p>}
+                            </div>
+                          );
+                        }
+                        if (field.type === 'multiselect') {
+                          return (
+                            <div key={field.key} className="space-y-1">
+                              <label className="text-[11px] font-bold uppercase text-gray-500">{field.label}</label>
+                              <div className="flex flex-wrap gap-2">
+                                {field.options?.map(opt => {
+                                  const isActive = (fieldValues[field.key] || []).includes(opt);
+                                  return (
+                                    <button
+                                      type="button"
+                                      key={opt}
+                                      onClick={() => {
+                                        const existing = fieldValues[field.key] || [];
+                                        const next = isActive ? existing.filter((o: string) => o !== opt) : [...existing, opt];
+                                        updateFieldValue(field.key, next);
+                                      }}
+                                      className={`px-3 py-1 rounded-full border text-xs font-bold ${isActive ? 'bg-black text-white border-black' : 'bg-white text-gray-600 border-gray-200 hover:border-black'}`}
+                                    >
+                                      {opt}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        }
+                        if (field.type === 'boolean') {
+                          return (
+                            <label key={field.key} className="flex items-center gap-2 text-sm text-gray-700">
+                              <input type="checkbox" checked={!!fieldValues[field.key]} onChange={(e) => updateFieldValue(field.key, e.target.checked)} />
+                              {field.label}
+                              {field.helper && <span className="text-[11px] text-gray-400">{field.helper}</span>}
+                            </label>
+                          );
+                        }
+                        if (field.type === 'number') {
+                          return (
+                            <div key={field.key} className="space-y-1">
+                              <label className="text-[11px] font-bold uppercase text-gray-500">{field.label}</label>
+                              <input type="number" value={fieldValues[field.key] || ''} onChange={(e) => updateFieldValue(field.key, e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
+                            </div>
+                          );
+                        }
+                        return (
+                          <div key={field.key} className="space-y-1">
+                            <label className="text-[11px] font-bold uppercase text-gray-500">{field.label}</label>
+                            <input type="text" value={fieldValues[field.key] || ''} onChange={(e) => updateFieldValue(field.key, e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-bold uppercase text-gray-500">Artwork</label>
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                          <input type="checkbox" checked={waitingOnArt} onChange={(e) => { setWaitingOnArt(e.target.checked); if (e.target.checked) setCurrentFile(null); }} />
+                          Waiting on Art
+                        </label>
+                        {currentFile && <span className="text-xs text-gray-500">{currentFile.name}</span>}
+                      </div>
+                      {!waitingOnArt && (!currentFile ? (
+                        <div
+                          onDragOver={handleDragOver}
+                          onDragLeave={handleDragLeave}
+                          onDrop={handleDrop}
+                          onClick={triggerFilePicker}
+                          className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 
+                            ${isDragging ? 'border-blue-500 bg-blue-50 scale-[1.02]' : 'border-gray-300 hover:border-black hover:bg-gray-50'}`}
+                        >
+                          <UploadCloud className={`mx-auto h-8 w-8 mb-2 ${isDragging ? 'text-blue-500' : 'text-gray-400'}`} />
+                          <p className={`text-sm font-bold ${isDragging ? 'text-blue-700' : 'text-gray-600'}`}>
+                            {isDragging ? 'Drop file here!' : 'Click or Drag artwork here'}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl text-blue-900 border border-blue-100 animate-in fade-in slide-in-from-top-2">
+                          <div className="flex items-center overflow-hidden">
+                            <FileText size={20} className="mr-3 text-blue-600 flex-shrink-0" />
+                            <p className="text-sm font-medium truncate">{currentFile?.name}</p>
+                          </div>
+                          <button type="button" onClick={() => setCurrentFile(null)} className="ml-2 text-blue-400 hover:text-red-500"><X size={16} /></button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-bold uppercase text-gray-500">Internal Notes</label>
+                      <textarea value={jobNotes} onChange={(e) => setJobNotes(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" rows={2} />
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-bold uppercase text-gray-500">Route Preview</p>
+                      <div className="flex flex-wrap gap-2">
+                        {currentRoutePreview.map(step => (
+                          <span key={step} className="px-3 py-1 rounded-full bg-gray-50 border border-gray-200 text-[11px] font-bold text-gray-700 uppercase tracking-wide">{step}</span>
+                        ))}
                       </div>
                     </div>
                     
-                    <div className="space-y-2">
-                        <select 
-                            value={selectedStockId} 
-                            onChange={(e) => setSelectedStockId(e.target.value)} 
-                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:border-black"
-                        >
-                            {stockLibrary.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                            <option value="custom">-- Custom / Other --</option>
-                        </select>
-                        
-                        {selectedStockId === 'custom' && (
-                            <input 
-                                type="text" 
-                                placeholder="Enter custom paper details..." 
-                                value={customStockValue}
-                                onChange={(e) => setCustomStockValue(e.target.value)}
-                                className="w-full rounded-lg border border-blue-300 px-3 py-2 text-sm bg-blue-50 focus:bg-white transition-colors"
-                            />
-                        )}
-                    </div>
-                    
-                    <button type="button" onClick={handleAddToCart} disabled={!currentFile || !jobQty} className={`w-full py-3 rounded-lg font-bold text-sm transition-all flex items-center justify-center ${!currentFile || !jobQty ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800 shadow-md'}`}>
-                      {!currentFile ? 'Select a File first...' : !jobQty ? 'Enter Quantity...' : '+ Add Item to List'}
+                    <button type="button" onClick={handleAddToCart} disabled={!jobQty} className={`w-full py-3 rounded-lg font-bold text-sm transition-all flex items-center justify-center ${!jobQty ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800 shadow-md'}`}>
+                      {!jobQty ? 'Enter Quantity...' : '+ Add Item to List'}
                     </button>
                  </div>
               </div>
