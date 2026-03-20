@@ -1,7 +1,18 @@
 'use client';
 
 import Link from 'next/link';
-import { Home, FileText, Briefcase, MessageSquare, Settings, ArrowLeft, FolderKanban, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { usePathname } from 'next/navigation';
+import {
+  Home,
+  FileText,
+  Briefcase,
+  MessageSquare,
+  Settings,
+  ArrowLeft,
+  FolderKanban,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from 'lucide-react';
 import { ReactNode, useMemo, useState } from 'react';
 
 type NavItem = {
@@ -13,11 +24,11 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard', label: 'Home', icon: Home, match: ['/dashboard'] },
-  { href: '/dashboard/jobs', label: 'Jobs', icon: FolderKanban, match: ['/dashboard/jobs'] },
-  { href: '/dashboard/quotes', label: 'Quotes', icon: FileText, match: ['/dashboard/quotes'] },
-  { href: '/dashboard/invoices', label: 'Invoices', icon: Briefcase, match: ['/dashboard/invoices'] },
-  { href: '/dashboard/messages', label: 'Messages', icon: MessageSquare, match: ['/dashboard/messages'] },
-  { href: '/dashboard/settings', label: 'Settings', icon: Settings, match: ['/dashboard/settings'] },
+  { href: '/dashboard/jobs', label: 'Jobs', icon: FolderKanban, match: ['/dashboard/jobs', '/dashboard/jobs/'] },
+  { href: '/dashboard/quotes', label: 'Quotes', icon: FileText, match: ['/dashboard/quotes', '/dashboard/quotes/'] },
+  { href: '/dashboard/invoices', label: 'Invoices', icon: Briefcase, match: ['/dashboard/invoices', '/dashboard/invoices/'] },
+  { href: '/dashboard/messages', label: 'Messages', icon: MessageSquare, match: ['/dashboard/messages', '/dashboard/messages/'] },
+  { href: '/dashboard/settings', label: 'Settings', icon: Settings, match: ['/dashboard/settings', '/dashboard/settings/'] },
 ];
 
 type Props = {
@@ -43,19 +54,23 @@ export default function CustomerPortalShell({
   actions,
   children,
 }: Props) {
+  const pathname = usePathname();
+  const resolvedActive = activeHref || pathname || '';
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const activeItem = useMemo(() => {
     return NAV_ITEMS.find((item) => {
-      if (activeHref === item.href) return true;
-      return item.match?.includes(activeHref || '');
+      const paths = [item.href, ...(item.match || [])];
+      return paths.some((path) => resolvedActive.startsWith(path));
     });
-  }, [activeHref]);
+  }, [resolvedActive]);
 
   return (
     <div className="min-h-screen bg-gray-100 text-gray-900">
       <div className="mx-auto flex min-h-screen max-w-[1600px]">
-        <aside className={`${sidebarOpen ? 'w-72' : 'w-24'} hidden border-r border-gray-200 bg-white transition-all duration-200 lg:flex lg:flex-col`}>
+        <aside
+          className={`${sidebarOpen ? 'w-72' : 'w-24'} hidden border-r border-gray-200 bg-white transition-all duration-200 lg:flex lg:flex-col`}
+        >
           <div className="flex h-20 items-center justify-between border-b border-gray-100 px-6">
             <Link href="/dashboard" className="flex min-w-0 items-center gap-3">
               <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-black text-xs font-black tracking-[0.24em] text-white">PHQ</span>
@@ -88,9 +103,7 @@ export default function CustomerPortalShell({
                     key={href}
                     href={href}
                     className={`group flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition-all ${
-                      active
-                        ? 'bg-black text-white shadow-lg shadow-black/10'
-                        : 'text-gray-600 hover:bg-gray-100 hover:text-black'
+                      active ? 'bg-black text-white shadow-lg shadow-black/10' : 'text-gray-600 hover:bg-gray-100 hover:text-black'
                     } ${sidebarOpen ? 'justify-start' : 'justify-center px-0'}`}
                     title={!sidebarOpen ? label : undefined}
                   >
@@ -106,7 +119,9 @@ export default function CustomerPortalShell({
             {sidebarOpen ? (
               <div className="rounded-2xl bg-gray-50 p-4">
                 <div className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Portal scope</div>
-                <p className="mt-2 text-sm leading-6 text-gray-600">Track jobs, review proofs, confirm quotes, and keep billing tied to the work without exposing shop-only controls.</p>
+                <p className="mt-2 text-sm leading-6 text-gray-600">
+                  Track jobs, review proofs, confirm quotes, and keep billing tied to the work without exposing shop-only controls.
+                </p>
               </div>
             ) : (
               <div className="flex justify-center">
@@ -123,7 +138,10 @@ export default function CustomerPortalShell({
                 <div className="min-w-0 space-y-3">
                   <div className="flex flex-wrap items-center gap-3">
                     {backHref ? (
-                      <Link href={backHref} className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-600 transition hover:border-gray-300 hover:text-black">
+                      <Link
+                        href={backHref}
+                        className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm font-semibold text-gray-600 transition hover:border-gray-300 hover:text-black"
+                      >
                         <ArrowLeft size={16} /> {backLabel}
                       </Link>
                     ) : null}
@@ -144,7 +162,11 @@ export default function CustomerPortalShell({
             </div>
           </header>
 
-          <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+          <main className="flex-1 bg-white/60 px-4 py-6 sm:px-6 lg:px-8">
+            <div className="mx-auto max-w-6xl rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6 lg:p-8">
+              {children}
+            </div>
+          </main>
         </div>
       </div>
     </div>
