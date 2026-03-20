@@ -2,8 +2,9 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
-import { Trash2, DollarSign, Settings, ArrowLeft, Clock, Zap, Maximize, LayoutGrid, Calculator, Scissors, Truck } from 'lucide-react';
+import { Trash2, DollarSign, LayoutGrid, Calculator } from 'lucide-react';
 import Link from 'next/link';
+import InternalPageHeader from '@/components/InternalPageHeader';
 import { coerceDecimal, parseDecimalInput } from '@/utils/number';
 
 export default function PricingBuilderPage() {
@@ -131,14 +132,13 @@ export default function PricingBuilderPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
-        
-        {/* NAV */}
-        <div className="max-w-6xl mx-auto flex items-center justify-between mb-8 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-            <div className="flex items-center gap-4">
-                <Link href="/dashboard" className="p-2 bg-gray-50 border rounded-full hover:bg-gray-100 text-gray-500"><ArrowLeft size={20}/></Link>
-                <h1 className="text-xl font-bold text-gray-900">Cost Engine</h1>
-            </div>
-            <div className="flex gap-2">
+        <InternalPageHeader
+          title="Cost Engine"
+          description="Maintain raw costs and components that power estimating."
+          icon={DollarSign}
+          breadcrumbs={[{ label: 'Pricing' }]}
+          actions={
+            <div className="flex flex-wrap gap-2">
                 <Link href="/dashboard/pricing" className="px-4 py-2 bg-black text-white rounded-lg text-sm font-bold flex items-center gap-2"><DollarSign size={16}/> Costs</Link>
                 <Link href="/dashboard/pricing/paper-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Paper Catalog</Link>
                 <Link href="/dashboard/pricing/finishing-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Finishing Catalog</Link>
@@ -146,7 +146,10 @@ export default function PricingBuilderPage() {
                 <Link href="/dashboard/pricing/products" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Recipes</Link>
                 <Link href="/dashboard/pricing/estimator" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><Calculator size={16}/> Estimator</Link>
             </div>
-        </div>
+          }
+          maxWidthClassName="max-w-6xl"
+          sticky
+        />
 
         <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-6">
             {/* SIDEBAR */}

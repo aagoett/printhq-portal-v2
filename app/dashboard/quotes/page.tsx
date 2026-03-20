@@ -2,8 +2,9 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
-import { FileText, ArrowRight, Plus, Calendar, CheckCircle } from 'lucide-react';
+import { FileText, ArrowRight, Plus } from 'lucide-react';
 import Link from 'next/link';
+import InternalPageHeader from '@/components/InternalPageHeader';
 
 export default function QuotesListPage() {
   const [quotes, setQuotes] = useState<any[]>([]);
@@ -25,15 +26,19 @@ export default function QuotesListPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
-        <div className="max-w-6xl mx-auto mb-8 flex justify-between items-center">
-            <div>
-                <h1 className="text-2xl font-bold text-gray-900">Quote History</h1>
-                <p className="text-sm text-gray-500">Manage your saved estimates.</p>
-            </div>
+        <InternalPageHeader
+          title="Quote History"
+          description="Review saved estimates, reopen pricing logic, and move approved work into production."
+          icon={FileText}
+          breadcrumbs={[{ label: 'Quotes' }]}
+          actions={
             <Link href="/dashboard/pricing/estimator" className="bg-black text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2">
                 <Plus size={16}/> New Estimate
             </Link>
-        </div>
+          }
+          maxWidthClassName="max-w-6xl"
+          sticky
+        />
 
         <div className="max-w-6xl mx-auto space-y-4">
             {quotes.map((quote) => (

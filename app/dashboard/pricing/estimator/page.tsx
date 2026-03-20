@@ -3,8 +3,9 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Trophy, DollarSign, LayoutGrid, ArrowLeft, Save, Loader2, Users, Tag, Mail, SlidersHorizontal, Table, PlusCircle, RefreshCcw, Target, Package2, Truck, AlertTriangle, BadgeDollarSign, Scale } from 'lucide-react';
+import { Trophy, DollarSign, LayoutGrid, Save, Loader2, Users, Tag, Mail, SlidersHorizontal, Table, PlusCircle, RefreshCcw, Target, Package2, Truck, AlertTriangle, BadgeDollarSign, Scale } from 'lucide-react';
 import Link from 'next/link';
+import InternalPageHeader from '@/components/InternalPageHeader';
 import { applyOverridesToList, CustomerPricingOverride, formatCurrency } from '@/utils/pricing';
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
 import { calculateProposals, EstimatorContext, RouteOption, PricingComponent, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
@@ -733,21 +734,23 @@ export default function AutoEstimatorPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
-        
-        {/* NAV */}
-        <div className="max-w-6xl mx-auto flex items-center justify-between mb-8 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-            <div className="flex items-center gap-4">
-                <Link href="/dashboard" className="p-2 bg-gray-50 border rounded-full hover:bg-gray-100 text-gray-500"><ArrowLeft size={20}/></Link>
-                <h1 className="text-xl font-bold text-gray-900">Auto-Estimator</h1>
-            </div>
-            <div className="flex gap-2">
+        <InternalPageHeader
+          title="Auto-Estimator"
+          description="Run winning routes, margins, and overrides without leaving the production context."
+          icon={BadgeDollarSign}
+          breadcrumbs={[{ label: 'Pricing', href: '/dashboard/pricing' }, { label: 'Estimator' }]}
+          actions={
+            <div className="flex flex-wrap gap-2">
                 <Link href="/dashboard/pricing/paper-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Paper</Link>
                 <Link href="/dashboard/pricing/finishing-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><Package2 size={16}/> Finishing</Link>
                 <Link href="/dashboard/pricing/mailing-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><Truck size={16}/> Mailing</Link>
                 <Link href="/dashboard/pricing" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><DollarSign size={16}/> Costs</Link>
                 <Link href="/dashboard/quotes" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> My Quotes</Link>
             </div>
-        </div>
+          }
+          maxWidthClassName="max-w-6xl"
+          sticky
+        />
 
         <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
             

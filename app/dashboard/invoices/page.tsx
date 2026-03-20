@@ -3,10 +3,11 @@
 import { useState, useEffect } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { 
-  Plus, Search, Filter, ArrowRight, Printer, FileText, 
+  Plus, Search, Filter, Printer, FileText, 
   Calendar, MoreHorizontal, CheckCircle2, Clock, AlertCircle
 } from 'lucide-react';
 import Link from 'next/link';
+import InternalPageHeader from '@/components/InternalPageHeader';
 
 export default function InvoicesListPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -53,24 +54,22 @@ export default function InvoicesListPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
-      {/* HEADER */}
-      <div className="bg-white border-b px-8 py-6">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-black text-gray-900 tracking-tight flex items-center gap-3">
-              <FileText size={32} className="text-emerald-600" />
-              INVOICE LEDGER
-            </h1>
-            <p className="text-gray-500 font-bold uppercase text-xs tracking-widest mt-1">Manage billing and accounts receivable</p>
-          </div>
+      <InternalPageHeader
+        title="Invoice Ledger"
+        description="Manage billing, balances, and accounts receivable without losing the trail back to the shop floor."
+        icon={FileText}
+        breadcrumbs={[{ label: 'Invoices' }]}
+        actions={
           <Link 
             href="/dashboard/invoices/new" 
             className="bg-black text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-gray-800 transition-all shadow-xl shadow-gray-200"
           >
             <Plus size={18} /> New Custom Invoice
           </Link>
-        </div>
-      </div>
+        }
+        maxWidthClassName="max-w-7xl"
+        sticky
+      />
 
       {/* FILTER BAR */}
       <div className="px-8 py-4 border-b bg-white">

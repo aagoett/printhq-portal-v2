@@ -2,8 +2,9 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, Settings, Layers, ScrollText, Edit2, Check, X, ArrowLeft } from 'lucide-react';
+import { Plus, Trash2, Settings, Layers, ScrollText, Edit2, Check, X } from 'lucide-react';
 import Link from 'next/link';
+import InternalPageHeader from '@/components/InternalPageHeader';
 
 export default function SettingsPage() {
   // --- TABS ---
@@ -120,21 +121,15 @@ export default function SettingsPage() {
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-5xl mx-auto space-y-8">
         
-        {/* NEW: BACK BUTTON & HEADER */}
-        <div className="flex items-center gap-4 mb-8">
-            <Link href="/dashboard" className="p-2 bg-white border border-gray-200 rounded-full hover:bg-gray-100 hover:text-black text-gray-500 transition-colors">
-                <ArrowLeft size={20} />
-            </Link>
-            <div className="flex items-center gap-3">
-                <div className="p-3 bg-white rounded-xl shadow-sm border border-gray-200">
-                    <Settings size={24} />
-                </div>
-                <div>
-                    <h1 className="text-2xl font-bold text-gray-900">System Settings</h1>
-                    <p className="text-sm text-gray-500">Configure your shop standards.</p>
-                </div>
-            </div>
-        </div>
+        <InternalPageHeader
+          title="System Settings"
+          description="Configure workflow queues, paper standards, and core shop defaults from one place."
+          icon={Settings}
+          breadcrumbs={[{ label: 'Settings' }]}
+          className="mb-8"
+          maxWidthClassName="max-w-5xl"
+          sticky
+        />
 
         {/* TABS NAVIGATION */}
         <div className="flex gap-2 border-b border-gray-200 pb-1">

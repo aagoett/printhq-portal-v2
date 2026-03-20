@@ -4,10 +4,11 @@ import { createBrowserClient } from '@supabase/ssr';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ArrowLeft, Bot, Briefcase, Calculator, FileText, Layers3, MessageSquare, PackageCheck, Settings, Sparkles, User } from 'lucide-react';
+import { Bot, Briefcase, Calculator, FileText, Layers3, MessageSquare, PackageCheck, Settings, Sparkles, User } from 'lucide-react';
 import CsrChatPanel from '@/components/CsrChatPanel';
 import BotIntakePanel from '@/components/BotIntakePanel';
 import QuickOrderPanel from '@/components/QuickOrderPanel';
+import InternalPageHeader from '@/components/InternalPageHeader';
 import { PRODUCT_TEMPLATES, mergeProductTemplates } from '@/utils/productTemplates';
 
 const MODES = [
@@ -113,20 +114,21 @@ export default function DashboardIntakePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <main className="mx-auto max-w-7xl px-6 py-8 lg:px-8">
-        <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <div className="flex items-center gap-3 text-sm text-gray-500 mb-2">
-              <Link href="/dashboard" className="inline-flex items-center gap-2 hover:text-black"><ArrowLeft size={16}/> Back to dashboard</Link>
-            </div>
-            <h1 className="text-3xl font-bold text-gray-900">Intake Workspace</h1>
-            <p className="mt-2 text-gray-600 max-w-3xl">Separate intake from the production dashboard. CSR discovery, uploads, and multi-item estimating happen here so the shop floor stays clean.</p>
-          </div>
+      <InternalPageHeader
+        title="Intake Workspace"
+        description="Separate intake from the production dashboard. CSR discovery, uploads, and multi-item estimating happen here so the shop floor stays clean."
+        icon={PackageCheck}
+        breadcrumbs={[{ label: 'Intake' }]}
+        actions={
           <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm text-sm text-gray-600">
             <div className="font-bold text-gray-900">Current mode</div>
             <div>{activeModeMeta.label}</div>
           </div>
-        </div>
+        }
+        maxWidthClassName="max-w-7xl"
+        sticky
+      />
+      <main className="mx-auto max-w-7xl px-6 py-8 lg:px-8">
 
         <div className="grid gap-4 md:grid-cols-3 mb-8">
           {MODES.map((mode) => {

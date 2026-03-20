@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { createBrowserClient } from '@supabase/ssr';
-import { ArrowLeft, Package2, Truck, Save, RefreshCcw, Trash2, DollarSign, LayoutGrid, Calculator } from 'lucide-react';
+import { Package2, Truck, Save, RefreshCcw, Trash2, DollarSign, LayoutGrid, Calculator } from 'lucide-react';
+import InternalPageHeader from '@/components/InternalPageHeader';
 import { PRICING_PROFILES } from '@/lib/estimator';
 import { formatCurrency } from '@/utils/pricing';
 import { coerceDecimal, parseDecimalInput } from '@/utils/number';
@@ -167,21 +168,22 @@ export default function PricingCatalogWorkbench({ catalogType }: { catalogType: 
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-6xl mx-auto flex items-center justify-between mb-8 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-        <div className="flex items-center gap-4">
-          <Link href="/dashboard" className="p-2 bg-gray-50 border rounded-full hover:bg-gray-100 text-gray-500"><ArrowLeft size={20}/></Link>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2"><Icon size={18}/> {config.title}</h1>
-            <p className="text-sm text-gray-500">{config.subtitle}</p>
+      <InternalPageHeader
+        title={config.title}
+        description={config.subtitle}
+        icon={Icon}
+        breadcrumbs={[{ label: 'Pricing', href: '/dashboard/pricing' }, { label: config.navLabel }]}
+        actions={
+          <div className="flex gap-2 flex-wrap justify-end">
+            <Link href="/dashboard/pricing/paper-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Paper</Link>
+            <Link href={config.siblingHref} className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2">{catalogType === 'mailing' ? <Package2 size={16}/> : <Truck size={16}/>} {config.siblingLabel}</Link>
+            <Link href="/dashboard/pricing/estimator" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><Calculator size={16}/> Estimator</Link>
+            <Link href="/dashboard/pricing" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><DollarSign size={16}/> Costs</Link>
           </div>
-        </div>
-        <div className="flex gap-2 flex-wrap justify-end">
-          <Link href="/dashboard/pricing/paper-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Paper</Link>
-          <Link href={config.siblingHref} className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2">{catalogType === 'mailing' ? <Package2 size={16}/> : <Truck size={16}/>} {config.siblingLabel}</Link>
-          <Link href="/dashboard/pricing/estimator" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><Calculator size={16}/> Estimator</Link>
-          <Link href="/dashboard/pricing" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><DollarSign size={16}/> Costs</Link>
-        </div>
-      </div>
+        }
+        maxWidthClassName="max-w-6xl"
+        sticky
+      />
 
       <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-4">

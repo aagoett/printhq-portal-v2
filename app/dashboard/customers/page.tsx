@@ -1,10 +1,11 @@
 'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
-import { Search, User, Calendar, ArrowRight, Building2, ArrowLeft, Shield } from 'lucide-react';
+import { Search, User, Calendar, ArrowRight, Building2, Shield } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import InternalPageHeader from '@/components/InternalPageHeader';
 
 type Customer = {
   id: string; 
@@ -123,26 +124,24 @@ export default function CustomersPage() {
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-6xl mx-auto">
         
-        {/* BACK BUTTON */}
-        <Link href="/dashboard" className="inline-flex items-center text-sm text-gray-500 hover:text-black mb-8 transition-colors">
-          <ArrowLeft size={16} className="mr-2" /> Back to Dashboard
-        </Link>
-
-        {/* HEADER */}
-        <div className="flex justify-between items-end mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Customer Database</h1>
-            <p className="text-gray-500 mt-1">Manage your registered clients and guest history.</p>
-          </div>
-          <div className="relative">
+        <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <InternalPageHeader
+            title="Customer Database"
+            description="Track registered accounts, guest history, and account activity without losing the route back to production."
+            icon={User}
+            breadcrumbs={[{ label: 'Customers' }]}
+            className="flex-1"
+            sticky
+          />
+          <div className="relative lg:w-72">
              <input 
                type="text" 
                placeholder="Search company, name, email..." 
                value={searchTerm}
                onChange={(e) => setSearchTerm(e.target.value)}
-               className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg w-72 focus:border-black outline-none shadow-sm"
+               className="pl-10 pr-4 py-3 border border-gray-300 rounded-xl w-full focus:border-black outline-none shadow-sm bg-white"
              />
-             <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
+             <Search className="absolute left-3 top-3.5 text-gray-400" size={18} />
           </div>
         </div>
 

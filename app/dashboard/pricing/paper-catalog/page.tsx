@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { createBrowserClient } from '@supabase/ssr';
-import { ArrowLeft, Layers, Save, RefreshCcw, Trash2, Edit2, FileSpreadsheet, Ruler, Weight, Tag, Building2, Search, Filter } from 'lucide-react';
+import { Layers, Save, RefreshCcw, Trash2, Edit2, FileSpreadsheet, Ruler, Weight, Tag, Building2, Search, Filter } from 'lucide-react';
+import InternalPageHeader from '@/components/InternalPageHeader';
 import { PRICING_PROFILES } from '@/lib/estimator';
 import { formatCurrency } from '@/utils/pricing';
 import { coerceDecimal, parseDecimalInput } from '@/utils/number';
@@ -178,19 +179,20 @@ export default function PaperCatalogPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-6xl mx-auto flex items-center justify-between mb-8 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-        <div className="flex items-center gap-4">
-          <Link href="/dashboard" className="p-2 bg-gray-50 border rounded-full hover:bg-gray-100 text-gray-500"><ArrowLeft size={20}/></Link>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2"><Layers size={18}/> Paper Catalog</h1>
-            <p className="text-sm text-gray-500">Administer stocked sheets with cost/price, size, weight, brand & SKU.</p>
+      <InternalPageHeader
+        title="Paper Catalog"
+        description="Administer stocked sheets with cost/price, size, weight, brand, and SKU."
+        icon={Layers}
+        breadcrumbs={[{ label: 'Pricing', href: '/dashboard/pricing' }, { label: 'Paper Catalog' }]}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Link href="/dashboard/pricing" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><FileSpreadsheet size={16}/> Cost Engine</Link>
+            <Link href="/dashboard/pricing/estimator" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold">Estimator</Link>
           </div>
-        </div>
-        <div className="flex gap-2">
-          <Link href="/dashboard/pricing" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><FileSpreadsheet size={16}/> Cost Engine</Link>
-          <Link href="/dashboard/pricing/estimator" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold">Estimator</Link>
-        </div>
-      </div>
+        }
+        maxWidthClassName="max-w-6xl"
+        sticky
+      />
 
       <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-4">
