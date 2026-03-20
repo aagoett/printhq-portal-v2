@@ -76,6 +76,9 @@ type CardImport = {
   review_status: string;
   created_at: string;
   organization_id?: string | null;
+  raw_text?: string | null;
+  parsed_json?: any;
+  image_path?: string | null;
   organizations?: { name?: string | null } | { name?: string | null }[];
 };
 
@@ -89,6 +92,11 @@ export default function OrganizationsPage() {
   const [creating, setCreating] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
   const [cardQueue, setCardQueue] = useState<CardImport[]>([]);
+  const [cardPayload, setCardPayload] = useState("");
+  const [uploadFiles, setUploadFiles] = useState<FileList | null>(null);
+  const [importingCards, setImportingCards] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [expandedQueueCardId, setExpandedQueueCardId] = useState<string | null>(null);
 
   const [newOrg, setNewOrg] = useState({
     name: "",
@@ -139,7 +147,7 @@ export default function OrganizationsPage() {
       setQueueLoading(true);
       const { data, error } = await supabase
         .from("organization_card_imports")
-        .select("id, source_filename, review_status, created_at, organization_id, organizations(name)")
+        .select("id, source_filename, review_status, created_at, organization_id, raw_text, parsed_json, image_path, organizations(name)")
         .eq("review_status", "pending")
         .order("created_at", { ascending: false })
         .limit(8);
@@ -150,6 +158,42 @@ export default function OrganizationsPage() {
     } finally {
       setQueueLoading(false);
     }
+  };
+
+  const handleImportCards = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setImportingCards(true);
+      setImportMessage(null);
+      const parsed = cardPayload ? JSON.parse(cardPayload) : [];
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error("Paste at least one card payload (array)");
+      }
+      const formData = new FormData();
+      formData.append("cards", JSON.stringify(parsed));
+      if (uploadFiles && uploadFiles.length) {
+        Array.from(uploadFiles).forEach((file) => formData.append("files", file));
+      }
+
+      const resp = await fetch("/api/crm/card-import", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data?.error || "Import failed");
+      setImportMessage(`Imported ${data?.count || data?.imports?.length || 0} cards`);
+      setCardPayload("");
+      setUploadFiles(null);
+      fetchCardQueue();
+    } catch (err: any) {
+      alert(err?.message || "Failed to import cards");
+    } finally {
+      setImportingCards(false);
+    }
+  };
+
+  const toggleQueueDetails = (id: string) => {
+    setExpandedQueueCardId((prev) => (prev === id ? null : id));
   };
 
   const contactTotal = useMemo(
@@ -516,6 +560,59 @@ export default function OrganizationsPage() {
             <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
               <div className="flex items-center justify-between mb-3">
                 <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Import</p>
+                  <h4 className="text-lg font-bold text-gray-900">Business Card Intake</h4>
+                  <p className="text-sm text-gray-500">Paste parsed payloads and (optionally) attach card images.</p>
+                </div>
+                <div className="h-10 w-10 rounded-lg bg-gray-100 flex items-center justify-center text-gray-600">
+                  <FileBox size={18} />
+                </div>
+              </div>
+
+              <form className="space-y-3" onSubmit={handleImportCards}>
+                <div>
+                  <label className="text-[11px] font-bold uppercase text-gray-500">Parsed payloads (JSON array)</label>
+                  <textarea
+                    value={cardPayload}
+                    onChange={(e) => setCardPayload(e.target.value)}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                    rows={8}
+                    placeholder='[{"source_filename":"IMG_9872.jpg","raw_text":"...","parsed_json":{...}}]'
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1">Hint: drop in data from card_imports_batch1.json (5 parsed cards).</p>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold uppercase text-gray-500">Card images (order-matched)</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(e) => setUploadFiles(e.target.files)}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1">Optional; aligns by index with the JSON array.</p>
+                </div>
+
+                {importMessage && (
+                  <div className="text-[12px] text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                    {importMessage}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={importingCards}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-black text-white py-2.5 font-bold text-sm hover:bg-gray-900 disabled:opacity-50"
+                >
+                  {importingCards ? "Importing…" : "Import Cards"}
+                </button>
+              </form>
+            </div>
+
+            <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div>
                   <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Queue</p>
                   <h4 className="text-lg font-bold text-gray-900">Business Card Imports</h4>
                   <p className="text-sm text-gray-500">Pending OCR / card uploads waiting for review.</p>
@@ -534,33 +631,63 @@ export default function OrganizationsPage() {
                   {cardQueue.map((item) => (
                     <div
                       key={item.id}
-                      className="border border-gray-100 rounded-xl p-3 flex items-start justify-between"
+                      className="border border-gray-100 rounded-xl p-3 flex flex-col gap-2"
                     >
-                      <div className="space-y-1">
-                        <div className="text-sm font-bold text-gray-900">
-                          {item.source_filename || "Card Upload"}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="text-sm font-bold text-gray-900">
+                            {item.source_filename || "Card Upload"}
+                          </div>
+                          <div className="text-[12px] text-gray-500">
+                            {(Array.isArray(item.organizations) ? item.organizations[0]?.name : item.organizations?.name) || "Unmatched"}
+                          </div>
+                          <div className="text-[11px] text-gray-400">
+                            {new Date(item.created_at).toLocaleString()}
+                          </div>
                         </div>
-                        <div className="text-[12px] text-gray-500">
-                          {(Array.isArray(item.organizations) ? item.organizations[0]?.name : item.organizations?.name) || "Unmatched"}
-                        </div>
-                        <div className="text-[11px] text-gray-400">
-                          {new Date(item.created_at).toLocaleString()}
+                        <div className="flex items-center gap-2 flex-wrap justify-end">
+                          <button
+                            onClick={() => toggleQueueDetails(item.id)}
+                            className="text-[11px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:border-gray-400"
+                          >
+                            {expandedQueueCardId === item.id ? "Hide" : "Details"}
+                          </button>
+                          <button
+                            onClick={() => handleCardDecision(item.id, "rejected")}
+                            className="text-[11px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:border-red-400 hover:text-red-700"
+                          >
+                            Reject
+                          </button>
+                          <button
+                            onClick={() => handleCardDecision(item.id, "approved")}
+                            className="text-[11px] px-2.5 py-1 rounded-lg bg-green-600 text-white font-bold hover:bg-green-700"
+                          >
+                            Approve
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleCardDecision(item.id, "rejected")}
-                          className="text-[11px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:border-red-400 hover:text-red-700"
-                        >
-                          Reject
-                        </button>
-                        <button
-                          onClick={() => handleCardDecision(item.id, "approved")}
-                          className="text-[11px] px-2.5 py-1 rounded-lg bg-green-600 text-white font-bold hover:bg-green-700"
-                        >
-                          Approve
-                        </button>
-                      </div>
+
+                      {expandedQueueCardId === item.id && (
+                        <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 space-y-2 text-[12px] text-gray-700">
+                          {item.raw_text && (
+                            <div>
+                              <div className="font-semibold text-gray-800 mb-1">Raw Text</div>
+                              <div className="whitespace-pre-line text-gray-700">{item.raw_text}</div>
+                            </div>
+                          )}
+                          {item.parsed_json && (
+                            <div>
+                              <div className="font-semibold text-gray-800 mb-1">Parsed JSON</div>
+                              <pre className="text-[11px] bg-white border border-gray-200 rounded-md p-2 overflow-x-auto">
+                                {JSON.stringify(item.parsed_json, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+                          {item.image_path && (
+                            <div className="text-[11px] text-gray-500">Image path: {item.image_path}</div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

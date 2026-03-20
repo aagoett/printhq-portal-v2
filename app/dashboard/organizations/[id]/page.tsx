@@ -120,6 +120,7 @@ type CardImport = {
   created_at: string;
   organization_id?: string | null;
   contact_id?: string | null;
+  image_path?: string | null;
 };
 
 export default function OrganizationDetailPage() {
@@ -135,6 +136,7 @@ export default function OrganizationDetailPage() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [activities, setActivities] = useState<ActivityRow[]>([]);
   const [cardImports, setCardImports] = useState<CardImport[]>([]);
+  const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const [contactForm, setContactForm] = useState<Partial<Contact>>({
@@ -811,20 +813,48 @@ export default function OrganizationDetailPage() {
               ) : (
                 <div className="space-y-3">
                   {cardImports.map((c) => (
-                    <div key={c.id} className="border border-gray-100 rounded-xl p-3">
+                    <div key={c.id} className="border border-gray-100 rounded-xl p-3 space-y-2">
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="text-sm font-bold text-gray-900">{c.source_filename || "Card Upload"}</div>
                           <div className="text-[11px] text-gray-500">{new Date(c.created_at).toLocaleString()}</div>
                         </div>
-                        <div className="text-[11px] px-2 py-1 rounded-full bg-gray-100 text-gray-700 border border-gray-200">
-                          {c.review_status}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setExpandedCardId((prev) => (prev === c.id ? null : c.id))}
+                            className="text-[11px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:border-gray-400"
+                          >
+                            {expandedCardId === c.id ? "Hide" : "Details"}
+                          </button>
+                          <div className="text-[11px] px-2 py-1 rounded-full bg-gray-100 text-gray-700 border border-gray-200">
+                            {c.review_status}
+                          </div>
                         </div>
                       </div>
-                      {c.raw_text && (
-                        <div className="mt-2 text-[12px] text-gray-600 line-clamp-3">{c.raw_text}</div>
+
+                      {expandedCardId === c.id && (
+                        <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 space-y-2 text-[12px] text-gray-700">
+                          {c.raw_text && (
+                            <div>
+                              <div className="font-semibold text-gray-800 mb-1">Raw Text</div>
+                              <div className="whitespace-pre-line text-gray-700">{c.raw_text}</div>
+                            </div>
+                          )}
+                          {c.parsed_json && (
+                            <div>
+                              <div className="font-semibold text-gray-800 mb-1">Parsed JSON</div>
+                              <pre className="text-[11px] bg-white border border-gray-200 rounded-md p-2 overflow-x-auto">
+                                {JSON.stringify(c.parsed_json, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+                          {c.image_path && (
+                            <div className="text-[11px] text-gray-500">Image path: {c.image_path}</div>
+                          )}
+                        </div>
                       )}
-                      <div className="mt-2 flex gap-2">
+
+                      <div className="mt-1 flex gap-2">
                         <button
                           onClick={() => handleCardDecision(c.id, "rejected")}
                           className="text-[11px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:border-red-400 hover:text-red-700"
