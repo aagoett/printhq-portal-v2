@@ -14,7 +14,6 @@ import Link from 'next/link';
 // Use the new name and the @ alias so it always finds the right spot
 import { sendOrderConfirmation } from '../server-actions';
 import ItemDetailDrawer from '@/components/ItemDetailDrawer';
-import CsrChatPanel from '@/components/CsrChatPanel';
 import { applyOverridesToList, parseQuantityList, formatCurrency } from '@/utils/pricing';
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
 import { applyPricingProfileToRoute, calculateProposals, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
@@ -813,6 +812,7 @@ export default function Dashboard() {
         </div>
         <nav className="flex-1 space-y-1 px-4 py-6">
           <NavItem icon={<LayoutDashboard size={20} />} label={isInternal ? "Shop Floor" : "My Jobs"} href="/dashboard" active />
+          {isInternal && <NavItem icon={<MessageSquare size={20} />} label="Intake" href="/dashboard/intake" />}
           {isInternal && <NavItem icon={<Calculator size={20} />} label="Estimator" href="/dashboard/pricing/estimator" />}
           <NavItem icon={<FileText size={20} />} label="Quotes" href="/dashboard/quotes" />
           {isInternal && <NavItem icon={<Briefcase size={20} />} label="Invoices" href="/dashboard/invoices" />}
@@ -844,20 +844,27 @@ export default function Dashboard() {
           </div>
 
           {isInternal && (
-            <div className="mb-8">
-              <CsrChatPanel customers={customers} brandList={brandList} currentUser={user} />
-            </div>
-          )}
-
-          {isInternal && (
-            <div className="mb-8">
-              <BotIntakePanel
-                supabase={supabase}
-                currentUser={user}
-                brandList={brandList}
-                workflowOptions={workflowOptions}
-                customers={customers}
-                onJobCreated={fetchDashboardData}
+            <div className="mb-8 grid gap-4 lg:grid-cols-3">
+              <DashboardLaunchCard
+                href="/dashboard/intake"
+                icon={<MessageSquare size={18} />}
+                eyebrow="New Quote"
+                title="CSR chat + discovery"
+                body="Use the intake workspace when the request is incomplete, the art needs review, or you need the bot to clarify specs."
+              />
+              <DashboardLaunchCard
+                href="/dashboard/intake"
+                icon={<Calculator size={18} />}
+                eyebrow="Quick Order"
+                title="Estimate and create fast"
+                body="Move clear repeat work off the shop-floor dashboard and into a dedicated intake flow with quantity breaks and uploads."
+              />
+              <DashboardLaunchCard
+                href="/dashboard/intake"
+                icon={<Briefcase size={18} />}
+                eyebrow="Internal Job"
+                title="Samples, tests, house work"
+                body="Create internal production work without muddying the live queue view for operators."
               />
             </div>
           )}
@@ -1102,6 +1109,18 @@ function NavItem({ icon, label, active = false, href = '#' }: { icon: any, label
     <Link href={href} className={`flex items-center rounded-lg px-4 py-3 text-sm font-medium transition-colors ${active ? 'bg-gray-100 text-black' : 'text-gray-600 hover:bg-gray-50 hover:text-black'}`}>
       <span className={`${active ? 'text-black' : 'text-gray-400'} mr-3`}>{icon}</span>
       {label}
+    </Link>
+  );
+}
+
+function DashboardLaunchCard({ href, icon, eyebrow, title, body }: { href: string, icon: React.ReactNode, eyebrow: string, title: string, body: string }) {
+  return (
+    <Link href={href} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition hover:border-black hover:shadow-md">
+      <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100 text-gray-700">{icon}</div>
+      <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-400 mb-2">{eyebrow}</div>
+      <div className="text-lg font-bold text-gray-900 mb-2">{title}</div>
+      <p className="text-sm text-gray-600 leading-6">{body}</p>
+      <div className="mt-4 text-sm font-bold text-black">Open Intake →</div>
     </Link>
   );
 }
