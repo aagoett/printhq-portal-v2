@@ -86,6 +86,8 @@ export type RouteOption = {
   pressPriceBase?: number;
   finishingPriceBase?: number;
   mailingPriceBase?: number;
+  quantity?: number;
+  product?: any;
 };
 
 export type EstimatorContext = {

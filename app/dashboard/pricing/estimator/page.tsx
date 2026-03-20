@@ -517,6 +517,61 @@ export default function AutoEstimatorPage() {
   const effectivePrice = worksheetLines.length ? worksheetTotals.price : winner?.totalPrice || 0;
   const effectiveCost = worksheetLines.length ? worksheetTotals.cost : winner?.totalCost || 0;
 
+  const worksheetLineMap = useMemo(() => {
+    const map: Record<string, WorksheetLine> = {};
+    worksheetLines.forEach((line) => {
+      const key = (line.type || line.label || '').toLowerCase();
+      if (key) map[key] = line;
+    });
+    return map;
+  }, [worksheetLines]);
+
+  const resolvedPaper = {
+    price: (worksheetLineMap['paper']?.price ?? winner?.paperPrice) || 0,
+    cost: (worksheetLineMap['paper']?.cost ?? winner?.paperCost) || 0,
+    detail: worksheetLineMap['paper']?.detail || winner?.paperName || '',
+  };
+  const resolvedPress = {
+    price: (worksheetLineMap['press']?.price ?? winner?.pressPrice) || 0,
+    cost: (worksheetLineMap['press']?.cost ?? winner?.pressCost) || 0,
+    detail: worksheetLineMap['press']?.detail || winner?.detail || '',
+  };
+  const resolvedFinishing = {
+    price: (worksheetLineMap['finishing']?.price ?? winner?.finishingPrice) || 0,
+    cost: (worksheetLineMap['finishing']?.cost ?? winner?.finishingCost) || 0,
+    detail: worksheetLineMap['finishing']?.detail || winner?.finishingDetail || '',
+  };
+  const resolvedMailing = {
+    price: (worksheetLineMap['mailing']?.price ?? winner?.mailingPrice) || 0,
+    cost: (worksheetLineMap['mailing']?.cost ?? winner?.mailingCost) || 0,
+    detail: worksheetLineMap['mailing']?.detail || winner?.mailingDetail || '',
+  };
+
+  const resolvedBreakdown = useMemo(() => {
+    if (!winner) return [] as any[];
+    const base = winner.breakdown || [];
+    if (!worksheetLines.length) return base;
+
+    const mapped = base.map((item) => {
+      const key = (item.name || '').toLowerCase();
+      const override = worksheetLineMap[key];
+      return override
+        ? { ...item, price: override.price, cost: override.cost, detail: override.detail || item.detail }
+        : item;
+    });
+
+    const extras = worksheetLines
+      .filter((line) => {
+        const key = (line.type || line.label || '').toLowerCase();
+        return key && !base.some((item) => (item.name || '').toLowerCase() === key);
+      })
+      .map((line, idx) => ({ name: line.label, cost: line.cost, price: line.price, detail: line.detail || '', id: `extra-${idx}` }));
+
+    return [...mapped, ...extras];
+  }, [winner, worksheetLines, worksheetLineMap]);
+
+  const breakdownForDisplay = resolvedBreakdown.length ? resolvedBreakdown : (winner?.breakdown || []);
+
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
   const quoteRecipient = selectedCustomer?.email || currentProfile?.email;
 
@@ -538,6 +593,44 @@ export default function AutoEstimatorPage() {
       { name: 'Mailing', cost: winner.mailingCost || 0, price: winner.mailingPrice || 0, detail: mailingDetail },
     ]);
 
+    const resolvedWinnerEconomics = {
+      ...winner,
+      paperPrice: resolvedPaper.price,
+      paperCost: resolvedPaper.cost,
+      pressPrice: resolvedPress.price,
+      pressCost: resolvedPress.cost,
+      finishingPrice: resolvedFinishing.price,
+      finishingCost: resolvedFinishing.cost,
+      mailingPrice: resolvedMailing.price,
+      mailingCost: resolvedMailing.cost,
+      totalPrice: effectivePrice,
+      totalCost: effectiveCost,
+      unitCost: effectivePrice / quantity,
+    };
+
+    const routesForPayload = routeOptions.map((route, idx) => {
+      const isWinnerRoute = idx === 0;
+      if (worksheetLines.length && isWinnerRoute) {
+        const qty = route.quantity || quantity || 1;
+        return {
+          ...route,
+          paperPrice: resolvedPaper.price,
+          paperCost: resolvedPaper.cost,
+          pressPrice: resolvedPress.price,
+          pressCost: resolvedPress.cost,
+          finishingPrice: resolvedFinishing.price,
+          finishingCost: resolvedFinishing.cost,
+          mailingPrice: resolvedMailing.price,
+          mailingCost: resolvedMailing.cost,
+          totalPrice: effectivePrice,
+          totalCost: effectiveCost,
+          unitCost: effectivePrice / qty,
+          breakdown: resolvedBreakdown.length ? resolvedBreakdown : route.breakdown,
+        };
+      }
+      return route;
+    });
+
     return {
       title,
       quantity,
@@ -547,7 +640,7 @@ export default function AutoEstimatorPage() {
       production_method: winner.method,
       total_cost: effectiveCost,
       total_price: effectivePrice,
-      cost_breakdown: { ...winner, pricingProfile, profileFactor: PRICING_PROFILES[pricingProfile], product: productMeta, breakdown, finishingDetail, mailingDetail, routes: routeOptions, worksheet: { lines: worksheetLines, totals: worksheetTotals } },
+      cost_breakdown: { ...resolvedWinnerEconomics, pricingProfile, profileFactor: PRICING_PROFILES[pricingProfile], product: productMeta, breakdown, finishingDetail, mailingDetail, routes: routesForPayload, worksheet: { lines: worksheetLines, totals: worksheetTotals } },
       status: 'Draft',
       user_id: selectedCustomerId || null,
       customer_email: selectedCustomer?.email || currentProfile?.email || null,
@@ -991,15 +1084,15 @@ export default function AutoEstimatorPage() {
                           </div>
                           <div className="p-3 bg-white/80 border border-green-100 rounded-lg">
                             <p className="text-[11px] font-bold uppercase text-green-800">Component Totals</p>
-                            <p className="text-sm font-bold text-green-900">Paper {formatCurrency(winner.paperPrice)} • Press {formatCurrency(winner.pressPrice)}</p>
-                            <p className="text-xs text-green-700 mt-1">Finishing {formatCurrency(winner.finishingPrice)} • Mailing {formatCurrency(winner.mailingPrice)}</p>
+                            <p className="text-sm font-bold text-green-900">Paper {formatCurrency(resolvedPaper.price)} • Press {formatCurrency(resolvedPress.price)}</p>
+                            <p className="text-xs text-green-700 mt-1">Finishing {formatCurrency(resolvedFinishing.price)} • Mailing {formatCurrency(resolvedMailing.price)}</p>
                           </div>
                         </div>
 
-                        {winner.breakdown && winner.breakdown.length > 0 && (
+                        {breakdownForDisplay && breakdownForDisplay.length > 0 && (
                           <div className="mt-4 grid sm:grid-cols-2 gap-3">
-                            {winner.breakdown.map((item: any) => (
-                              <div key={item.name} className="bg-white rounded-lg border border-green-100 p-3 shadow-sm">
+                            {breakdownForDisplay.map((item: any) => (
+                              <div key={item.id || item.name} className="bg-white rounded-lg border border-green-100 p-3 shadow-sm">
                                 <div className="flex items-center justify-between">
                                   <div>
                                     <p className="text-[11px] font-bold uppercase text-gray-500">{item.name}</p>
@@ -1016,8 +1109,8 @@ export default function AutoEstimatorPage() {
                         )}
                         
                         <div className="mt-6 flex gap-1 h-2 rounded-full overflow-hidden">
-                            <div className="bg-blue-400 h-full" style={{ width: `${(winner.paperPrice / (winner.totalPrice || 1)) * 100}%` }}></div>
-                            <div className="bg-orange-400 h-full" style={{ width: `${(winner.pressPrice / (winner.totalPrice || 1)) * 100}%` }}></div>
+                            <div className="bg-blue-400 h-full" style={{ width: `${(resolvedPaper.price / (effectivePrice || 1)) * 100}%` }}></div>
+                            <div className="bg-orange-400 h-full" style={{ width: `${(resolvedPress.price / (effectivePrice || 1)) * 100}%` }}></div>
                         </div>
                         
                         <div className="mt-6 pt-6 border-t border-green-200 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
@@ -1091,9 +1184,9 @@ export default function AutoEstimatorPage() {
                         <tfoot className="bg-gray-50 text-sm">
                           <tr>
                             <td colSpan={2} className="px-4 py-2 text-right font-bold">Totals</td>
-                            <td className="px-4 py-2 font-mono">${(worksheetLines.length ? worksheetTotals.cost : winner.totalCost).toFixed(2)}</td>
+                            <td className="px-4 py-2 font-mono">${effectiveCost.toFixed(2)}</td>
                             <td className="px-4 py-2 font-mono">${(effectivePrice).toFixed(2)}</td>
-                            <td className="px-4 py-2 text-right font-mono text-gray-600">{(worksheetLines.length ? worksheetTotals.margin : (winner.totalPrice - winner.totalCost)).toFixed(2)} ({(worksheetLines.length ? worksheetTotals.marginPct : ((winner.totalPrice - winner.totalCost)/(winner.totalPrice||1)*100)).toFixed(1)}%)</td>
+                            <td className="px-4 py-2 text-right font-mono text-gray-600">{(effectivePrice - effectiveCost).toFixed(2)} ({(effectivePrice ? ((effectivePrice - effectiveCost)/effectivePrice*100) : 0).toFixed(1)}%)</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -1182,7 +1275,20 @@ export default function AutoEstimatorPage() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-50">
-                                {estimates.map((est, i) => (
+                                {estimates.map((est, i) => {
+                                    const isWinnerRow = i === 0;
+                                    const displayPaperPrice = isWinnerRow && worksheetLines.length ? resolvedPaper.price : est.paperPrice;
+                                    const displayPaperCost = isWinnerRow && worksheetLines.length ? resolvedPaper.cost : est.paperCost;
+                                    const displayPressPrice = isWinnerRow && worksheetLines.length ? resolvedPress.price : est.pressPrice;
+                                    const displayPressCost = isWinnerRow && worksheetLines.length ? resolvedPress.cost : est.pressCost;
+                                    const displayFinishingPrice = isWinnerRow && worksheetLines.length ? resolvedFinishing.price : est.finishingPrice;
+                                    const displayFinishingCost = isWinnerRow && worksheetLines.length ? resolvedFinishing.cost : est.finishingCost;
+                                    const displayMailingPrice = isWinnerRow && worksheetLines.length ? resolvedMailing.price : est.mailingPrice;
+                                    const displayMailingCost = isWinnerRow && worksheetLines.length ? resolvedMailing.cost : est.mailingCost;
+                                    const displayTotalPrice = isWinnerRow && worksheetLines.length ? effectivePrice : est.totalPrice;
+                                    const displayTotalCost = isWinnerRow && worksheetLines.length ? effectiveCost : est.totalCost;
+                                    const displayUnit = isWinnerRow && worksheetLines.length ? (effectivePrice / (est.quantity || quantity)) : est.unitCost;
+                                    return (
                                     <tr key={i} className={`hover:bg-gray-50 ${i === 0 ? 'bg-green-50/50' : ''}`}>
                                         <td className="px-6 py-3 font-bold text-gray-900">
                                             {est.method}
@@ -1196,31 +1302,32 @@ export default function AutoEstimatorPage() {
                                         </td>
                                         <td className="px-6 py-3 text-gray-500 text-xs">
                                           <div className="font-semibold text-gray-700">{est.paperName}</div>
-                                          <div>{formatCurrency(est.paperPrice)} sell / {formatCurrency(est.paperCost)} cost</div>
+                                          <div>{formatCurrency(displayPaperPrice)} sell / {formatCurrency(displayPaperCost)} cost</div>
                                         </td>
                                         <td className="px-6 py-3 text-gray-500 text-xs">
                                           <div className="font-semibold text-gray-700">{est.method}</div>
-                                          <div>{formatCurrency(est.pressPrice)} sell / {formatCurrency(est.pressCost)} cost</div>
+                                          <div>{formatCurrency(displayPressPrice)} sell / {formatCurrency(displayPressCost)} cost</div>
                                         </td>
                                         <td className="px-6 py-3 text-gray-500 text-xs">
                                           <div className="font-semibold text-gray-700">{est.finishingDetail || 'None'}</div>
-                                          <div>{formatCurrency(est.finishingPrice)} sell / {formatCurrency(est.finishingCost)} cost</div>
+                                          <div>{formatCurrency(displayFinishingPrice)} sell / {formatCurrency(displayFinishingCost)} cost</div>
                                         </td>
                                         <td className="px-6 py-3 text-gray-500 text-xs">
                                           <div className="font-semibold text-gray-700">{est.mailingDetail || 'None'}</div>
-                                          <div>{formatCurrency(est.mailingPrice)} sell / {formatCurrency(est.mailingCost)} cost</div>
+                                          <div>{formatCurrency(displayMailingPrice)} sell / {formatCurrency(displayMailingCost)} cost</div>
                                         </td>
                                         <td className="px-6 py-3 text-gray-500 text-xs">
                                           <div className="font-semibold text-gray-700 capitalize">{est.pricingProfile || pricingProfile}</div>
                                           <div>{(est.profileFactor || PRICING_PROFILES[pricingProfile]).toFixed(2)}x</div>
                                         </td>
                                         <td className="px-6 py-3 text-right font-mono font-bold text-gray-900">
-                                            ${est.totalPrice.toFixed(2)}
-                                            <div className="text-[11px] text-gray-500">${est.unitCost.toFixed(3)} ea</div>
-                                            <div className="text-[11px] text-green-700">Gross ${(est.totalPrice - est.totalCost).toFixed(2)}</div>
+                                            ${displayTotalPrice.toFixed(2)}
+                                            <div className="text-[11px] text-gray-500">${displayUnit.toFixed(3)} ea</div>
+                                            <div className="text-[11px] text-green-700">Gross ${(displayTotalPrice - displayTotalCost).toFixed(2)}</div>
                                         </td>
                                     </tr>
-                                ))}
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
