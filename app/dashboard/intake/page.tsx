@@ -8,6 +8,7 @@ import { ArrowLeft, Bot, Briefcase, Calculator, FileText, Layers3, MessageSquare
 import CsrChatPanel from '@/components/CsrChatPanel';
 import BotIntakePanel from '@/components/BotIntakePanel';
 import QuickOrderPanel from '@/components/QuickOrderPanel';
+import { PRODUCT_TEMPLATES, mergeProductTemplates } from '@/utils/productTemplates';
 
 const MODES = [
   {
@@ -49,6 +50,7 @@ export default function DashboardIntakePage() {
   const [brandList, setBrandList] = useState<any[]>([]);
   const [stockLibrary, setStockLibrary] = useState<any[]>([]);
   const [workflowOptions, setWorkflowOptions] = useState<any[]>([]);
+  const [productTemplates, setProductTemplates] = useState(PRODUCT_TEMPLATES);
   const [activeMode, setActiveMode] = useState<'quote' | 'quick-order' | 'internal-job'>('quote');
 
   useEffect(() => {
@@ -68,17 +70,32 @@ export default function DashboardIntakePage() {
         return;
       }
 
-      const [{ data: allProfiles }, { data: brandsData }, { data: stockData }, { data: qData }] = await Promise.all([
+      const [
+        { data: allProfiles },
+        { data: brandsData },
+        { data: stockData },
+        { data: qData },
+        productTemplateResp,
+      ] = await Promise.all([
         supabase.from('profiles').select('*'),
         supabase.from('brands').select('*'),
         supabase.from('paper_stocks').select('*').order('name'),
         supabase.from('workflow_queues').select('*').order('rank'),
+        supabase.from('product_templates').select('*').order('sort_order'),
       ]);
+
+      const mergedTemplates = !productTemplateResp?.error && productTemplateResp?.data
+        ? mergeProductTemplates(productTemplateResp.data as any)
+        : PRODUCT_TEMPLATES;
+      if (productTemplateResp?.error) {
+        console.warn('product_templates table not available, using defaults', productTemplateResp.error.message);
+      }
 
       setCustomers(allProfiles || []);
       setBrandList(brandsData || []);
       setStockLibrary(stockData || []);
       setWorkflowOptions(qData || []);
+      setProductTemplates(mergedTemplates);
       setLoading(false);
     };
 
@@ -177,6 +194,7 @@ export default function DashboardIntakePage() {
                 brandList={brandList}
                 stockLibrary={stockLibrary}
                 workflowOptions={workflowOptions}
+                productTemplates={productTemplates}
                 onJobCreated={() => setActiveMode('quote')}
                 mode={activeMode}
               />

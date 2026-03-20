@@ -2,6 +2,26 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/utils/supabase/server';
 import { createServiceRoleClient } from '@/utils/supabase/admin';
 
+export type QuickOrderItemPayload = {
+  title: string;
+  quantity: number;
+  size: string;
+  size_label?: string;
+  notes: string;
+  paper_stock: string;
+  product_key?: string;
+  product_name?: string;
+  page_count?: number;
+  cover_stock?: string;
+  inside_stock?: string;
+  fold?: string;
+  coating?: string;
+  mailing?: boolean;
+  mailing_notes?: string;
+  substrate?: string;
+  finishing?: string[];
+};
+
 export async function POST(req: NextRequest) {
   try {
     const supabase = createClient();
@@ -26,13 +46,7 @@ export async function POST(req: NextRequest) {
     const itemsRaw = formData.get('items');
     if (!itemsRaw) return NextResponse.json({ error: 'Missing items' }, { status: 400 });
 
-    const items = JSON.parse(itemsRaw as string) as Array<{
-      title: string;
-      quantity: number;
-      size: string;
-      notes: string;
-      paper_stock: string;
-    }>;
+    const items = JSON.parse(itemsRaw as string) as QuickOrderItemPayload[];
 
     const files = formData.getAll('files') as File[];
     if (files.length !== items.length) {
@@ -66,7 +80,8 @@ export async function POST(req: NextRequest) {
     if (orderError || !order) throw orderError;
 
     const totalQty = items.reduce((acc, item) => acc + (item.quantity || 0), 0);
-    const jobTitle = items.length === 1 ? items[0].title : `Order #${order.id.substring(0, 6).toUpperCase()}`;
+    const primaryItemTitle = items[0]?.title || items[0]?.product_name || 'Quick Order';
+    const jobTitle = items.length === 1 ? primaryItemTitle : `Order #${order.id.substring(0, 6).toUpperCase()}`;
 
     const { data: job, error: jobError } = await admin
       .from('jobs')
@@ -91,15 +106,34 @@ export async function POST(req: NextRequest) {
       const item = items[idx];
       const file = files[idx];
 
+      const paperStockValue = item.cover_stock && item.inside_stock
+        ? `Cover: ${item.cover_stock} / Inside: ${item.inside_stock}`
+        : item.paper_stock;
+
+      const specParts = [
+        item.product_name || item.product_key ? `Product: ${item.product_name || item.product_key}` : null,
+        item.size ? `Size: ${item.size}` : null,
+        item.page_count ? `Pages: ${item.page_count}` : null,
+        item.cover_stock ? `Cover: ${item.cover_stock}` : null,
+        item.inside_stock ? `Inside: ${item.inside_stock}` : null,
+        item.fold ? `Fold: ${item.fold}` : null,
+        item.coating ? `Coating: ${item.coating}` : null,
+        item.substrate ? `Substrate: ${item.substrate}` : null,
+        item.finishing?.length ? `Finishing: ${item.finishing.join(', ')}` : null,
+        item.mailing ? `Mailing: Yes${item.mailing_notes ? ` (${item.mailing_notes})` : ''}` : null,
+      ].filter(Boolean).join(' • ');
+
+      const combinedNotes = [specParts, item.notes].filter(Boolean).join('\n');
+
       const { data: newItem, error: itemError } = await admin
         .from('job_items')
         .insert({
           job_id: job.id,
-          description: item.title,
+          description: item.title || item.product_name || 'Quick Order Item',
           quantity: item.quantity,
-          paper_stock: item.paper_stock,
+          paper_stock: paperStockValue,
           size: item.size,
-          internal_notes: item.notes,
+          internal_notes: combinedNotes,
           status: 'Pending',
         })
         .select()
