@@ -2,7 +2,7 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
-import { Trash2, DollarSign, Settings, ArrowLeft, Clock, Zap, Maximize, LayoutGrid, Calculator } from 'lucide-react';
+import { Trash2, DollarSign, Settings, ArrowLeft, Clock, Zap, Maximize, LayoutGrid, Calculator, Scissors, Truck } from 'lucide-react';
 import Link from 'next/link';
 
 export default function PricingBuilderPage() {
@@ -93,6 +93,8 @@ export default function PricingBuilderPage() {
   const activeCategoryName = categories.find(c => c.id === activeCatId)?.name || '';
   const isPaper = activeCategoryName.toLowerCase().includes('paper');
   const isPress = activeCategoryName.toLowerCase().includes('press');
+  const isFinishing = activeCategoryName.toLowerCase().includes('finish');
+  const isMailing = activeCategoryName.toLowerCase().includes('mail');
 
   if (loading) return <div className="p-12 text-center text-gray-400">Loading Pricing Engine...</div>;
 
@@ -129,6 +131,11 @@ export default function PricingBuilderPage() {
                 {/* ADD ITEM CARD */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                     <h3 className="text-sm font-bold uppercase text-gray-400 mb-4">Add {activeCategoryName} Item</h3>
+                    <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className={`rounded-lg border p-3 ${isPress ? 'border-blue-400 bg-blue-50' : 'border-gray-200 bg-gray-50'}`}><p className="text-[11px] uppercase font-bold text-gray-500">Press catalog</p><p className="text-sm font-semibold text-gray-900">Setup, speed, click or hourly logic</p></div>
+                      <div className={`rounded-lg border p-3 ${isFinishing ? 'border-purple-400 bg-purple-50' : 'border-gray-200 bg-gray-50'}`}><p className="text-[11px] uppercase font-bold text-gray-500">Finishing catalog</p><p className="text-sm font-semibold text-gray-900">Cuts, folds, scoring, bindery, coating</p></div>
+                      <div className={`rounded-lg border p-3 ${isMailing ? 'border-green-400 bg-green-50' : 'border-gray-200 bg-gray-50'}`}><p className="text-[11px] uppercase font-bold text-gray-500">Mailing model</p><p className="text-sm font-semibold text-gray-900">Per-piece, per-M, or flat job charges</p></div>
+                    </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                         <div className="lg:col-span-1">
@@ -161,16 +168,17 @@ export default function PricingBuilderPage() {
                         )}
 
                         {/* TYPE SELECTOR (Crucial Fix) */}
-                        {isPress && (
+                        {(isPress || isFinishing || isMailing) && (
                             <div>
-                                <label className="block text-xs font-bold text-blue-600 mb-1">Machine Type</label>
+                                <label className="block text-xs font-bold text-blue-600 mb-1">Component Type</label>
                                 <select value={selectedType} onChange={(e) => setSelectedType(e.target.value)} className="w-full border border-blue-200 bg-blue-50 rounded-lg px-3 py-2 text-sm font-bold text-blue-800">
-                                    <option value="press_digital">Digital (Click)</option>
-                                    <option value="press_offset">Offset (Plates)</option>
+                                    {isPress && <><option value="press_digital">Digital (Click)</option><option value="press_offset">Offset (Plates)</option></>}
+                                    {isFinishing && <option value="finishing">Finishing</option>}
+                                    {isMailing && <><option value="mailing">Mailing</option></>}
                                 </select>
                             </div>
                         )}
-                        {!isPress && <div className="hidden"></div>} 
+                        {!(isPress || isFinishing || isMailing) && <div className="hidden"></div>} 
                     </div>
 
                     {/* DYNAMIC SPECS */}
@@ -205,6 +213,8 @@ export default function PricingBuilderPage() {
                                     <td className="px-6 py-4 font-medium text-gray-900">
                                         {comp.name}
                                         {comp.type !== 'other' && <span className="ml-2 text-[10px] uppercase bg-gray-100 px-1.5 py-0.5 rounded text-gray-500 font-bold">{comp.type.replace('press_', '')}</span>}
+                                        {comp.type === 'finishing' && <span className="ml-2 text-[10px] uppercase bg-purple-100 px-1.5 py-0.5 rounded text-purple-700 font-bold">bindery</span>}
+                                        {comp.type === 'mailing' && <span className="ml-2 text-[10px] uppercase bg-green-100 px-1.5 py-0.5 rounded text-green-700 font-bold">mail</span>}
                                     </td>
                                     <td className="px-6 py-4 text-red-600 font-mono text-xs">
                                       {isPaper ? (

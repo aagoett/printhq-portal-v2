@@ -19,6 +19,8 @@ export type PricingComponent = {
   price_unit?: string | null;
 };
 
+export type PricingProfileKey = 'wholesale' | 'competitive' | 'retail';
+
 export type EstimatorInputs = {
   finishW: number;
   finishH: number;
@@ -28,6 +30,7 @@ export type EstimatorInputs = {
   selectedFinishingIds?: string[];
   selectedMailingId?: string | null;
   templateKey?: string;
+  pricingProfile?: PricingProfileKey;
   bleed?: number;
   gutter?: number;
 };
@@ -45,6 +48,8 @@ export type RouteOption = {
   paperWeight?: number | null;
   paperCaliper?: number | null;
   method: string;
+  pricingProfile?: PricingProfileKey;
+  pricingMultiplier?: number;
   sheet: string;
   nUp: number;
   totalSheets: number;
@@ -93,6 +98,11 @@ const OFFSET_SPEED = 7000;
 const OFFSET_COST_FACTOR = 0.6; // assume 40% gross margin
 const DIGITAL_COST_FACTOR = 0.7;
 const SANITY_UNIT_PRICE_THRESHOLD = 2; // flag if above $2 each
+const PRICING_PROFILE_MULTIPLIERS: Record<PricingProfileKey, number> = {
+  wholesale: 0.9,
+  competitive: 1,
+  retail: 1.18,
+};
 
 const applyOverrides = (
   list: PricingComponent[],
@@ -190,6 +200,7 @@ export function calculateProposals(
     selectedFinishingIds = [],
     selectedMailingId = null,
     templateKey,
+    pricingProfile = 'competitive',
     bleed = DEFAULT_BLEED,
     gutter = DEFAULT_GUTTER,
   } = inputs;
@@ -218,6 +229,7 @@ export function calculateProposals(
   qtyList.forEach((quantity) => {
     if (!quantity || quantity <= 0) return;
 
+    const pricingMultiplier = PRICING_PROFILE_MULTIPLIERS[pricingProfile] || 1;
     let best: RouteOption | null = null;
     const routes: RouteOption[] = [];
 
@@ -311,7 +323,8 @@ export function calculateProposals(
         }
 
         const totalCost = paperCost + pressCost + finishingCost + mailingCost;
-        const totalPrice = paperPrice + pressPrice + finishingPrice + mailingPrice;
+        const basePrice = paperPrice + pressPrice + finishingPrice + mailingPrice;
+        const totalPrice = basePrice * pricingMultiplier;
         const safeDetail = totalPrice / quantity > SANITY_UNIT_PRICE_THRESHOLD ? `${detail} • check pricing (> $${SANITY_UNIT_PRICE_THRESHOLD.toFixed(2)}/ea)` : detail;
 
         const breakdown = [
@@ -319,6 +332,7 @@ export function calculateProposals(
           { name: 'Press', cost: pressCost, price: pressPrice, detail: safeDetail },
           { name: 'Finishing', cost: finishingCost, price: finishingPrice, detail: finishingDetail || 'None' },
           { name: 'Mailing', cost: mailingCost, price: mailingPrice, detail: mailDetail || 'None' },
+          { name: 'Profile Adjustment', cost: 0, price: totalPrice - basePrice, detail: `${pricingProfile} × ${pricingMultiplier.toFixed(2)}` },
         ];
 
         const candidate: RouteOption = {
@@ -328,6 +342,8 @@ export function calculateProposals(
           paperWeight: paper.weight ?? null,
           paperCaliper: paper.caliper ?? null,
           method: press.name,
+          pricingProfile,
+          pricingMultiplier,
           sheet: `${paper.parent_sheet_width || sheetW}x${paper.parent_sheet_height || sheetH}`,
           usableSheet: `${usableW.toFixed(2)}x${usableH.toFixed(2)}`,
           nUp,

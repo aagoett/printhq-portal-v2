@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { createBrowserClient } from '@supabase/ssr';
-import { ArrowLeft, Layers, Save, RefreshCcw, Trash2, Edit2, FileSpreadsheet, Ruler, Weight, Tag, Building2 } from 'lucide-react';
+import { ArrowLeft, Layers, Save, RefreshCcw, Trash2, Edit2, FileSpreadsheet, Ruler, Weight, Tag, Building2, Search, Filter } from 'lucide-react';
 
 const emptyForm = {
   id: null as string | null,
@@ -45,6 +45,8 @@ export default function PaperCatalogPage() {
   const [form, setForm] = useState(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
+  const [basisFilter, setBasisFilter] = useState<'all' | 'per_sheet' | 'per_1000'>('all');
 
   const fetchPapers = async () => {
     setLoading(true);
@@ -133,7 +135,12 @@ export default function PaperCatalogPage() {
     return unit === 'per_1000' ? val / 1000 : val;
   };
 
-  const sortedPapers = useMemo(() => papers, [papers]);
+  const sortedPapers = useMemo(() => papers.filter((paper) => {
+    const hay = [paper.name, paper.brand, paper.sku, paper.weight, paper.caliper].filter(Boolean).join(' ').toLowerCase();
+    const searchOk = !search.trim() || hay.includes(search.trim().toLowerCase());
+    const basisOk = basisFilter === 'all' || (paper.price_unit || paper.cost_unit || 'per_sheet') === basisFilter;
+    return searchOk && basisOk;
+  }), [papers, search, basisFilter]);
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -229,12 +236,28 @@ export default function PaperCatalogPage() {
         </div>
 
         <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-bold uppercase text-gray-500">Paper Catalog</p>
-              <p className="text-sm text-gray-500">{papers.length} stocks • cost + price basis stored</p>
+          <div className="px-6 py-4 border-b border-gray-100 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold uppercase text-gray-500">Paper Catalog</p>
+                <p className="text-sm text-gray-500">{sortedPapers.length} of {papers.length} stocks • normalized for estimator use</p>
+              </div>
+              <button onClick={fetchPapers} className="text-xs flex items-center gap-1 text-gray-500 hover:text-black"><RefreshCcw size={14}/> Refresh</button>
             </div>
-            <button onClick={fetchPapers} className="text-xs flex items-center gap-1 text-gray-500 hover:text-black"><RefreshCcw size={14}/> Refresh</button>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <label className="md:col-span-2 flex items-center gap-2 border rounded-lg px-3 py-2 bg-white">
+                <Search size={14} className="text-gray-400"/>
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search stock, brand, SKU, weight" className="w-full text-sm outline-none" />
+              </label>
+              <label className="flex items-center gap-2 border rounded-lg px-3 py-2 bg-white">
+                <Filter size={14} className="text-gray-400"/>
+                <select value={basisFilter} onChange={(e) => setBasisFilter(e.target.value as any)} className="w-full text-sm bg-transparent outline-none">
+                  <option value="all">All basis types</option>
+                  <option value="per_sheet">Per sheet only</option>
+                  <option value="per_1000">Per 1,000 only</option>
+                </select>
+              </label>
+            </div>
           </div>
 
           <div className="overflow-x-auto">

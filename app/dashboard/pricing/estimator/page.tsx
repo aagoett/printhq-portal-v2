@@ -3,11 +3,11 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Trophy, DollarSign, LayoutGrid, ArrowLeft, Save, Loader2, Users, Tag, Mail, SlidersHorizontal, Table, PlusCircle, RefreshCcw } from 'lucide-react';
+import { Trophy, DollarSign, LayoutGrid, ArrowLeft, Save, Loader2, Users, Tag, Mail, SlidersHorizontal, Table, PlusCircle, RefreshCcw, Target, Package2, Truck } from 'lucide-react';
 import Link from 'next/link';
 import { applyOverridesToList, CustomerPricingOverride, formatCurrency } from '@/utils/pricing';
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
-import { calculateProposals, EstimatorContext, RouteOption, PricingComponent } from '@/lib/estimator';
+import { calculateProposals, EstimatorContext, RouteOption, PricingComponent, PricingProfileKey } from '@/lib/estimator';
 
 type ProfileLite = {
   id: string;
@@ -60,6 +60,7 @@ export default function AutoEstimatorPage() {
   const [insidePaperId, setInsidePaperId] = useState('');
   const [quoteTitle, setQuoteTitle] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState('');
+  const [pricingProfile, setPricingProfile] = useState<PricingProfileKey>('competitive');
 
   // Customer context for overrides
   const [currentProfile, setCurrentProfile] = useState<ProfileLite | null>(null);
@@ -98,6 +99,11 @@ export default function AutoEstimatorPage() {
   const selectedTemplateDef = getTemplate(productKey);
   const selectedSizeOption = selectedTemplateDef.sizes.find((s) => s.label === productSizeLabel) || null;
   const showManualSize = productSizeLabel === 'Custom' || productKey === 'other';
+  const pricingProfiles: { key: PricingProfileKey; label: string; note: string }[] = [
+    { key: 'wholesale', label: 'Wholesale', note: 'Lean margin for contract / reseller work' },
+    { key: 'competitive', label: 'Competitive', note: 'Default market price for normal quoting' },
+    { key: 'retail', label: 'Retail', note: 'Higher margin for walk-in / convenience buys' },
+  ];
 
   const asPerSheet = (value?: number, unit?: string, threshold = 1) => {
     const raw = Number(value || 0);
@@ -140,7 +146,7 @@ export default function AutoEstimatorPage() {
     if (finishW > 0 && finishH > 0 && quantity > 0) {
         calculateBestRoute();
     }
-  }, [finishW, finishH, quantity, selectedPaperId, insidePaperId, selectedFinishingIds, selectedMailingId, customerOverrides, selectedTemplate, papers, presses, finishing, mailing, productKey, productSizeLabel, pageCount, coverPaperId, customProductName, showPaperAdvanced]);
+  }, [finishW, finishH, quantity, selectedPaperId, insidePaperId, selectedFinishingIds, selectedMailingId, customerOverrides, selectedTemplate, pricingProfile, papers, presses, finishing, mailing, productKey, productSizeLabel, pageCount, coverPaperId, customProductName, showPaperAdvanced]);
 
   useEffect(() => {
     if (selectedCustomerId) {
@@ -282,6 +288,7 @@ export default function AutoEstimatorPage() {
           selectedFinishingIds,
           selectedMailingId,
           templateKey: selectedTemplate,
+          pricingProfile,
         },
         context
       );
@@ -358,7 +365,7 @@ export default function AutoEstimatorPage() {
       production_method: winner.method,
       total_cost: effectiveCost,
       total_price: effectivePrice,
-      cost_breakdown: { ...winner, product: productMeta, breakdown, finishingDetail, mailingDetail, routes: routeOptions, worksheet: { lines: worksheetLines, totals: worksheetTotals } },
+      cost_breakdown: { ...winner, pricingProfile, product: productMeta, breakdown, finishingDetail, mailingDetail, routes: routeOptions, worksheet: { lines: worksheetLines, totals: worksheetTotals } },
       status: 'Draft',
       user_id: selectedCustomerId || null,
       customer_email: selectedCustomer?.email || currentProfile?.email || null,
@@ -489,6 +496,23 @@ export default function AutoEstimatorPage() {
                     )}
                   </div>
                 )}
+
+                <div>
+                  <label className="block text-xs font-bold uppercase text-gray-500 mb-2 flex items-center gap-2"><Target size={14}/> Pricing Profile</label>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    {pricingProfiles.map((profile) => (
+                      <button
+                        type="button"
+                        key={profile.key}
+                        onClick={() => setPricingProfile(profile.key)}
+                        className={`text-left rounded-xl border px-3 py-3 transition-all ${pricingProfile === profile.key ? 'border-black bg-black text-white shadow-sm' : 'border-gray-200 bg-white hover:border-gray-400 text-gray-700'}`}
+                      >
+                        <p className="text-sm font-bold">{profile.label}</p>
+                        <p className={`text-[11px] mt-1 ${pricingProfile === profile.key ? 'text-gray-200' : 'text-gray-500'}`}>{profile.note}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
                 <div className="space-y-2">
                   <label className="block text-xs font-bold uppercase text-gray-500 mb-1 flex items-center gap-2"><Tag size={12}/> Product Template</label>
@@ -636,7 +660,7 @@ export default function AutoEstimatorPage() {
                     )}
                 </div>
                 <div>
-                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2">4. Finishing Options</label>
+                    <label className="block text-xs font-bold uppercase text-gray-500 mb-2 flex items-center gap-2"><Package2 size={14}/> 4. Finishing Catalog</label>
                     <div className="space-y-2 max-h-40 overflow-y-auto p-2 border rounded bg-gray-50">
                         {finishingOptions.map(f => (
                             <label key={f.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-white p-1 rounded transition-colors">
@@ -659,7 +683,7 @@ export default function AutoEstimatorPage() {
                 </div>
                 <div className="border rounded-lg p-3 bg-white">
                     <div className="flex items-center justify-between mb-2">
-                      <label className="block text-xs font-bold uppercase text-gray-500">5. Mailing</label>
+                      <label className="block text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><Truck size={14}/> 5. Mailing Model</label>
                       <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${selectedMailing ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
                         {selectedMailing ? 'Selected' : 'Optional'}
                       </span>
@@ -699,6 +723,7 @@ export default function AutoEstimatorPage() {
                                 {productMeta.pageCount && <p className="text-xs text-green-700 mt-1">{productMeta.pageCount} pages</p>}
                                 {productMeta.coverStock && <p className="text-xs text-green-700 mt-1">Cover: {productMeta.coverStock} | Inside: {productMeta.insideStock}</p>}
                                 {selectedTemplate && <p className="text-xs text-green-700 mt-1">Template: {selectedTemplate}</p>}
+                                <p className="text-xs text-green-700 mt-1">Pricing profile: <span className="font-bold capitalize">{pricingProfile}</span></p>
                                 {winner.finishingDetail && <p className="text-xs text-green-700 mt-1">Finishing: {winner.finishingDetail}</p>}
                                 {selectedMailing && <p className="text-xs text-green-700 mt-1">Mailing: {selectedMailing.name}</p>}
                               </div>
@@ -853,7 +878,7 @@ export default function AutoEstimatorPage() {
                 {estimates.length > 0 && (
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                         <div className="px-6 py-3 border-b border-gray-100 bg-gray-50">
-                            <h3 className="text-xs font-bold uppercase text-gray-500">Comparison Logic</h3>
+                            <h3 className="text-xs font-bold uppercase text-gray-500">Route Comparison — full line items</h3>
                         </div>
                         <table className="w-full text-sm">
                             <thead className="text-left text-xs text-gray-400 font-bold border-b border-gray-100">
@@ -861,7 +886,11 @@ export default function AutoEstimatorPage() {
                                     <th className="px-6 py-2">Method</th>
                                     <th className="px-6 py-2">Layout</th>
                                     <th className="px-6 py-2">Sheets</th>
-                                    <th className="px-6 py-2">Details</th>
+                                    <th className="px-6 py-2">Paper</th>
+                                    <th className="px-6 py-2">Press</th>
+                                    <th className="px-6 py-2">Finishing</th>
+                                    <th className="px-6 py-2">Mailing</th>
+                                    <th className="px-6 py-2">Profile</th>
                                     <th className="px-6 py-2 text-right">Price</th>
                                 </tr>
                             </thead>
@@ -879,8 +908,24 @@ export default function AutoEstimatorPage() {
                                             {est.sheetsNeeded} + {est.overs} overs = {est.totalSheets}
                                         </td>
                                         <td className="px-6 py-3 text-gray-500 text-xs">
-                                          {est.detail}
-                                          {est.mailingDetail && est.mailingDetail !== 'None' && <span className="ml-2 text-gray-600">• Mailing: {est.mailingDetail}</span>}
+                                          <div className="font-semibold text-gray-700">{est.paperName}</div>
+                                          <div>{formatCurrency(est.paperPrice)} sell / {formatCurrency(est.paperCost)} cost</div>
+                                        </td>
+                                        <td className="px-6 py-3 text-gray-500 text-xs">
+                                          <div className="font-semibold text-gray-700">{est.method}</div>
+                                          <div>{formatCurrency(est.pressPrice)} sell / {formatCurrency(est.pressCost)} cost</div>
+                                        </td>
+                                        <td className="px-6 py-3 text-gray-500 text-xs">
+                                          <div className="font-semibold text-gray-700">{est.finishingDetail || 'None'}</div>
+                                          <div>{formatCurrency(est.finishingPrice)} sell / {formatCurrency(est.finishingCost)} cost</div>
+                                        </td>
+                                        <td className="px-6 py-3 text-gray-500 text-xs">
+                                          <div className="font-semibold text-gray-700">{est.mailingDetail || 'None'}</div>
+                                          <div>{formatCurrency(est.mailingPrice)} sell / {formatCurrency(est.mailingCost)} cost</div>
+                                        </td>
+                                        <td className="px-6 py-3 text-gray-500 text-xs">
+                                          <div className="font-semibold text-gray-700 capitalize">{est.pricingProfile || pricingProfile}</div>
+                                          <div>{est.pricingMultiplier ? `${est.pricingMultiplier.toFixed(2)}x` : '1.00x'}</div>
                                         </td>
                                         <td className="px-6 py-3 text-right font-mono font-bold text-gray-900">
                                             ${est.totalPrice.toFixed(2)}

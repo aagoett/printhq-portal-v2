@@ -43,12 +43,21 @@ export default function QuotesListPage() {
                             <FileText size={24}/>
                         </div>
                         <div>
-                            <h3 className="font-bold text-lg text-gray-900">{quote.title || `Quote #${quote.quote_number}`}</h3>
-                            <p className="text-xs text-gray-500 flex items-center gap-2 mt-1">
-                                <span className="bg-gray-100 px-2 py-0.5 rounded text-gray-600 font-mono font-bold">{quote.quantity} qty</span>
-                                <span className="text-gray-400">•</span>
-                                <span>{quote.width}x{quote.height}" on {quote.paper_stock}</span>
-                            </p>
+                            {(() => {
+                              const product = quote.cost_breakdown?.product;
+                              const productLabel = product?.customLabel || product?.label;
+                              return (
+                                <>
+                                  <h3 className="font-bold text-lg text-gray-900">{quote.title || `Quote #${quote.quote_number}`}</h3>
+                                  <p className="text-xs text-gray-500 flex items-center gap-2 mt-1">
+                                      <span className="bg-gray-100 px-2 py-0.5 rounded text-gray-600 font-mono font-bold">{quote.quantity} qty</span>
+                                      <span className="text-gray-400">•</span>
+                                      <span>{productLabel ? `${productLabel} ${product?.sizeLabel || ''}` : `${quote.width}x${quote.height}"`} on {quote.paper_stock}</span>
+                                      {quote.cost_breakdown?.pricingProfile && <span className="ml-2 rounded bg-blue-50 px-2 py-0.5 text-blue-700 capitalize">{quote.cost_breakdown.pricingProfile}</span>}
+                                  </p>
+                                </>
+                              );
+                            })()}
                         </div>
                     </div>
 
