@@ -77,6 +77,8 @@ export default function QuoteDetailsPage({ params }: { params: { id: string } })
   if (!quote) return <div className="p-12 text-center text-red-400">Quote not found.</div>;
 
   const breakdown = quote.cost_breakdown?.breakdown || [];
+  const routes = quote.cost_breakdown?.routes || [];
+  const bestRoute = quote.cost_breakdown || {};
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -141,28 +143,73 @@ export default function QuoteDetailsPage({ params }: { params: { id: string } })
                     </div>
                 </div>
 
+                <div className="grid md:grid-cols-3 gap-4">
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                    <p className="text-[11px] font-bold uppercase text-gray-500">Route summary</p>
+                    <p className="mt-1 text-lg font-bold text-gray-900">{bestRoute.nUp || '--'}-up on {bestRoute.usableSheet || bestRoute.sheet || '—'}</p>
+                    <p className="text-xs text-gray-500 mt-1">Raw sheet: {bestRoute.sheet || '—'}</p>
+                  </div>
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                    <p className="text-[11px] font-bold uppercase text-gray-500">Sheets & overs</p>
+                    <p className="mt-1 text-lg font-bold text-gray-900">{bestRoute.sheetsNeeded ?? '—'} + {bestRoute.overs ?? '—'} = {bestRoute.totalSheets ?? '—'}</p>
+                    <p className="text-xs text-gray-500 mt-1">Waste included in estimator</p>
+                  </div>
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                    <p className="text-[11px] font-bold uppercase text-gray-500">Component sell</p>
+                    <p className="mt-1 text-sm font-bold text-gray-900">Paper ${(bestRoute.paperPrice ?? 0).toFixed(2)} • Press ${(bestRoute.pressPrice ?? 0).toFixed(2)}</p>
+                    <p className="text-xs text-gray-500 mt-1">Finishing ${(bestRoute.finishingPrice ?? 0).toFixed(2)} • Mailing ${(bestRoute.mailingPrice ?? 0).toFixed(2)}</p>
+                  </div>
+                </div>
+
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="px-6 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
                         <h3 className="text-xs font-bold uppercase text-gray-500">Internal Cost Breakdown</h3>
                         <span className="text-[10px] text-gray-400 bg-gray-200 px-2 py-0.5 rounded">Admin Only</span>
                     </div>
-                    <table className="w-full text-sm">
-                        <tbody className="divide-y divide-gray-100">
-                            {breakdown.map((item: any, i: number) => (
-                                <tr key={i} className="hover:bg-gray-50">
-                                    <td className="px-6 py-3 text-gray-900">{item.name}</td>
-                                    <td className="px-6 py-3 text-gray-500 text-xs">{item.detail}</td>
-                                    <td className="px-6 py-3 text-right text-red-600 font-mono text-xs">${item.cost.toFixed(2)}</td>
-                                </tr>
-                            ))}
-                            <tr className="bg-gray-50 font-bold">
-                                <td className="px-6 py-3">Total Internal Cost</td>
-                                <td></td>
-                                <td className="px-6 py-3 text-right text-red-700 font-mono">${quote.total_cost?.toFixed(2)}</td>
-                            </tr>
-                        </tbody>
-                    </table>
+                    <div className="divide-y divide-gray-100">
+                      {breakdown.map((item: any, i: number) => (
+                        <div key={i} className="px-6 py-4 flex flex-col md:flex-row md:items-start md:justify-between gap-2 hover:bg-gray-50">
+                          <div>
+                            <p className="text-sm font-bold text-gray-900">{item.name}</p>
+                            <p className="text-xs text-gray-500">{item.detail}</p>
+                          </div>
+                          <div className="text-right text-xs font-mono">
+                            <p className="font-bold text-gray-900">Sell ${Number(item.price || 0).toFixed(2)}</p>
+                            <p className="text-red-600">Cost ${Number(item.cost || 0).toFixed(2)}</p>
+                          </div>
+                        </div>
+                      ))}
+                      <div className="px-6 py-4 bg-gray-50 flex items-center justify-between font-bold">
+                        <div>
+                          <p className="text-sm text-gray-900">Total internal cost</p>
+                          <p className="text-xs text-gray-500">Use this to sanity-check margin before converting.</p>
+                        </div>
+                        <p className="text-red-700 font-mono">${quote.total_cost?.toFixed(2)}</p>
+                      </div>
+                    </div>
                 </div>
+
+                {routes.length > 1 && (
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="px-6 py-3 bg-gray-50 border-b border-gray-100">
+                      <h3 className="text-xs font-bold uppercase text-gray-500">Route comparison</h3>
+                    </div>
+                    <div className="divide-y divide-gray-100">
+                      {routes.map((route: any, idx: number) => (
+                        <div key={idx} className={`px-6 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 ${idx === 0 ? 'bg-green-50' : 'bg-white'}`}>
+                          <div>
+                            <p className="font-bold text-gray-900">{route.method} {idx === 0 && <span className="ml-2 text-[10px] font-bold text-green-700">WINNER</span>}</p>
+                            <p className="text-xs text-gray-500">{route.paperName} • {route.nUp}-up • {route.sheetsNeeded}+{route.overs} overs</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-mono font-bold text-gray-900">${Number(route.totalPrice || 0).toFixed(2)}</p>
+                            <p className="text-xs text-gray-500">Cost ${Number(route.totalCost || 0).toFixed(2)}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
             </div>
 
             {/* SIDEBAR */}
