@@ -438,11 +438,11 @@ export default function Dashboard() {
   };
 
   const handleAssignJob = async (jobId: string, staffId: string) => {
-    if (!staffId) return;
-    const staffMember = staff.find(s => s.id === staffId);
-    const staffName = staffMember ? (staffMember.first_name || staffMember.email) : 'Staff';
-    setJobs(jobs.map(j => j.id === jobId ? { ...j, assigned_to: staffId, csr_name: staffName } : j));
-    await supabase.from('jobs').update({ assigned_to: staffId, csr_name: staffName }).eq('id', jobId);
+    const normalizedStaffId = staffId || null;
+    const staffMember = staff.find(s => s.id === normalizedStaffId);
+    const staffName = normalizedStaffId ? (staffMember ? (staffMember.first_name || staffMember.email) : 'Staff') : null;
+    setJobs(jobs.map(j => j.id === jobId ? { ...j, assigned_to: normalizedStaffId || undefined, csr_name: staffName || undefined } : j));
+    await supabase.from('jobs').update({ assigned_to: normalizedStaffId, csr_name: staffName }).eq('id', jobId);
   };
 
   // --- PRODUCTION HANDLERS ---
@@ -1797,6 +1797,9 @@ export default function Dashboard() {
                   columns={boardViewColumns}
                   boardStats={boardStats}
                   staffLookup={staffLookup}
+                  staffOptions={staff}
+                  currentUserId={user?.id}
+                  onAssignJob={handleAssignJob}
                   onOpenItemDrawer={handleOpenItemDrawer}
                   formatDate={formatDate}
                 />
