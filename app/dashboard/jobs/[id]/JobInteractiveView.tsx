@@ -274,7 +274,7 @@ function JobItemsTable({
                                 `}
                               >
                                 {isApproved ? <CheckCircle size={12}/> : <Plus size={12} />}
-                                {isApproved ? 'Approved' : hasProof ? 'Sent / Send Another' : 'Proof'}
+                                {isApproved ? 'Approved' : hasProof ? 'Live / Replace' : 'Share'}
                               </button>
                             ) : (
                               <span className={`text-[10px] px-2.5 py-1.5 rounded-lg font-black uppercase tracking-widest border-2 ${isApproved ? 'bg-green-50 text-green-700 border-green-200' : hasProof ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
@@ -734,13 +734,50 @@ export default function JobInteractiveView({
   };
 
   const countdown = getCountdown();
-  const visibleAssets = isStaff ? assets : assets.filter(a => a.asset_type !== 'source');
+  const portalVisibleAssets = assets.filter((asset: any) => asset.asset_type === 'proof' && asset.status !== 'archived');
+  const sharedPortalCount = portalVisibleAssets.length;
+  const archivedProofCount = assets.filter((asset: any) => asset.asset_type === 'proof' && asset.status === 'archived').length;
+  const visibleAssets = isStaff ? assets : portalVisibleAssets;
   const currentAsset = visibleAssets.find(a => a.id === viewingAssetId) || visibleAssets[0] || assets.find(a => a.id === viewingAssetId);
   const isApprovedAsset = currentAsset?.status === 'approved';
   const originalAsset = assets.find(a => a.asset_type === 'source');
+  const portalHref = `/portal/jobs/${jobId}`;
+  const latestPortalProof = portalVisibleAssets[0];
+  const portalState = (() => {
+    if (job.status === 'Changes Requested') {
+      return {
+        label: 'Changes requested',
+        description: 'Customer asked for edits. Keep the current proof private until the next revision is ready to share.',
+        badgeClass: 'bg-amber-100 text-amber-800 border-amber-200',
+        panelClass: 'border-amber-200 bg-amber-50',
+      };
+    }
+    if (latestPortalProof?.status === 'approved' || ['In Production', 'Shipped', 'Complete'].includes(job.status)) {
+      return {
+        label: 'Approved proof live',
+        description: 'Customer can still see the approved proof and job shell, but approval is locked and production is underway.',
+        badgeClass: 'bg-green-100 text-green-800 border-green-200',
+        panelClass: 'border-green-200 bg-green-50',
+      };
+    }
+    if (latestPortalProof) {
+      return {
+        label: 'Awaiting customer review',
+        description: 'A live proof is on the portal now. Sharing another proof will replace the current pending version for this item or job.',
+        badgeClass: 'bg-purple-100 text-purple-800 border-purple-200',
+        panelClass: 'border-purple-200 bg-purple-50',
+      };
+    }
+    return {
+      label: 'Internal only',
+      description: 'Nothing customer-visible yet. Source files and shop notes stay private until you share a proof to the portal.',
+      badgeClass: 'bg-gray-100 text-gray-700 border-gray-200',
+      panelClass: 'border-gray-200 bg-gray-50',
+    };
+  })();
 
   if (!isStaff) {
-    const sharedProofs = visibleAssets.filter((asset: any) => asset.asset_type === 'proof');
+    const sharedProofs = portalVisibleAssets;
 
     return (
       <CustomerPortalShell
@@ -903,6 +940,16 @@ export default function JobInteractiveView({
                     <button onClick={() => setShowUploadModal(false)} className="text-gray-400 hover:text-black"><X size={20}/></button>
                 </div>
                 <div className="p-6 space-y-4">
+                    <div className={`rounded-2xl border p-4 ${portalState.panelClass}`}>
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Share to portal</p>
+                                <p className="mt-1 text-sm font-semibold text-gray-900">{proofItemId ? `This proof will go live for ${items.find(i => i.id === proofItemId)?.description || 'this item'}.` : 'This proof will go live on the customer job shell.'}</p>
+                                <p className="mt-2 text-xs text-gray-600">Source files and internal notes stay private. If a pending proof is already live for this scope, it will be replaced automatically.</p>
+                            </div>
+                            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${portalState.badgeClass}`}>{portalState.label}</span>
+                        </div>
+                    </div>
                     <div onClick={() => fileInputRef.current?.click()} className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${uploadFile ? 'border-green-400 bg-green-50' : 'border-gray-300 hover:border-black hover:bg-gray-50'}`}>
                         <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
                         <UploadCloud className={`mx-auto h-10 w-10 mb-2 ${uploadFile ? 'text-green-600' : 'text-gray-400'}`} />
@@ -910,7 +957,7 @@ export default function JobInteractiveView({
                     </div>
                     <div>
                         <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Message to Customer</label>
-                        <textarea value={uploadMessage} onChange={(e) => setUploadMessage(e.target.value)} placeholder="e.g. Check spelling..." className="w-full border border-gray-300 rounded-lg p-3 text-sm h-20 resize-none"/>
+                        <textarea value={uploadMessage} onChange={(e) => setUploadMessage(e.target.value)} placeholder="e.g. Please review version 2 for copy and phone number placement." className="w-full border border-gray-300 rounded-lg p-3 text-sm h-20 resize-none"/>
                     </div>
                     <div>
                         <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Target Line Item (Optional)</label>
@@ -924,7 +971,7 @@ export default function JobInteractiveView({
                         </select>
                     </div>
                     <button onClick={handleSubmitProof} disabled={!uploadFile || isUploading} className={`w-full py-3 rounded-xl font-bold text-white transition-all ${!uploadFile || isUploading ? 'bg-gray-300' : 'bg-black hover:bg-gray-800'}`}>
-                        {isUploading ? 'Sending...' : 'Send Proof'}
+                        {isUploading ? 'Sharing...' : 'Share Proof to Portal'}
                     </button>
                 </div>
             </div>
@@ -986,7 +1033,7 @@ export default function JobInteractiveView({
         </div>
       )}
 
-      <div className="max-w-[1920px] mx-auto w-full px-4 mt-4">
+      <div className="max-w-[1920px] mx-auto w-full px-4 mt-4 space-y-4">
         <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
@@ -1021,6 +1068,31 @@ export default function JobInteractiveView({
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className={`rounded-2xl border p-4 shadow-sm ${portalState.panelClass}`}>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Portal handoff</p>
+                <span className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${portalState.badgeClass}`}>{portalState.label}</span>
+              </div>
+              <p className="max-w-3xl text-sm text-gray-700">{portalState.description}</p>
+              <div className="flex flex-wrap gap-2 text-[11px] text-gray-600">
+                <span className="rounded-full border border-white/70 bg-white px-3 py-1">Live proofs {sharedPortalCount}</span>
+                <span className="rounded-full border border-white/70 bg-white px-3 py-1">Archived proofs {archivedProofCount}</span>
+                <span className="rounded-full border border-white/70 bg-white px-3 py-1">Customer-visible steps {items.reduce((sum, item) => sum + ((item.job_item_steps || []).filter((step: any) => step.is_internal === false).length), 0)}</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <a href={portalHref} target="_blank" className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-gray-700 hover:border-black hover:text-black">
+                <ExternalLink size={14} /> Open Portal
+              </a>
+              <button onClick={() => setShowUploadModal(true)} className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-white hover:bg-gray-800">
+                <Globe size={14} /> Share to Portal
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1116,10 +1188,16 @@ export default function JobInteractiveView({
         {/* RIGHT COL: FILE VAULT & CHAT */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/3">
-                <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                     <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File Vault</h3>
+                <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center gap-2">
+                     <div>
+                       <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File Vault</h3>
+                       <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">Customer sees live proofs only</p>
+                     </div>
                      {isStaff && (
-                       <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
+                       <div className="flex items-center gap-2">
+                         <a href={portalHref} target="_blank" className="text-[10px] border border-gray-200 bg-white px-2 py-1 rounded font-bold text-gray-600 hover:border-black hover:text-black">Portal</a>
+                         <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
+                       </div>
                      )}
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2">
@@ -1133,7 +1211,15 @@ export default function JobInteractiveView({
                                 <div><p className="text-xs font-bold text-gray-700 truncate w-32">{asset.file_name}</p><p className="text-[10px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</p></div>
                             </div>
                             <div className="flex flex-wrap gap-1">
-                                {asset.status === 'approved' && <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1.5 rounded flex items-center gap-1">APPROVED</span>}
+                                {asset.asset_type === 'source' ? (
+                                  <span className="text-[9px] font-bold bg-gray-100 text-gray-700 px-1.5 rounded border border-gray-200">INTERNAL ONLY</span>
+                                ) : asset.status === 'archived' ? (
+                                  <span className="text-[9px] font-bold bg-gray-100 text-gray-500 px-1.5 rounded border border-gray-200">REPLACED</span>
+                                ) : asset.status === 'approved' ? (
+                                  <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1.5 rounded flex items-center gap-1 border border-green-200">LIVE · APPROVED</span>
+                                ) : (
+                                  <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1.5 rounded border border-purple-200">LIVE ON PORTAL</span>
+                                )}
                                 {linkedItem && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 rounded flex items-center gap-1 border border-blue-200 truncate max-w-full">LINKED: {linkedItem.description}</span>}
                             </div>
                         </div>

@@ -9,6 +9,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   const [assets, setAssets] = useState<any[]>([]);
   const [steps, setSteps] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
+  const [viewingAssetId, setViewingAssetId] = useState<string>('');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<string>('unknown');
   const [loading, setLoading] = useState(true);
@@ -88,6 +89,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   };
 
   const loadPreview = async (asset: any) => {
+    setViewingAssetId(asset.id);
     const { data } = await supabase.storage.from('uploads').createSignedUrl(asset.file_url, 3600);
     if (data?.signedUrl) {
       setPreviewUrl(data.signedUrl);
@@ -160,6 +162,29 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   const isApproved = job.status === 'In Production' || job.status === 'Shipped' || job.status === 'Complete';
   const isChangesRequested = job.status === 'Changes Requested';
   const pendingProof = assets.find(a => a.status === 'pending');
+  const portalState = isApproved
+    ? {
+        label: 'Approved and in production',
+        description: 'Your approval is locked in. You can still review the approved proof and follow job updates here.',
+        className: 'bg-green-50 border-green-200 text-green-800',
+      }
+    : isChangesRequested
+      ? {
+          label: 'Revision requested',
+          description: 'We received your feedback. The next proof will appear here when it is ready.',
+          className: 'bg-amber-50 border-amber-200 text-amber-800',
+        }
+      : pendingProof
+        ? {
+            label: 'Proof ready for review',
+            description: 'Review the current proof below. Approve it to release the job to production, or request changes if anything is off.',
+            className: 'bg-blue-50 border-blue-200 text-blue-800',
+          }
+        : {
+            label: 'Portal shell ready',
+            description: 'Your job is in our system. Files, proofs, and updates will appear here as soon as they are ready to share.',
+            className: 'bg-gray-50 border-gray-200 text-gray-700',
+          };
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -193,10 +218,11 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
       <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
 
         {/* JOB SUMMARY */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h2 className="text-2xl font-bold text-gray-900">{job.title}</h2>
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-400">Customer job shell</p>
+              <h2 className="mt-1 text-2xl font-bold text-gray-900">{job.title}</h2>
               <p className="text-sm text-gray-500 mt-1">
                 <span className="font-medium">{job.quantity?.toLocaleString()} units</span>
                 {job.size && <> &bull; {job.size}</>}
@@ -210,6 +236,11 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
             }`}>
               {job.status}
             </span>
+          </div>
+
+          <div className={`rounded-xl border px-4 py-3 ${portalState.className}`}>
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em]">{portalState.label}</p>
+            <p className="mt-1 text-sm">{portalState.description}</p>
           </div>
         </div>
 
@@ -254,7 +285,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
                 {assets.map((asset, i) => (
                   <button key={asset.id} onClick={() => loadPreview(asset)}
                     className={`flex-shrink-0 px-3 py-1.5 rounded text-xs font-bold border transition-all ${
-                      previewUrl ? 'border-black bg-black text-white' : 'border-gray-200 text-gray-500 hover:border-black'
+                      viewingAssetId === asset.id ? 'border-black bg-black text-white' : 'border-gray-200 text-gray-500 hover:border-black'
                     }`}>
                     Version {assets.length - i}
                     {asset.status === 'approved' && ' ✓'}
@@ -276,9 +307,9 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
         ) : (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-12 text-center">
             <Clock className="mx-auto text-gray-300 mb-3" size={40} />
-            <h3 className="text-lg font-semibold text-gray-700">Proof Being Prepared</h3>
+            <h3 className="text-lg font-semibold text-gray-700">Portal Ready — No Proof Shared Yet</h3>
             <p className="text-sm text-gray-400 mt-2 max-w-sm mx-auto">
-              Our team is reviewing your files. You&apos;ll receive an email when your proof is ready.
+              Your job shell is live, but no proof has been shared yet. We&apos;re still preparing the customer-visible files and will notify you when review is ready.
             </p>
           </div>
         )}
