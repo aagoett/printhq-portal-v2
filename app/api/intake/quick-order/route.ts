@@ -26,13 +26,24 @@ export type QuickOrderItemPayload = {
 export async function POST(req: NextRequest) {
   try {
     const supabase = createClient();
+    const admin = createServiceRoleClient();
 
-    // 1) Ensure user + role
-    const { data: userResp } = await supabase.auth.getUser();
-    const authedUser = userResp?.user;
+    // 1) Ensure user + role (allow bearer token for headless/API usage)
+    const authHeader = req.headers.get('authorization');
+    let authedUser: any = null;
+
+    if (authHeader?.startsWith('Bearer ')) {
+      const accessToken = authHeader.replace('Bearer ', '').trim();
+      const { data: userResp } = await admin.auth.getUser(accessToken);
+      authedUser = userResp?.user;
+    } else {
+      const { data: userResp } = await supabase.auth.getUser();
+      authedUser = userResp?.user;
+    }
+
     if (!authedUser) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data: profile } = await supabase
+    const { data: profile } = await admin
       .from('profiles')
       .select('role, email')
       .eq('id', authedUser.id)
@@ -65,8 +76,6 @@ export async function POST(req: NextRequest) {
     const guestEmail = isNewCustomer ? newCustomerEmail : null;
 
     // 4) Use service role for all writes
-    const admin = createServiceRoleClient();
-
     const { data: order, error: orderError } = await admin
       .from('orders')
       .insert({
@@ -100,7 +109,9 @@ export async function POST(req: NextRequest) {
     if (jobError || !job) throw jobError;
 
     const defaultWorkflowSteps = (workflowOptions?.length
-      ? workflowOptions.map((w: any) => w.name || w.step_name || w)
+      ? workflowOptions
+          .map((w: any) => w?.name || w?.step_name || w?.queue_name || w)
+          .filter((w: any) => typeof w === 'string' && w.trim().length > 0)
       : ['Prepress']) as string[];
 
     for (let idx = 0; idx < items.length; idx++) {
