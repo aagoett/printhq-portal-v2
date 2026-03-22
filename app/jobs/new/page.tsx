@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 
 type Size = { w: string; h: string; unit: "in" | "mm" };
@@ -22,6 +23,7 @@ const FILE_BUCKET = "art-files";
 
 export default function NewJobPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string>("");
@@ -102,6 +104,53 @@ export default function NewJobPage() {
     ],
     []
   );
+
+  const [showOptionalSpecs, setShowOptionalSpecs] = useState(false);
+  const [showDeliveryDetails, setShowDeliveryDetails] = useState(false);
+
+  const repeatSourceTitle = searchParams.get("sourceTitle") || "";
+  const isRepeatOrder = searchParams.get("repeat") === "1";
+
+  useEffect(() => {
+    const prefillTitle = searchParams.get("title");
+    const prefillProductType = searchParams.get("productType");
+    const prefillQuantity = searchParams.get("quantity");
+    const prefillPaper = searchParams.get("paper");
+    const prefillNotes = searchParams.get("notes");
+    const prefillDeliveryType = searchParams.get("deliveryType");
+    const prefillWidth = searchParams.get("width");
+    const prefillHeight = searchParams.get("height");
+    const prefillUnit = searchParams.get("unit");
+    const prefillFinishing = searchParams.get("finishing");
+
+    if (prefillTitle) setTitle(prefillTitle);
+    if (prefillProductType) setProductType(prefillProductType);
+    if (prefillQuantity) setQuantity(prefillQuantity);
+    if (prefillPaper) setPaper(prefillPaper);
+    if (prefillNotes) setNotes(prefillNotes);
+    if (prefillDeliveryType === "pickup" || prefillDeliveryType === "ship") {
+      setShipping((prev) => ({ ...prev, deliveryType: prefillDeliveryType }));
+      if (prefillDeliveryType === "ship") setShowDeliveryDetails(true);
+    }
+    if (prefillWidth || prefillHeight || prefillUnit) {
+      setSize((prev) => ({
+        w: prefillWidth || prev.w,
+        h: prefillHeight || prev.h,
+        unit: prefillUnit === "mm" ? "mm" : prev.unit,
+      }));
+      setShowOptionalSpecs(true);
+    }
+    if (prefillFinishing) {
+      setFinishing(
+        prefillFinishing
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean)
+      );
+      setShowOptionalSpecs(true);
+    }
+    if (prefillPaper || prefillNotes) setShowOptionalSpecs(true);
+  }, [searchParams]);
 
   function toggleFinishing(v: string) {
     setFinishing((prev) =>
@@ -323,12 +372,68 @@ export default function NewJobPage() {
       }}
     >
       <div style={{ maxWidth: 980, margin: "0 auto" }}>
-        <h1 style={{ fontSize: "2rem", marginBottom: "0.25rem" }}>
-          Submit a New Print Job
-        </h1>
-        <p style={{ opacity: 0.8, marginTop: 0 }}>
-          Tell us what you need, upload your artwork, and we’ll take it from there.
-        </p>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 16,
+            alignItems: "flex-start",
+            flexWrap: "wrap",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "0.35rem 0.7rem",
+                borderRadius: 999,
+                border: "1px solid rgba(148, 163, 184, 0.25)",
+                background: "rgba(15, 23, 42, 0.55)",
+                fontSize: 12,
+                fontWeight: 800,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: isRepeatOrder ? "#86efac" : "#cbd5e1",
+              }}
+            >
+              {isRepeatOrder ? "Repeat Order" : "Guided Job Intake"}
+            </div>
+            <h1 style={{ fontSize: "2rem", marginBottom: "0.25rem", marginTop: 12 }}>
+              {isRepeatOrder ? "Reorder with fewer clicks" : "Submit a New Print Job"}
+            </h1>
+            <p style={{ opacity: 0.8, marginTop: 0, maxWidth: 720 }}>
+              {isRepeatOrder
+                ? `We prefilled what we could from ${repeatSourceTitle || "your previous order"}. Confirm the basics, upload fresh art if needed, and submit.`
+                : "Start with only the essentials. Optional specs and delivery details stay tucked away until you need them."}
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <Link href="/dashboard" style={secondaryLinkStyle}>Portal Home</Link>
+            <Link href="/dashboard/jobs" style={secondaryLinkStyle}>Recent Jobs</Link>
+          </div>
+        </div>
+
+        <div style={{ ...sectionIntroStyle, marginTop: "1rem" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+            <MiniStep
+              step="1"
+              title="Start with the basics"
+              body="Job name, product type, quantity, and artwork are enough to open the order."
+            />
+            <MiniStep
+              step="2"
+              title="Add optional specs only if needed"
+              body="Size, stock, colors, finishing, and notes stay hidden until you want more control."
+            />
+            <MiniStep
+              step="3"
+              title="Choose delivery"
+              body="Pickup is one click. Shipping fields only appear if the job actually needs them."
+            />
+          </div>
+        </div>
 
         {err ? (
           <div
@@ -345,6 +450,10 @@ export default function NewJobPage() {
         ) : null}
 
         <Section title="Job Details">
+          <div style={{ marginBottom: 14, opacity: 0.85, fontSize: 14 }}>
+            Fill the four required fields first. Everything else is optional and can stay hidden.
+          </div>
+
           <Field label="Job Name (what should we call this?)" required>
             <input
               value={title}
@@ -380,93 +489,108 @@ export default function NewJobPage() {
             </Field>
           </Grid2>
 
-          <Grid2>
-            <Field label="Finished Size (optional)">
-              <div style={{ display: "flex", gap: 8 }}>
-                <input
-                  value={size.w}
-                  onChange={(e) => setSize((s) => ({ ...s, w: e.target.value }))}
-                  placeholder="W"
-                  style={inputStyle}
-                />
-                <input
-                  value={size.h}
-                  onChange={(e) => setSize((s) => ({ ...s, h: e.target.value }))}
-                  placeholder="H"
-                  style={inputStyle}
-                />
-                <select
-                  value={size.unit}
-                  onChange={(e) =>
-                    setSize((s) => ({ ...s, unit: e.target.value as any }))
-                  }
-                  style={{ ...inputStyle, width: 110 }}
-                >
-                  <option value="in">in</option>
-                  <option value="mm">mm</option>
-                </select>
-              </div>
-            </Field>
-
-            <Field label="Paper / Stock (optional)">
-              <select value={paper} onChange={(e) => setPaper(e.target.value)} style={inputStyle}>
-                <option value="">Select…</option>
-                {paperOptions.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </Grid2>
-
-          <Grid2>
-            <Field label="Colors (optional)">
-              <input
-                value={colors}
-                onChange={(e) => setColors(e.target.value)}
-                placeholder="Ex: 4/4 CMYK, 4/1, PMS + CMYK…"
-                style={inputStyle}
-              />
-            </Field>
-
-            <Field label="Turnaround">
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <Pill
-                  active={turnaround === "standard"}
-                  onClick={() => setTurnaround("standard")}
-                  text="Standard"
-                />
-                <Pill
-                  active={turnaround === "rush"}
-                  onClick={() => setTurnaround("rush")}
-                  text="Rush (we’ll confirm feasibility)"
-                />
-              </div>
-            </Field>
-          </Grid2>
-
-          <Field label="Finishing (optional)">
+          <Field label="Turnaround">
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              {finishingOptions.map((f) => (
-                <Pill
-                  key={f}
-                  active={finishing.includes(f)}
-                  onClick={() => toggleFinishing(f)}
-                  text={f}
-                />
-              ))}
+              <Pill
+                active={turnaround === "standard"}
+                onClick={() => setTurnaround("standard")}
+                text="Standard"
+              />
+              <Pill
+                active={turnaround === "rush"}
+                onClick={() => setTurnaround("rush")}
+                text="Rush (we’ll confirm feasibility)"
+              />
             </div>
           </Field>
 
-          <Field label="Notes / Instructions (optional)">
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Anything we should know? Folding style, mailing list, panel sizes, special packing, etc."
-              style={{ ...inputStyle, minHeight: 110 }}
-            />
-          </Field>
+          <div style={{ marginTop: 16 }}>
+            <button
+              type="button"
+              onClick={() => setShowOptionalSpecs((prev) => !prev)}
+              style={secondaryButtonStyle}
+            >
+              {showOptionalSpecs ? "Hide optional specs" : "Add optional specs"}
+            </button>
+          </div>
+
+          {showOptionalSpecs ? (
+            <div style={{ marginTop: 16 }}>
+              <Grid2>
+                <Field label="Finished Size (optional)">
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      value={size.w}
+                      onChange={(e) => setSize((s) => ({ ...s, w: e.target.value }))}
+                      placeholder="W"
+                      style={inputStyle}
+                    />
+                    <input
+                      value={size.h}
+                      onChange={(e) => setSize((s) => ({ ...s, h: e.target.value }))}
+                      placeholder="H"
+                      style={inputStyle}
+                    />
+                    <select
+                      value={size.unit}
+                      onChange={(e) =>
+                        setSize((s) => ({ ...s, unit: e.target.value as any }))
+                      }
+                      style={{ ...inputStyle, width: 110 }}
+                    >
+                      <option value="in">in</option>
+                      <option value="mm">mm</option>
+                    </select>
+                  </div>
+                </Field>
+
+                <Field label="Paper / Stock (optional)">
+                  <select value={paper} onChange={(e) => setPaper(e.target.value)} style={inputStyle}>
+                    <option value="">Select…</option>
+                    {paperOptions.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </Grid2>
+
+              <Grid2>
+                <Field label="Colors (optional)">
+                  <input
+                    value={colors}
+                    onChange={(e) => setColors(e.target.value)}
+                    placeholder="Ex: 4/4 CMYK, 4/1, PMS + CMYK…"
+                    style={inputStyle}
+                  />
+                </Field>
+                <div />
+              </Grid2>
+
+              <Field label="Finishing (optional)">
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {finishingOptions.map((f) => (
+                    <Pill
+                      key={f}
+                      active={finishing.includes(f)}
+                      onClick={() => toggleFinishing(f)}
+                      text={f}
+                    />
+                  ))}
+                </div>
+              </Field>
+
+              <Field label="Notes / Instructions (optional)">
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Anything we should know? Folding style, mailing list, panel sizes, special packing, etc."
+                  style={{ ...inputStyle, minHeight: 110 }}
+                />
+              </Field>
+            </div>
+          ) : null}
         </Section>
 
         <Section title="Upload Artwork">
@@ -499,18 +623,35 @@ export default function NewJobPage() {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
             <Pill
               active={shipping.deliveryType === "ship"}
-              onClick={() => setShipping((s) => ({ ...s, deliveryType: "ship" }))}
+              onClick={() => {
+                setShipping((s) => ({ ...s, deliveryType: "ship" }));
+                setShowDeliveryDetails(true);
+              }}
               text="Ship it to me"
             />
             <Pill
               active={shipping.deliveryType === "pickup"}
-              onClick={() => setShipping((s) => ({ ...s, deliveryType: "pickup" }))}
+              onClick={() => {
+                setShipping((s) => ({ ...s, deliveryType: "pickup" }));
+                setShowDeliveryDetails(false);
+              }}
               text="I will pick up"
             />
           </div>
 
           {shipping.deliveryType === "ship" ? (
-            <>
+            !showDeliveryDetails ? (
+              <div style={{ marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setShowDeliveryDetails(true)}
+                  style={secondaryButtonStyle}
+                >
+                  Add shipping address
+                </button>
+              </div>
+            ) : (
+              <>
               <Grid2>
                 <Field label="Recipient Name" required>
                   <input
@@ -587,7 +728,8 @@ export default function NewJobPage() {
                   style={inputStyle}
                 />
               </Field>
-            </>
+              </>
+            )
           ) : (
             <p style={{ opacity: 0.85 }}>
               Great — we’ll confirm pickup details after you submit.
@@ -663,6 +805,25 @@ export default function NewJobPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+function MiniStep({ step, title, body }: { step: string; title: string; body: string }) {
+  return (
+    <div
+      style={{
+        borderRadius: 16,
+        border: "1px solid rgba(148, 163, 184, 0.18)",
+        background: "rgba(15, 23, 42, 0.6)",
+        padding: "1rem",
+      }}
+    >
+      <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#94a3b8" }}>
+        Step {step}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 16, fontWeight: 800 }}>{title}</div>
+      <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.6, color: "#cbd5e1" }}>{body}</div>
+    </div>
   );
 }
 
@@ -761,6 +922,30 @@ function Pill({
     </button>
   );
 }
+
+const sectionIntroStyle: React.CSSProperties = {
+  padding: "1rem",
+  borderRadius: 18,
+  background: "rgba(2, 6, 23, 0.45)",
+  border: "1px solid rgba(148, 163, 184, 0.16)",
+};
+
+const secondaryButtonStyle: React.CSSProperties = {
+  padding: "0.7rem 1rem",
+  borderRadius: 999,
+  border: "1px solid rgba(148, 163, 184, 0.35)",
+  background: "rgba(15, 23, 42, 0.65)",
+  color: "#f8fafc",
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
+const secondaryLinkStyle: React.CSSProperties = {
+  ...secondaryButtonStyle,
+  textDecoration: "none",
+  display: "inline-flex",
+  alignItems: "center",
+};
 
 const inputStyle: React.CSSProperties = {
   width: "100%",

@@ -5,7 +5,8 @@ import {
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
   Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, 
   Briefcase, Building2, Plus, ShoppingCart, Clock, ChevronRight, Layers, Ruler,
-  ArrowUpDown, ArrowUp, ArrowDown, ExternalLink, Calculator, MessageSquare, Send, Sparkles, Paperclip, Bot, Rocket
+  ArrowUpDown, ArrowUp, ArrowDown, ExternalLink, Calculator, MessageSquare, Send, Sparkles, Paperclip, Bot, Rocket,
+  RotateCcw, Star, PlusCircle
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect, useMemo } from 'react';
@@ -82,8 +83,10 @@ type CartItem = {
   finishing?: string[];
   mailing?: boolean;
   mailingNotes?: string;
+  waitingOnArt?: boolean;
+  source_job_id?: string;
   route_steps: string[];
-  artworkStatus: 'Uploaded' | 'Waiting on Art';
+  artworkStatus: 'Uploaded' | 'Waiting on Art' | 'Reuse Art';
 };
 
 type PaperStock = {
@@ -113,6 +116,10 @@ export default function Dashboard() {
   
   // Drag and Drop State
   const [isDragging, setIsDragging] = useState(false);
+  const [startMode, setStartMode] = useState<'new' | 'repeat-exact' | 'repeat-edit' | 'template'>('new');
+  const [selectedRepeatJobId, setSelectedRepeatJobId] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [recentTemplates, setRecentTemplates] = useState<ProductTemplateKey[]>([]);
     
   // --- CART STATE ---
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -162,6 +169,31 @@ export default function Dashboard() {
 
   const selectedTemplate = useMemo(() => getTemplate(selectedProductKey as ProductTemplateKey, PRODUCT_TEMPLATES), [selectedProductKey]);
   const sizeOptions = useMemo(() => selectedTemplate?.sizes || [], [selectedTemplate]);
+  const recentJobs = useMemo(() => (jobs || []).slice(0, 6), [jobs]);
+  const favoriteTemplates = useMemo(() => PRODUCT_TEMPLATES.slice(0, 4), []);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('phq-recent-templates');
+      if (stored) setRecentTemplates(JSON.parse(stored));
+    } catch (err) {
+      console.warn('recent template cache missing', err);
+    }
+  }, []);
+
+  const rememberTemplate = (key: ProductTemplateKey | string) => {
+    if (!key) return;
+    setRecentTemplates((prev) => {
+      const next = [key as ProductTemplateKey, ...prev.filter((k) => k !== key)];
+      return next.slice(0, 6);
+    });
+    try {
+      const stash = [key as ProductTemplateKey, ...recentTemplates.filter((k) => k !== key)].slice(0, 6);
+      localStorage.setItem('phq-recent-templates', JSON.stringify(stash));
+    } catch (err) {
+      console.warn('could not persist template cache', err);
+    }
+  };
 
   useEffect(() => {
     if (selectedTemplate) {
@@ -222,6 +254,86 @@ export default function Dashboard() {
       setRouteStepsDraft(defaultRouteForDraft);
     }
   }, [defaultRouteForDraft, routeDraftLocked]);
+
+  const guessTemplateKeyFromText = (text: string): ProductTemplateKey => {
+    const lower = (text || '').toLowerCase();
+    if (lower.includes('postcard')) return 'postcard';
+    if (lower.includes('flyer') || lower.includes('sell sheet')) return 'flyer';
+    if (lower.includes('brochure')) return 'brochure';
+    if (lower.includes('booklet') || lower.includes('catalog')) return 'booklet';
+    if (lower.includes('envelope')) return 'envelope';
+    if (lower.includes('banner') || lower.includes('sign') || lower.includes('poster') || lower.includes('wide')) return 'wide_format';
+    return 'other';
+  };
+
+  const extractRouteFromItem = (item: any) => (item?.job_item_steps || []).map((s: any) => s.step_name).filter(Boolean);
+
+  const prefillFromJob = (jobId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job || !(job.job_items?.length)) {
+      alert('Job has no items to repeat.');
+      return;
+    }
+    const item = job.job_items[0];
+    setStartMode('repeat-edit');
+    setSelectedRepeatJobId(job.id);
+    setCurrentFile(null);
+    setWaitingOnArt(true);
+    setJobTitle(item.description || job.title || 'Repeat Item');
+    setJobQty(item.quantity ? String(item.quantity) : '');
+    if (item.size) {
+      setJobSize(item.size);
+      setSelectedSizeLabel(item.size);
+    }
+    const guessedKey = guessTemplateKeyFromText(`${item.description || ''} ${job.title || ''}`);
+    setSelectedProductKey(guessedKey);
+    setJobNotes([`Repeat of job #${job.id.substring(0, 6).toUpperCase()}`, item.internal_notes, job.notes].filter(Boolean).join('\n'));
+    const routeFromHistory = extractRouteFromItem(item);
+    if (routeFromHistory.length) {
+      setRouteStepsDraft(routeFromHistory);
+      setRouteDraftLocked(true);
+    } else {
+      setRouteDraftLocked(false);
+      setRouteStepsDraft(defaultRouteForDraft);
+    }
+  };
+
+  const repeatExactJobToCart = (jobId: string) => {
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job || !(job.job_items?.length)) {
+      alert('Job has no items to repeat.');
+      return;
+    }
+    const cloned = job.job_items.map((item: any) => ({
+      id: Math.random().toString(36),
+      file: null,
+      title: item.description || job.title || 'Repeat Item',
+      quantity: item.quantity || 0,
+      size: item.size || job.size || 'TBD',
+      notes: [`Repeat of job #${job.id.substring(0, 6).toUpperCase()} (${job.title || 'Job'})`, item.internal_notes].filter(Boolean).join('\n'),
+      paper_stock: item.paper_stock || 'TBD',
+      product_key: 'repeat',
+      product_name: item.description || 'Repeat Item',
+      finishing: item.finishing || [],
+      mailing: false,
+      mailingNotes: undefined,
+      waitingOnArt: true,
+      source_job_id: job.id,
+      route_steps: extractRouteFromItem(item),
+      artworkStatus: 'Reuse Art',
+    } as CartItem));
+    if (!cloned.length) return;
+    setCart((prev) => [...prev, ...cloned]);
+    setStartMode('new');
+    setSelectedRepeatJobId(job.id);
+  };
+
+  const startModes = [
+    { key: 'new', label: 'New Job', helper: 'Start fresh with a product-first flow.' },
+    { key: 'repeat-exact', label: 'Repeat as-is', helper: 'Re-create a prior job with the same specs.' },
+    { key: 'repeat-edit', label: 'Repeat with tweaks', helper: 'Pull specs from history, then adjust.' },
+    { key: 'template', label: 'Use as template', helper: 'Prefill from a prior job and change everything else.' },
+  ] as const;
 
   const fetchDashboardData = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -590,11 +702,13 @@ export default function Dashboard() {
       finishing: fieldValues.finishing || [],
       mailing: !!fieldValues.mailing,
       mailingNotes: fieldValues.mailingNotes,
+      waitingOnArt: waitingOnArt || !currentFile,
       route_steps: [...routeSteps],
       artworkStatus: waitingOnArt || !currentFile ? 'Waiting on Art' : 'Uploaded'
     };
 
     setCart([...cart, newItem]);
+    rememberTemplate(selectedTemplate?.key || 'other');
     resetForm();
   };
 
@@ -625,10 +739,12 @@ export default function Dashboard() {
         }
       }
 
-      const itemsPayload = cart.map(({ id, file, artworkStatus, mailingNotes, route_steps, ...rest }) => ({
+      const itemsPayload = cart.map(({ id, file, artworkStatus, mailingNotes, route_steps, waitingOnArt, source_job_id, ...rest }) => ({
         ...rest,
         route_steps: route_steps || [],
         mailing_notes: mailingNotes,
+        waitingOnArt: waitingOnArt ?? (artworkStatus === 'Waiting on Art' || artworkStatus === 'Reuse Art'),
+        source_job_id: source_job_id || undefined,
       }));
 
       const formData = new FormData();
@@ -786,6 +902,62 @@ export default function Dashboard() {
       (job) => normalizeJobStatus(job.status) === 'pending review'
     ).length;
 
+    const repeatOrderLinks = recentJobs.map((job) => {
+      const sizeParts = String(job.size || '').match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/i);
+      const width = sizeParts?.[1] || '';
+      const height = sizeParts?.[2] || '';
+      const params = new URLSearchParams({
+        repeat: '1',
+        sourceTitle: job.title || 'Previous job',
+        title: job.title || '',
+        quantity: job.quantity ? String(job.quantity) : '',
+        paper: job.paper_stock || '',
+        notes: job.notes || '',
+        width,
+        height,
+        unit: 'in',
+      });
+      return {
+        id: job.id,
+        title: job.title || 'Untitled job',
+        href: `/jobs/new?${params.toString()}`,
+        subtitle: [job.size, job.paper_stock, job.quantity ? `${Number(job.quantity).toLocaleString()} qty` : '']
+          .filter(Boolean)
+          .join(' • '),
+      };
+    });
+
+    const favoriteSetups = Array.from(
+      customerJobs.reduce((map, job) => {
+        const key = [job.title || 'Untitled job', job.size || '', job.paper_stock || ''].join('||');
+        const current = map.get(key) || { job, count: 0 };
+        current.count += 1;
+        map.set(key, current);
+        return map;
+      }, new Map<string, { job: Job; count: number }>()).values()
+    )
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3)
+      .map(({ job, count }) => {
+        const sizeParts = String(job.size || '').match(/(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)/i);
+        const params = new URLSearchParams({
+          title: job.title || '',
+          quantity: job.quantity ? String(job.quantity) : '',
+          paper: job.paper_stock || '',
+          notes: job.notes || '',
+          width: sizeParts?.[1] || '',
+          height: sizeParts?.[2] || '',
+          unit: 'in',
+        });
+        return {
+          id: `${job.id}-${count}`,
+          title: job.title || 'Untitled setup',
+          count,
+          detail: [job.size, job.paper_stock].filter(Boolean).join(' • ') || 'Saved from prior work',
+          href: `/jobs/new?${params.toString()}`,
+        };
+      });
+
     return (
       <CustomerPortalShell
         title="Customer home"
@@ -816,7 +988,34 @@ export default function Dashboard() {
             </div>
           </section>
 
-          <section className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
+          <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+            <div className="rounded-3xl border border-gray-200 bg-gradient-to-br from-gray-950 via-gray-900 to-gray-800 p-6 text-white shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-white/60">Fastest way in</p>
+              <h2 className="mt-2 text-2xl font-black">Start a new job without hunting around</h2>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-white/75">Use the guided form for a fresh request, or relaunch a prior setup when the work is basically the same.</p>
+              <div className="mt-5 flex flex-wrap gap-3">
+                <Link href="/jobs/new" className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-black text-gray-900 transition hover:bg-gray-100">
+                  <PlusCircle size={16} /> Start new job
+                </Link>
+                {repeatOrderLinks[0] ? (
+                  <Link href={repeatOrderLinks[0].href} className="inline-flex items-center gap-2 rounded-full border border-white/20 px-5 py-2.5 text-sm font-black text-white transition hover:border-white/40 hover:bg-white/10">
+                    <RotateCcw size={16} /> Repeat recent order
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Guided entry</p>
+              <div className="mt-4 space-y-3 text-sm text-gray-600">
+                <div className="rounded-2xl bg-gray-50 p-4"><span className="font-bold text-gray-900">1. Start with basics</span><p className="mt-1">Name, product, quantity, and artwork are enough to begin.</p></div>
+                <div className="rounded-2xl bg-gray-50 p-4"><span className="font-bold text-gray-900">2. Reveal only what matters</span><p className="mt-1">Optional specs stay hidden until you need them.</p></div>
+                <div className="rounded-2xl bg-gray-50 p-4"><span className="font-bold text-gray-900">3. Reuse prior work</span><p className="mt-1">Recent orders and favorite setups become launch points instead of dead history.</p></div>
+              </div>
+            </div>
+          </section>
+
+          <section className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
             <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between gap-4">
                 <div>
@@ -836,17 +1035,40 @@ export default function Dashboard() {
 
             <div className="space-y-4">
               <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Navigation</p>
-                <div className="mt-4 space-y-3 text-sm text-gray-600">
-                  <div className="rounded-2xl bg-gray-50 p-4"><span className="font-bold text-gray-900">Jobs</span><p className="mt-1">Track status, proofs, files, and the full message thread.</p></div>
-                  <div className="rounded-2xl bg-gray-50 p-4"><span className="font-bold text-gray-900">Quotes & invoices</span><p className="mt-1">Keep approvals and billing separate from live production updates.</p></div>
-                  <div className="rounded-2xl bg-gray-50 p-4"><span className="font-bold text-gray-900">Messages</span><p className="mt-1">Open the exact job conversation instead of hunting through email.</p></div>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Repeat order</p>
+                  <RotateCcw size={16} className="text-gray-300" />
+                </div>
+                <div className="mt-4 space-y-3">
+                  {repeatOrderLinks.length > 0 ? repeatOrderLinks.map((item) => (
+                    <Link key={item.id} href={item.href} className="block rounded-2xl border border-gray-200 bg-gray-50 p-4 transition hover:border-black hover:bg-white">
+                      <div className="font-bold text-gray-900">{item.title}</div>
+                      <div className="mt-1 text-sm text-gray-500">{item.subtitle || 'Launch with prior specs prefilled'}</div>
+                    </Link>
+                  )) : (
+                    <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">Your last few jobs will show up here as one-click reorder starters.</div>
+                  )}
                 </div>
               </div>
 
               <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Need something fast?</p>
-                <p className="mt-3 text-sm leading-6 text-gray-600">If a proof is waiting or a spec changed, open the job and reply there. That keeps the production trail attached to the work.</p>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Favorite setups</p>
+                  <Star size={16} className="text-amber-400" />
+                </div>
+                <div className="mt-4 space-y-3">
+                  {favoriteSetups.length > 0 ? favoriteSetups.map((setup) => (
+                    <Link key={setup.id} href={setup.href} className="flex items-start justify-between gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-4 transition hover:border-black hover:bg-white">
+                      <div>
+                        <div className="font-bold text-gray-900">{setup.title}</div>
+                        <div className="mt-1 text-sm text-gray-500">{setup.detail}</div>
+                      </div>
+                      <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.14em] text-amber-700">{setup.count}x</span>
+                    </Link>
+                  )) : (
+                    <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">As repeat patterns build, the portal can surface your most-used specs here.</div>
+                  )}
+                </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Link href="/dashboard/messages" className="rounded-full border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700 hover:border-black hover:text-black">Open messages</Link>
                   <Link href="/dashboard/quotes" className="rounded-full border border-gray-200 px-4 py-2 text-sm font-bold text-gray-700 hover:border-black hover:text-black">Review quotes</Link>

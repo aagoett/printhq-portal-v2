@@ -127,6 +127,11 @@ export default function CustomerJobsPage() {
             <Briefcase className="mx-auto mb-3 text-gray-300" size={36} />
             <h2 className="text-lg font-bold text-gray-900">No jobs yet</h2>
             <p className="mt-2 text-sm text-gray-500">When work is in production or awaiting proof, it will show up here.</p>
+            <div className="mt-5">
+              <Link href="/jobs/new" className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-sm font-bold text-white transition hover:bg-gray-800">
+                Start a new job
+              </Link>
+            </div>
           </div>
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
