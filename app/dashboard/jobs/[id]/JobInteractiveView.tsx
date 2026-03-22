@@ -69,6 +69,8 @@ function JobItemsTable({
   userRole,
   getBlockingReasons,
   isReleaseBlocked,
+  staffOptions = [],
+  currentUserId,
 }: { 
   items: any[], 
   assets: any[], 
@@ -87,6 +89,8 @@ function JobItemsTable({
   userRole: string,
   getBlockingReasons: (itemId?: string, includeWarnings?: boolean) => any[],
   isReleaseBlocked: (itemId?: string) => boolean,
+  staffOptions?: any[],
+  currentUserId?: string | null,
 }) {
   const [isAdding, setIsAdding] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -113,7 +117,9 @@ function JobItemsTable({
           onOpenProofModal={onOpenProofModal}
           onLogActivity={onLogActivity}
           logs={logs}
-          userRole={userRole} 
+          userRole={userRole}
+          staffOptions={staffOptions}
+          currentUserId={currentUserId}
         />
       )}
 
@@ -341,6 +347,7 @@ export default function JobInteractiveView({
   const [assets, setAssets] = useState(initialAssets);
   const [blockers, setBlockers] = useState(initialBlockers || []);
   const [userRole, setUserRole] = useState('customer');
+  const [staffOptions, setStaffOptions] = useState<any[]>([]);
   
   const isStaff = userRole !== 'customer';
 
@@ -422,7 +429,16 @@ export default function JobInteractiveView({
 
   const fetchUserRole = async () => {
     const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-    if (data?.role) setUserRole(data.role);
+    if (data?.role) {
+      setUserRole(data.role);
+      if (data.role !== 'customer') {
+        const { data: staff } = await supabase
+          .from('profiles')
+          .select('id, first_name, last_name, email, role')
+          .in('role', ['admin', 'staff']);
+        if (staff) setStaffOptions(staff);
+      }
+    }
   };
 
   const fetchWorkflowQueues = async () => {
@@ -459,6 +475,44 @@ export default function JobInteractiveView({
         job_item_id: itemId || null 
       });
       await Promise.all([refreshLogs(), refreshMessages()]);
+  };
+
+  const ownerLabel = (staffId?: string | null) => {
+    if (!staffId) return 'Unassigned';
+    const staffMember = staffOptions.find((s: any) => s.id === staffId);
+    return staffMember?.first_name || staffMember?.email || 'Staff';
+  };
+
+  const handleAssignItemOwner = async (itemId: string, staffId: string | null, extraUpdates: Record<string, any> = {}) => {
+    const targetItem = items.find((i: any) => i.id === itemId);
+    if (!targetItem) return;
+
+    const prevOwner = targetItem.assigned_to || null;
+    const nextOwner = staffId || null;
+    const { claimed_at: _ignoredClaimedAt, ...restUpdates } = extraUpdates;
+    if (prevOwner === nextOwner && Object.keys(restUpdates).length === 0) return;
+
+    const payload = {
+      ...restUpdates,
+      assigned_to: nextOwner,
+      claimed_at: nextOwner ? new Date().toISOString() : null,
+    };
+
+    const prevItems = items;
+    setItems((current) => current.map((itm: any) => (itm.id === itemId ? { ...itm, ...payload } : itm)));
+
+    const { error } = await supabase.from('job_items').update(payload).eq('id', itemId);
+    if (error) {
+      alert(error.message);
+      setItems(prevItems);
+      return;
+    }
+
+    if (prevOwner !== nextOwner) {
+      const prevLabel = ownerLabel(prevOwner);
+      const nextLabel = ownerLabel(nextOwner);
+      await logActivity(nextOwner ? (prevOwner ? 'Item reassigned' : 'Item claimed') : 'Item unclaimed', `Owner ${prevLabel} → ${nextLabel}`, itemId);
+    }
   };
 
   // --- Portal visibility helpers ---
@@ -621,8 +675,18 @@ export default function JobInteractiveView({
         return;
       }
     }
-    setItems(current => current.map(i => i.id === id ? { ...i, ...updates } : i));
-    const { error } = await supabase.from('job_items').update(updates).eq('id', id);
+
+    const { assigned_to, claimed_at: _ignoredClaimedAt, ...rest } = updates || {};
+
+    if (assigned_to !== undefined) {
+      await handleAssignItemOwner(id, assigned_to || null, rest);
+      if (Object.keys(rest).length === 0) return;
+    }
+
+    if (Object.keys(rest).length === 0) return;
+
+    setItems(current => current.map(i => i.id === id ? { ...i, ...rest } : i));
+    const { error } = await supabase.from('job_items').update(rest).eq('id', id);
     if (error) {
       alert("Error saving item: " + error.message);
       // rollback UI if needed
@@ -1925,6 +1989,8 @@ export default function JobInteractiveView({
             userRole={userRole}
             getBlockingReasons={blockingReasonsForItem}
             isReleaseBlocked={isReleaseBlockedForItem}
+            staffOptions={staffOptions}
+            currentUserId={user?.id}
           />
 
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden min-h-[500px] relative ${isApprovedAsset ? 'border-green-400 ring-2 ring-green-100' : 'border-gray-200'}`}>

@@ -445,6 +445,62 @@ export default function Dashboard() {
     await supabase.from('jobs').update({ assigned_to: normalizedStaffId, csr_name: staffName }).eq('id', jobId);
   };
 
+  const ownerLabel = (staffId?: string | null) => {
+    if (!staffId) return 'Unassigned';
+    const staffMember = staff.find((s) => s.id === staffId);
+    return staffLookup[staffId] || staffMember?.first_name || staffMember?.email || 'Staff';
+  };
+
+  const handleAssignItem = async (itemId: string, staffId: string | null, extraUpdates: Record<string, any> = {}) => {
+    const targetJob = jobs.find((j) => (j.job_items || []).some((i: any) => i.id === itemId));
+    const targetItem = targetJob?.job_items?.find((i: any) => i.id === itemId);
+    if (!targetJob || !targetItem) return;
+
+    const nextOwner = staffId || null;
+    const prevOwner = targetItem.assigned_to || null;
+    const { claimed_at: _ignoredClaimedAt, ...restUpdates } = extraUpdates;
+    if (prevOwner === nextOwner && Object.keys(restUpdates).length === 0) return;
+
+    const payload = {
+      ...restUpdates,
+      assigned_to: nextOwner,
+      claimed_at: nextOwner ? new Date().toISOString() : null,
+    };
+
+    const prevJobs = jobs;
+    setJobs((current) =>
+      current.map((job) => {
+        if (!job.job_items) return job;
+        return {
+          ...job,
+          job_items: job.job_items.map((item: any) =>
+            item.id === itemId ? { ...item, ...payload } : item
+          ),
+        };
+      })
+    );
+
+    const { error } = await supabase.from('job_items').update(payload).eq('id', itemId);
+    if (error) {
+      alert(error.message);
+      setJobs(prevJobs);
+      return;
+    }
+
+    if (prevOwner !== nextOwner) {
+      const actor = ownerLabel(user?.id) || user?.email || 'User';
+      const prevLabel = ownerLabel(prevOwner);
+      const nextLabel = ownerLabel(nextOwner);
+      await supabase.from('job_logs').insert({
+        job_id: targetJob.id,
+        user_id: user?.id || null,
+        action: nextOwner ? (prevOwner ? 'Item Reassigned' : 'Item Claimed') : 'Item Unclaimed',
+        details: `${actor} set item owner ${prevLabel} → ${nextLabel}`,
+        job_item_id: itemId,
+      });
+    }
+  };
+
   // --- PRODUCTION HANDLERS ---
   const handleOpenItemDrawer = async (itemId: string) => {
     setEditingItemId(itemId);
@@ -499,7 +555,16 @@ export default function Dashboard() {
   };
 
   const handleUpdateItem = async (itemId: string, updates: any) => {
-      const { error } = await supabase.from('job_items').update(updates).eq('id', itemId);
+      const { assigned_to, claimed_at: _ignoredClaimedAt, ...rest } = updates || {};
+
+      if (assigned_to !== undefined) {
+        await handleAssignItem(itemId, assigned_to || null, rest);
+        if (Object.keys(rest).length === 0) return;
+      }
+
+      if (Object.keys(rest).length === 0) return;
+
+      const { error } = await supabase.from('job_items').update(rest).eq('id', itemId);
       if (error) alert(error.message);
       fetchDashboardData();
   };
@@ -1230,6 +1295,8 @@ export default function Dashboard() {
                 }}
                 logs={jobLogs}
                 userRole={role}
+                staffOptions={staff}
+                currentUserId={user?.id}
             />
           );
       })()}
@@ -1800,6 +1867,7 @@ export default function Dashboard() {
                   staffOptions={staff}
                   currentUserId={user?.id}
                   onAssignJob={handleAssignJob}
+                  onAssignItem={handleAssignItem}
                   onOpenItemDrawer={handleOpenItemDrawer}
                   formatDate={formatDate}
                 />

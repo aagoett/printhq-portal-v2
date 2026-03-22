@@ -3,7 +3,7 @@
 import { 
   X, MessageSquare, ListTodo, ArrowUp, ArrowDown, 
   CheckSquare, Globe, Lock, Trash2, FileImage, 
-  UploadCloud, Plus, ThumbsUp, ExternalLink, Save 
+  UploadCloud, Plus, ThumbsUp, ExternalLink, Save, User 
 } from 'lucide-react';
 import { useState, useRef } from 'react';
 
@@ -24,7 +24,9 @@ export default function ItemDetailDrawer({
   onLogActivity,
   onUpdateStepNote,
   logs,
-  userRole 
+  userRole,
+  staffOptions = [],
+  currentUserId,
 }: { 
   item: any, 
   assets: any[],
@@ -41,7 +43,9 @@ export default function ItemDetailDrawer({
   onOpenProofModal?: (itemId?: string) => void,
   onLogActivity: (action: string, details: string, itemId?: string) => Promise<void>,
   logs: any[],
-  userRole: string
+  userRole: string,
+  staffOptions?: { id: string; first_name?: string; email?: string }[],
+  currentUserId?: string | null,
 }) {
   const [formData, setFormData] = useState({
     description: item.description || '',
@@ -49,7 +53,8 @@ export default function ItemDetailDrawer({
     paper_stock: item.paper_stock || '',
     size: item.size || '',
     ink_colors: item.ink_colors || '',
-    internal_notes: item.internal_notes || '' 
+    internal_notes: item.internal_notes || '',
+    assigned_to: item.assigned_to || ''
   });
   
   const [selectedStep, setSelectedStep] = useState('');
@@ -70,7 +75,11 @@ export default function ItemDetailDrawer({
   }
 
   const handleSave = () => {
-    onUpdate(item.id, formData);
+    const payload = {
+      ...formData,
+      assigned_to: formData.assigned_to ? formData.assigned_to : null,
+    };
+    onUpdate(item.id, payload);
     onClose();
   };
 
@@ -230,6 +239,36 @@ export default function ItemDetailDrawer({
                      <label className="block text-xs font-bold text-gray-700 mb-1">Status</label>
                      <div className="p-2 bg-gray-100 rounded text-sm font-black text-gray-500 uppercase tracking-widest">{item.status}</div>
                  </div>
+               </div>
+
+               <div className="space-y-2">
+                 <label className="block text-xs font-bold text-gray-700 mb-1 flex items-center gap-2">
+                   <User size={12} className="text-gray-500" /> Owner / Operator
+                 </label>
+                 <div className="flex flex-wrap items-center gap-2">
+                   <select
+                     value={formData.assigned_to || ''}
+                     onChange={(e) => setFormData({ ...formData, assigned_to: e.target.value })}
+                     className="flex-1 min-w-[180px] rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:border-black"
+                   >
+                     <option value="">Unassigned</option>
+                     {staffOptions?.map((s) => (
+                       <option key={s.id} value={s.id}>
+                         {s.first_name || s.email?.split('@')[0] || 'Staff'}
+                       </option>
+                     ))}
+                   </select>
+                   {currentUserId && (
+                     <button
+                       type="button"
+                       onClick={() => setFormData({ ...formData, assigned_to: formData.assigned_to === currentUserId ? '' : currentUserId })}
+                       className={`px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-wide border ${formData.assigned_to === currentUserId ? 'bg-white text-gray-700 border-gray-300' : 'bg-black text-white border-black hover:bg-gray-800'}`}
+                     >
+                       {formData.assigned_to === currentUserId ? 'Unclaim' : 'Claim this item'}
+                     </button>
+                   )}
+                 </div>
+                 <p className="text-[11px] text-gray-500">Item-level ownership drives queue clarity and prevents multi-item jobs from being orphaned.</p>
                </div>
             </div>
 
