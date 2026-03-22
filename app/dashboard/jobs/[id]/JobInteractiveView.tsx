@@ -351,6 +351,7 @@ export default function JobInteractiveView({
   const [shareProofToPortal, setShareProofToPortal] = useState(true);
   const [messageInternal, setMessageInternal] = useState(false);
   const [portalActionLoading, setPortalActionLoading] = useState(false);
+  const [customerActionNote, setCustomerActionNote] = useState(initialJob.customer_action_note || '');
 
   // Preview State
   const [viewingAssetId, setViewingAssetId] = useState<string>('');
@@ -526,6 +527,38 @@ export default function JobInteractiveView({
         await supabase.from('jobs').update({ portal_visibility: 'shell' }).eq('id', jobId);
       }
     }
+  };
+
+  const setCustomerAction = async (
+    type: 'upload_artwork' | 'approve_proof' | 'review_quote' | 'other',
+    note?: string
+  ) => {
+    if (!isStaff) return;
+    const payload: any = {
+      customer_action_required: true,
+      customer_action_type: type,
+      customer_action_note: note || customerActionNote || null,
+    };
+    setJob((prev: any) => ({ ...prev, ...payload }));
+    setCustomerActionNote(payload.customer_action_note || '');
+    await supabase.from('jobs').update(payload).eq('id', jobId);
+    await logActivity('Customer action', `Set customer action to ${type}${note ? ': ' + note : ''}`);
+    const visibility = normalizePortalVisibility(job.portal_visibility);
+    if (type === 'upload_artwork' && visibility === 'internal') {
+      await updatePortalVisibility('shell');
+    }
+    if (type === 'approve_proof' && visibility === 'internal') {
+      await updatePortalVisibility('proof_live');
+    }
+  };
+
+  const clearCustomerAction = async () => {
+    if (!isStaff) return;
+    const payload = { customer_action_required: false, customer_action_type: null, customer_action_note: null };
+    setJob((prev: any) => ({ ...prev, ...payload }));
+    setCustomerActionNote('');
+    await supabase.from('jobs').update(payload).eq('id', jobId);
+    await logActivity('Customer action', 'Cleared customer action requirement');
   };
 
   // --- ITEM CRUD OPERATIONS ---
@@ -746,13 +779,11 @@ export default function JobInteractiveView({
       const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
       if (error) { alert(error.message); setIsUploading(false); return; }
 
-      // Archive previous proofs for this SPECIFIC item OR global
       const updateQuery = supabase.from('job_assets')
         .update({ status: 'archived' })
         .eq('job_id', jobId)
         .eq('asset_type', 'proof')
         .eq('status', 'pending');
-      
       if (proofItemId) {
           updateQuery.eq('job_item_id', proofItemId);
       } else {
@@ -775,17 +806,17 @@ export default function JobInteractiveView({
       const itemDesc = proofItemId ? items.find(i => i.id === proofItemId)?.description : 'Main Job';
       if (shareProofToPortal) {
         await updatePortalVisibility('proof_live');
-        await sendProofNotification(jobId, data?.path || '', `${uploadMessage} (Item: ${itemDesc})`);
+        await setCustomerAction('approve_proof', uploadMessage || 'Review and approve the latest proof.');
+        await sendProofNotification(jobId, data?.path || '', `${uploadMessage || 'Review the latest proof'} (Item: ${itemDesc})`);
       }
-      
       if (newAsset) { await refreshAssets(); loadPreview(newAsset); }
       setIsUploading(false); setShowUploadModal(false); setUploadFile(null); setUploadMessage(''); setProofItemId(undefined); setShareProofToPortal(true);
   };
-
   const handleApproveProof = async (assetId: string) => {
       if (!confirm("Mark APPROVED?")) return;
       await supabase.from('job_assets').update({ status: 'approved' }).eq('id', assetId);
-      await supabase.from('jobs').update({ status: 'In Production' }).eq('id', jobId);
+      await supabase.from('jobs').update({ status: 'In Production', customer_action_required: false, customer_action_type: null, customer_action_note: null }).eq('id', jobId);
+      setJob((prev: any) => ({ ...prev, status: 'In Production', customer_action_required: false, customer_action_type: null, customer_action_note: null }));
       refreshAssets();
   };
 
@@ -858,6 +889,20 @@ export default function JobInteractiveView({
   const latestPortalProof = portalSharedAssets[0];
   const portalVisibility = normalizePortalVisibility(job.portal_visibility || initialJob?.portal_visibility || 'internal');
   const awaitingArtworkItems = items.filter((item: any) => item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art');
+  const pendingPortalProof = portalSharedAssets.find((asset: any) => asset.status === 'pending');
+  const customerActionType = job.customer_action_type || (pendingPortalProof ? 'approve_proof' : null);
+  const customerActionRequired = job.customer_action_required || (customerActionType === 'approve_proof' && !!pendingPortalProof) || (customerActionType === 'upload_artwork' && awaitingArtworkItems.length > 0);
+  const customerActionNoteValue = customerActionNote || job.customer_action_note;
+  const customerAction = (() => {
+    if (!customerActionRequired || !customerActionType) return { required: false, label: 'No action needed', description: 'No customer action is currently required.', tone: 'gray' };
+    if (customerActionType === 'upload_artwork') {
+      return { required: true, label: 'Artwork required', description: customerActionNoteValue || 'Customer owes files or copy before proofing can continue.', tone: 'orange' };
+    }
+    if (customerActionType === 'approve_proof') {
+      return { required: true, label: 'Review & approve proof', description: customerActionNoteValue || 'Customer should review the live proof and approve or request changes.', tone: 'blue' };
+    }
+    return { required: true, label: 'Customer action needed', description: customerActionNoteValue || 'Customer owes info before we proceed.', tone: 'yellow' };
+  })();
   const isPortalHidden = portalVisibility === 'hidden';
   const isPortalShell = portalVisibility === 'shell';
   const isPortalProofLive = portalVisibility === 'proof_live';
@@ -873,9 +918,9 @@ export default function JobInteractiveView({
     if (portalVisibility === 'shell') {
       return {
         label: 'Portal shell only',
-        description: 'Customer sees the job shell, line items, and shared messages. Proofs stay hidden until you share them.',
-        badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
-        panelClass: 'border-blue-200 bg-blue-50',
+        description: customerActionType === 'upload_artwork' ? 'Customer shell is live; they still owe artwork or copy to move forward.' : 'Customer sees the job shell, line items, and shared messages. Proofs stay hidden until you share them.',
+        badgeClass: customerActionType === 'upload_artwork' ? 'bg-orange-100 text-orange-800 border-orange-200' : 'bg-blue-100 text-blue-800 border-blue-200',
+        panelClass: customerActionType === 'upload_artwork' ? 'border-orange-200 bg-orange-50' : 'border-blue-200 bg-blue-50',
       };
     }
     if (portalVisibility === 'proof_live') {
@@ -885,6 +930,14 @@ export default function JobInteractiveView({
           description: 'Customer asked for edits. Keep the current proof private until the next revision is ready to share.',
           badgeClass: 'bg-amber-100 text-amber-800 border-amber-200',
           panelClass: 'border-amber-200 bg-amber-50',
+        };
+      }
+      if (customerActionRequired && customerActionType === 'approve_proof') {
+        return {
+          label: 'Awaiting customer review',
+          description: customerAction.description,
+          badgeClass: 'bg-purple-100 text-purple-800 border-purple-200',
+          panelClass: 'border-purple-200 bg-purple-50',
         };
       }
       if (latestPortalProof?.status === 'approved' || ['In Production', 'Shipped', 'Complete'].includes(job.status)) {
@@ -911,8 +964,8 @@ export default function JobInteractiveView({
       panelClass: 'border-gray-200 bg-gray-50',
     };
   })();
-  const portalNextAction = awaitingArtworkItems.length > 0
-    ? `Customer still owes artwork/instructions for ${awaitingArtworkItems.length} item${awaitingArtworkItems.length === 1 ? '' : 's'}.`
+  const portalNextAction = customerAction.required
+    ? customerAction.description
     : portalVisibility === 'proof_live' && latestPortalProof?.status !== 'approved'
       ? 'Customer should review the live proof and either approve it or request changes.'
       : portalVisibility === 'proof_live' && (latestPortalProof?.status === 'approved' || ['In Production', 'Shipped', 'Complete'].includes(job.status))
@@ -1228,6 +1281,24 @@ export default function JobInteractiveView({
               </div>
               <p className="max-w-3xl text-sm text-gray-700">{portalState.description}</p>
               <p className="max-w-3xl text-xs font-semibold uppercase tracking-[0.18em] text-gray-600">Customer next action: {portalNextAction}</p>
+              {customerAction.required && (
+                <div className={`rounded-xl border px-3 py-2 text-sm ${customerAction.tone === 'orange' ? 'bg-orange-50 border-orange-200 text-orange-800' : customerAction.tone === 'blue' ? 'bg-purple-50 border-purple-200 text-purple-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em]">Action live on portal</p>
+                  <p className="font-semibold">{customerAction.label}</p>
+                  <p className="text-xs opacity-80">{customerAction.description}</p>
+                </div>
+              )}
+              {isStaff && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase text-gray-500">Customer action note (portal-visible)</label>
+                  <textarea value={customerActionNote} onChange={(e) => setCustomerActionNote(e.target.value)} className="w-full rounded-lg border border-gray-200 p-2 text-sm" placeholder="What do you need from the customer?" />
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => setCustomerAction('upload_artwork', customerActionNote || 'Please upload artwork or copy to proceed.')} className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-orange-800 hover:border-orange-300">Request artwork</button>
+                    <button onClick={() => setCustomerAction('approve_proof', customerActionNote || 'Review and approve the latest proof.')} className="inline-flex items-center gap-2 rounded-full border border-purple-200 bg-purple-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-purple-800 hover:border-purple-300">Require proof approval</button>
+                    <button onClick={clearCustomerAction} className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700 hover:border-black">Clear action</button>
+                  </div>
+                </div>
+              )}
               <div className="flex flex-wrap gap-2 text-[11px] text-gray-600">
                 <span className="rounded-full border border-white/70 bg-white px-3 py-1">Live proofs {sharedPortalCount}</span>
                 <span className="rounded-full border border-white/70 bg-white px-3 py-1">Archived proofs {archivedProofCount}</span>

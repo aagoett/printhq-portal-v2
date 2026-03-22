@@ -2,7 +2,7 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
-import { CheckCircle, XCircle, Download, FileImage, FileText, Clock, Printer, Mail, MessageSquare, Send, AlertTriangle, Palette } from 'lucide-react';
+import { CheckCircle, XCircle, Download, FileImage, FileText, Clock, Printer, Mail, MessageSquare, Send, AlertTriangle, Palette, UploadCloud } from 'lucide-react';
 import { normalizePortalVisibility } from '@/lib/customerJobs';
 
 export default function PublicJobProofPage({ params }: { params: { id: string } }) {
@@ -11,6 +11,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   const [items, setItems] = useState<any[]>([]);
   const [steps, setSteps] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
+  const [customerUploads, setCustomerUploads] = useState<any[]>([]);
   const [viewingAssetId, setViewingAssetId] = useState<string>('');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewType, setPreviewType] = useState<string>('unknown');
@@ -22,6 +23,9 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   const [newMessage, setNewMessage] = useState('');
   const [senderName, setSenderName] = useState('');
   const [sendingMsg, setSendingMsg] = useState(false);
+  const [artFile, setArtFile] = useState<File | null>(null);
+  const [artUploading, setArtUploading] = useState(false);
+  const [artUploadSuccess, setArtUploadSuccess] = useState('');
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -31,7 +35,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   useEffect(() => {
     fetchJobData();
 
-    // Real-time messages
     const channel = supabase.channel('portal_messages')
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'messages',
@@ -60,7 +63,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
 
     setJob(jobData);
 
-    // Fetch customer-visible steps only
     const { data: itemsData } = await supabase
       .from('job_items')
       .select('*, job_item_steps(*)')
@@ -74,7 +76,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
       setSteps(visibleSteps);
     }
 
-    // Fetch proof assets (not source files)
     const { data: assetData } = await supabase
       .from('job_assets')
       .select('*')
@@ -87,7 +88,18 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     if (assetData && assetData.length > 0) {
       setAssets(assetData);
       loadPreview(assetData[0]);
+    } else {
+      setAssets([]);
+      setPreviewUrl(null);
     }
+
+    const { data: uploadData } = await supabase
+      .from('job_assets')
+      .select('*')
+      .eq('job_id', params.id)
+      .eq('uploaded_by_customer', true)
+      .order('created_at', { ascending: false });
+    if (uploadData) setCustomerUploads(uploadData);
 
     await refreshMessages();
     setLoading(false);
@@ -118,11 +130,10 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   const handleApprove = async () => {
     if (!confirm('Approve this proof for printing? This cannot be undone.')) return;
     setActionLoading(true);
-    // Mark the pending proof as approved
     await supabase.from('job_assets').update({ status: 'approved' })
       .eq('job_id', params.id).eq('asset_type', 'proof').eq('status', 'pending');
-    await supabase.from('jobs').update({ status: 'In Production' }).eq('id', params.id);
-    setJob((j: any) => ({ ...j, status: 'In Production' }));
+    await supabase.from('jobs').update({ status: 'In Production', customer_action_required: false, customer_action_type: null, customer_action_note: null }).eq('id', params.id);
+    setJob((j: any) => ({ ...j, status: 'In Production', customer_action_required: false, customer_action_type: null, customer_action_note: null }));
     setSuccessMsg('✅ Proof approved! Your job has been sent to production. We will be in touch with shipping details.');
     setActionLoading(false);
   };
@@ -131,14 +142,14 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     const note = requestChangesNote.trim();
     if (!note) return;
     setActionLoading(true);
-    await supabase.from('jobs').update({ status: 'Changes Requested', notes: note }).eq('id', params.id);
+    await supabase.from('jobs').update({ status: 'Changes Requested', notes: note, customer_action_required: false }).eq('id', params.id);
     await supabase.from('messages').insert({
       job_id: params.id,
       content: `[Changes Requested] ${note}`,
       is_customer_visible: true,
     });
     setSuccessMsg('✏️ Change request submitted! Our team will revise the artwork and share the next proof here.');
-    setJob((j: any) => ({ ...j, status: 'Changes Requested', notes: note }));
+    setJob((j: any) => ({ ...j, status: 'Changes Requested', notes: note, customer_action_required: false }));
     setRequestChangesNote('');
     setShowChangeForm(false);
     setActionLoading(false);
@@ -153,6 +164,49 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     });
     setNewMessage('');
     setSendingMsg(false);
+  };
+
+  const handleArtworkUpload = async () => {
+    if (!artFile) return;
+    setArtUploading(true);
+    setArtUploadSuccess('');
+    const safeName = artFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storageName = `${params.id}-customer-${Date.now()}-${safeName}`;
+    const { data: uploadData, error } = await supabase.storage.from('uploads').upload(storageName, artFile);
+    if (error) {
+      alert(`Upload failed: ${error.message}`);
+      setArtUploading(false);
+      return;
+    }
+
+    await supabase.from('job_assets').insert({
+      job_id: params.id,
+      uploader_id: null,
+      file_url: uploadData?.path,
+      file_name: artFile.name,
+      asset_type: 'source',
+      status: 'pending',
+      portal_visible: false,
+      uploaded_by_customer: true,
+    });
+
+    await supabase.from('jobs').update({
+      customer_action_required: false,
+      customer_action_type: null,
+      customer_action_note: null,
+      portal_visibility: normalizePortalVisibility(job.portal_visibility) === 'internal' ? 'shell' : job.portal_visibility,
+    }).eq('id', params.id);
+
+    await supabase.from('messages').insert({
+      job_id: params.id,
+      content: `${senderName || 'Customer'} uploaded artwork: ${artFile.name}`,
+      is_customer_visible: true,
+    });
+
+    setArtUploadSuccess(`${artFile.name} uploaded. Thank you!`);
+    setArtFile(null);
+    setArtUploading(false);
+    await fetchJobData();
   };
 
   if (loading) return (
@@ -181,24 +235,49 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   const isChangesRequested = job.status === 'Changes Requested';
   const pendingProof = assets.find(a => a.status === 'pending');
   const awaitingArtworkItems = items.filter((item: any) => item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art');
-  const needsCustomerArtwork = awaitingArtworkItems.length > 0;
-  const actionRequiredLabel = needsCustomerArtwork
-    ? 'Send artwork or instructions'
-    : pendingProof && !isApproved && !isChangesRequested
-      ? 'Review and approve proof'
-      : isChangesRequested
-        ? 'PrintHQ is revising your proof'
-        : 'No action required right now';
+  const needsCustomerArtwork = job.customer_action_type === 'upload_artwork' && (job.customer_action_required || awaitingArtworkItems.length > 0);
+  const impliedProofAction = pendingProof && (!job.customer_action_required && !job.customer_action_type);
+  const customerActionType = job.customer_action_type || (impliedProofAction ? 'approve_proof' : null);
+  const customerActionRequired = job.customer_action_required || impliedProofAction || needsCustomerArtwork;
+  const customerActionNote = job.customer_action_note;
+
+  const customerAction = (() => {
+    if (!customerActionType || !customerActionRequired) return { required: false };
+    if (customerActionType === 'upload_artwork') {
+      return {
+        required: true,
+        label: 'Artwork required',
+        description: customerActionNote || 'Upload final artwork or copy so we can produce your proof.',
+        tone: 'orange'
+      };
+    }
+    if (customerActionType === 'approve_proof') {
+      return {
+        required: true,
+        label: 'Review & approve proof',
+        description: customerActionNote || 'Please review the live proof and either approve for print or request changes.',
+        tone: 'blue'
+      };
+    }
+    return {
+      required: true,
+      label: 'Action required',
+      description: customerActionNote || 'Please reply with the requested info so we can keep moving.',
+      tone: 'yellow'
+    };
+  })();
+
+  const actionRequiredLabel = customerAction.required ? customerAction.label : isChangesRequested ? 'PrintHQ is revising your proof' : 'No action required right now';
   const portalState = isApproved
     ? {
         label: 'Approved and in production',
         description: 'Your approval is locked in. You can still review the approved proof and follow job updates here.',
         className: 'bg-green-50 border-green-200 text-green-800',
       }
-    : needsCustomerArtwork
+    : customerAction.required && customerAction.tone === 'orange'
       ? {
           label: 'Customer action required',
-          description: 'We still need artwork or final content from you before proofing can continue. Reply in the thread below so the portal handoff stays attached to this job.',
+          description: customerAction.description,
           className: 'bg-orange-50 border-orange-200 text-orange-800',
         }
       : isChangesRequested
@@ -222,7 +301,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   return (
     <div className="min-h-screen bg-gray-100">
 
-      {/* BRAND HEADER */}
       <div className="bg-black text-white">
         <div className="max-w-5xl mx-auto px-6 py-5 flex items-center justify-between">
           <div>
@@ -236,7 +314,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
         </div>
       </div>
 
-      {/* SUCCESS / STATUS BANNER */}
       {successMsg && (
         <div className="bg-green-600 text-white text-center px-4 py-3 font-medium text-sm">
           {successMsg}
@@ -250,15 +327,14 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
 
       <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
 
-        {(!isApproved && (needsCustomerArtwork || pendingProof)) && (
-          <div className={`rounded-2xl border px-5 py-4 shadow-sm ${needsCustomerArtwork ? 'bg-orange-50 border-orange-200 text-orange-900' : 'bg-blue-50 border-blue-200 text-blue-900'}`}>
+        {customerAction.required && (
+          <div className={`rounded-2xl border px-5 py-4 shadow-sm ${customerAction.tone === 'orange' ? 'bg-orange-50 border-orange-200 text-orange-900' : 'bg-blue-50 border-blue-200 text-blue-900'}`}>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="flex items-start gap-3">
-                {needsCustomerArtwork ? <Palette className="mt-0.5" size={18} /> : <AlertTriangle className="mt-0.5" size={18} />}
-                <div>
+                {customerAction.tone === 'orange' ? <Palette className="mt-0.5" size={18} /> : <AlertTriangle className="mt-0.5" size={18} />}                <div>
                   <p className="text-[11px] font-bold uppercase tracking-[0.18em] opacity-70">Customer action required</p>
-                  <p className="mt-1 text-sm font-semibold">{needsCustomerArtwork ? 'Artwork or copy is still missing for at least one line item.' : 'A proof is waiting for your review before we can move this job forward.'}</p>
-                  <p className="mt-1 text-sm opacity-80">{needsCustomerArtwork ? 'Reply below with files, copy, or exact instructions so the shop can continue without breaking the job thread.' : 'Review the shared proof below, then approve it for print or request changes from this same page.'}</p>
+                  <p className="mt-1 text-sm font-semibold">{customerAction.label}</p>
+                  <p className="mt-1 text-sm opacity-80">{customerAction.description}</p>
                 </div>
               </div>
               <span className="self-start rounded-full border border-current/20 bg-white/70 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em]">
@@ -268,7 +344,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
           </div>
         )}
 
-        {/* JOB SUMMARY */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -303,24 +378,61 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
         </div>
 
         {needsCustomerArtwork && (
-          <div className="bg-white rounded-xl border border-orange-200 shadow-sm p-6">
+          <div className="bg-white rounded-xl border border-orange-200 shadow-sm p-6 space-y-4">
             <div className="flex items-center gap-2 text-orange-800">
               <Palette size={18} />
               <h3 className="text-sm font-bold uppercase tracking-[0.18em]">Artwork still needed</h3>
             </div>
-            <p className="mt-3 text-sm text-gray-600">These line items are still waiting on artwork, copy, or final instructions from you.</p>
-            <div className="mt-4 flex flex-wrap gap-2">
+            <p className="text-sm text-gray-600">Upload final files here so we can continue without breaking this job thread.</p>
+            <div className="mt-2 flex flex-wrap gap-2">
               {awaitingArtworkItems.map((item: any) => (
                 <span key={item.id} className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-bold text-orange-800">
                   {item.description || 'Untitled item'}
                 </span>
               ))}
             </div>
-            <p className="mt-4 text-sm text-gray-500">Reply in the conversation below with the missing files, copy, or exact edits. Keep everything on this job thread so proofing and production stay tied to the right order.</p>
+            <div className={`mt-4 rounded-2xl border-2 border-dashed p-6 text-center cursor-pointer ${artFile ? 'border-green-400 bg-green-50' : 'border-gray-300 hover:border-black hover:bg-gray-50'}`} onClick={() => document.getElementById('art-upload')?.click()}>
+              <input id="art-upload" type="file" className="hidden" onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  setArtFile(e.target.files[0]);
+                  setArtUploadSuccess('');
+                }
+              }} />
+              <UploadCloud className={`mx-auto h-10 w-10 mb-2 ${artFile ? 'text-green-600' : 'text-gray-400'}`} />
+              {artFile ? (
+                <p className="font-bold text-green-700 text-sm truncate">{artFile.name}</p>
+              ) : (
+                <p className="text-sm font-bold text-gray-600">Click to select artwork or packaged files</p>
+              )}
+              <p className="mt-1 text-xs text-gray-500">PDF, AI, EPS, TIFF, or packaged ZIP files are fine.</p>
+            </div>
+            <button
+              onClick={handleArtworkUpload}
+              disabled={!artFile || artUploading}
+              className={`w-full py-3 rounded-xl font-bold text-white transition-all ${!artFile || artUploading ? 'bg-gray-300' : 'bg-black hover:bg-gray-800'}`}
+            >
+              {artUploading ? 'Uploading...' : 'Upload & Notify PrintHQ'}
+            </button>
+            {artUploadSuccess && <p className="text-sm text-green-700 font-semibold flex items-center gap-2"><CheckCircle size={16}/> {artUploadSuccess}</p>}
+            {customerUploads.length > 0 && (
+              <div className="pt-2 border-t border-orange-100">
+                <p className="text-xs font-bold uppercase text-gray-500 mb-2">Your recent uploads</p>
+                <div className="space-y-2">
+                  {customerUploads.map((upload) => (
+                    <div key={upload.id} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm">
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        <FileText size={14} className="text-gray-400" />
+                        <span className="truncate">{upload.file_name}</span>
+                      </div>
+                      <span className="text-[11px] text-gray-400">{new Date(upload.created_at).toLocaleDateString()}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* PRODUCTION STEPS (Customer-visible only) */}
         {steps.length > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
             <h3 className="text-xs font-bold uppercase text-gray-500 mb-4">Production Progress</h3>
@@ -339,7 +451,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
           </div>
         )}
 
-        {/* PROOF VIEWER */}
         {assets.length > 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="border-b border-gray-100 px-6 py-4 bg-gray-50 flex items-center justify-between">
@@ -355,7 +466,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
               )}
             </div>
 
-            {/* PROOF SWITCHER (multiple versions) */}
             {assets.length > 1 && (
               <div className="px-6 py-3 border-b border-gray-100 flex gap-2 overflow-x-auto">
                 {assets.map((asset, i) => (
@@ -390,7 +500,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
           </div>
         )}
 
-        {/* ACTION BUTTONS */}
         {pendingProof && !isApproved && !isChangesRequested && !successMsg && (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
             <div>
@@ -455,7 +564,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
           </div>
         )}
 
-        {/* DISCUSSION */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="border-b border-gray-100 px-6 py-4 bg-gray-50 flex items-center gap-2">
             <MessageSquare size={16} className="text-gray-400" />
@@ -514,7 +622,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
           </div>
         </div>
 
-        {/* FOOTER */}
         <div className="text-center text-xs text-gray-400 pb-8">
           <div className="flex justify-center gap-6 mt-2">
             <button onClick={() => window.print()} className="hover:text-black flex items-center gap-1">
