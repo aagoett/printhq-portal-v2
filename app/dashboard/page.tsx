@@ -5,7 +5,7 @@ import {
   UploadCloud, FileText, Settings, LogOut, LayoutDashboard, 
   Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, 
   Briefcase, Building2, Plus, ShoppingCart, Clock, ChevronRight, Layers, Ruler,
-  ArrowUpDown, ArrowUp, ArrowDown, ExternalLink, Calculator, MessageSquare, Send, Sparkles, Paperclip, Bot
+  ArrowUpDown, ArrowUp, ArrowDown, ExternalLink, Calculator, MessageSquare, Send, Sparkles, Paperclip, Bot, Rocket
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect, useMemo } from 'react';
@@ -1254,6 +1254,7 @@ export default function Dashboard() {
         <nav className="flex-1 space-y-1 px-4 py-6">
           <NavItem icon={<LayoutDashboard size={20} />} label={isInternal ? "Shop Floor" : "My Jobs"} href="/dashboard" active />
           {isInternal && <NavItem icon={<MessageSquare size={20} />} label="Intake" href="/dashboard/intake" />}
+          {isInternal && <NavItem icon={<Rocket size={20} />} label="Mission Control" href="/dashboard/mission-control" />}
           {isInternal && <NavItem icon={<Calculator size={20} />} label="Estimator" href="/dashboard/pricing/estimator" />}
           <NavItem icon={<FileText size={20} />} label="Quotes" href="/dashboard/quotes" />
           {isInternal ? <NavItem icon={<Briefcase size={20} />} label="Invoices" href="/dashboard/invoices" /> : <NavItem icon={<Briefcase size={20} />} label="Invoices" href="/dashboard/invoices" />}

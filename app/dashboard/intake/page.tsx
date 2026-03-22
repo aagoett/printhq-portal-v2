@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Bot, Briefcase, Calculator, FileText, Layers3, MessageSquare, PackageCheck, Settings, Sparkles, User } from 'lucide-react';
+import { Bot, Briefcase, Calculator, FileText, Layers3, MessageSquare, PackageCheck, Rocket, Settings, Sparkles, User } from 'lucide-react';
 import CsrChatPanel from '@/components/CsrChatPanel';
 import BotIntakePanel from '@/components/BotIntakePanel';
 import QuickOrderPanel from '@/components/QuickOrderPanel';
@@ -262,8 +262,9 @@ export default function DashboardIntakePage() {
 
         <div className="mt-8 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.18em] text-gray-400 mb-3"><Settings size={14}/> Navigation</div>
-          <div className="grid gap-3 md:grid-cols-4 text-sm">
+          <div className="grid gap-3 md:grid-cols-5 text-sm">
             <NavChip href="/dashboard" icon={<Briefcase size={15}/> } label="Shop Floor" />
+            <NavChip href="/dashboard/mission-control" icon={<Rocket size={15}/> } label="Mission Control" />
             <NavChip href="/dashboard/quotes" icon={<FileText size={15}/> } label="Quotes" />
             <NavChip href="/dashboard/pricing/estimator" icon={<Calculator size={15}/> } label="Estimator" />
             <NavChip href="/dashboard/customers" icon={<User size={15}/> } label="Customers" />
