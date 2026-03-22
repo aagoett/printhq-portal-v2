@@ -33,7 +33,7 @@ const WIDE_FINISHING = ['Grommets', 'Hems', 'Pole Pockets', 'Lamination', 'Mount
 // Cart items now carry structured product metadata so internal notes stay consistent
 export type CartItem = {
   id: string;
-  file: File;
+  file: File | null;
   title: string;
   quantity: number;
   size: string;
@@ -51,6 +51,7 @@ export type CartItem = {
   mailing_notes?: string;
   substrate?: string;
   finishing?: string[];
+  waitingOnArt?: boolean;
 };
 
 type QuickOrderProps = {
@@ -121,6 +122,7 @@ export default function QuickOrderPanel({
   const [mailingNotes, setMailingNotes] = useState('');
   const [substrate, setSubstrate] = useState(SUBSTRATE_OPTIONS[0]);
   const [finishingSelections, setFinishingSelections] = useState<string[]>([]);
+  const [waitingOnArt, setWaitingOnArt] = useState(false);
 
   const activeTemplate = useMemo(() => getTemplate(productKey, templates), [productKey, templates]);
 
@@ -174,6 +176,7 @@ export default function QuickOrderPanel({
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       setCurrentFile(file);
+      setWaitingOnArt(false);
       if (!jobTitle) setJobTitle(file.name.split('.').slice(0, -1).join('.'));
     }
   };
@@ -198,6 +201,7 @@ export default function QuickOrderPanel({
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
       setCurrentFile(file);
+      setWaitingOnArt(false);
       if (!jobTitle) setJobTitle(file.name.split('.').slice(0, -1).join('.'));
     }
   };
@@ -216,6 +220,7 @@ export default function QuickOrderPanel({
     setCoatingType(COATING_OPTIONS[0]);
     setFoldType(FOLD_OPTIONS[0]);
     setPageCount(8);
+    setWaitingOnArt(false);
     const defaultSize = getDefaultSizeForTemplate(productKey, templates);
     if (defaultSize) {
       setProductSizeLabel(defaultSize.label);
@@ -235,7 +240,7 @@ export default function QuickOrderPanel({
   };
 
   const handleAddToCart = () => {
-    if (!currentFile) return alert('Please upload a file.');
+    if (!currentFile && !waitingOnArt) return alert('Upload a file or mark this item as Waiting on Art.');
     if (!jobQty) return alert('Please enter quantity.');
 
     const qtyNumber = parseInt(jobQty, 10);
@@ -279,7 +284,7 @@ export default function QuickOrderPanel({
 
     const newItem: CartItem = {
       id: Math.random().toString(36),
-      file: currentFile,
+      file: waitingOnArt ? null : currentFile,
       title: jobTitle || productName,
       quantity: qtyNumber,
       size: sizeLabel,
@@ -317,7 +322,9 @@ export default function QuickOrderPanel({
       formData.append('items', JSON.stringify(itemsPayload));
 
       cart.forEach((item) => {
-        formData.append('files', item.file);
+        const placeholder = new File([], `waiting-on-art-${item.id}.txt`);
+        const fileToSend = item.file && !item.waitingOnArt ? item.file : placeholder;
+        formData.append('files', fileToSend);
       });
 
       formData.append('selectedBrandId', selectedBrandId || '');
@@ -414,10 +421,13 @@ export default function QuickOrderPanel({
             <div className="divide-y divide-gray-100">
               {cart.map((item) => (
                 <div key={item.id} className="p-3 bg-white flex justify-between items-center">
-                  <div className="flex items-center overflow-hidden">
-                    <FileText size={16} className="text-blue-500 mr-3 flex-shrink-0" />
+                  <div className="flex items-center overflow-hidden gap-3">
+                    <FileText size={16} className="text-blue-500 flex-shrink-0" />
                     <div className="truncate">
-                      <p className="text-sm font-bold text-gray-900 truncate">{item.title}</p>
+                      <p className="text-sm font-bold text-gray-900 truncate flex items-center gap-2">
+                        <span className="truncate">{item.title}</span>
+                        {item.waitingOnArt && <span className="text-[10px] font-bold uppercase tracking-wide rounded-full bg-amber-100 text-amber-800 px-2 py-0.5 border border-amber-200">Waiting on Art</span>}
+                      </p>
                       <p className="text-xs text-gray-400 truncate">{item.product_name || item.product_key} • {item.size} • {item.paper_stock}</p>
                     </div>
                   </div>
@@ -519,6 +529,21 @@ export default function QuickOrderPanel({
                 <button type="button" onClick={() => setCurrentFile(null)} className="ml-2 text-blue-400 hover:text-red-500"><X size={16} /></button>
               </div>
             )}
+
+            <div className="flex items-center justify-between gap-3">
+              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={waitingOnArt}
+                  onChange={(e) => {
+                    setWaitingOnArt(e.target.checked);
+                    if (e.target.checked) setCurrentFile(null);
+                  }}
+                />
+                <span>No file yet — mark as Waiting on Art</span>
+              </label>
+              {waitingOnArt && <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">We'll log Waiting on Art for this item</span>}
+            </div>
 
             <div className="grid grid-cols-3 gap-3">
               <div className="col-span-3">
@@ -671,10 +696,10 @@ export default function QuickOrderPanel({
             <button
               type="button"
               onClick={handleAddToCart}
-              disabled={!currentFile || !jobQty}
-              className={`w-full py-3 rounded-lg font-bold text-sm transition-all flex items-center justify-center ${!currentFile || !jobQty ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800 shadow-md'}`}
+              disabled={(!currentFile && !waitingOnArt) || !jobQty}
+              className={`w-full py-3 rounded-lg font-bold text-sm transition-all flex items-center justify-center ${(!currentFile && !waitingOnArt) || !jobQty ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800 shadow-md'}`}
             >
-              {!currentFile ? 'Select a File first...' : !jobQty ? 'Enter Quantity...' : '+ Add Item to List'}
+              {!currentFile && !waitingOnArt ? 'Upload art or mark Waiting on Art…' : !jobQty ? 'Enter Quantity...' : '+ Add Item to List'}
             </button>
           </div>
         </div>

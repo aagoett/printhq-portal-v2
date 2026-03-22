@@ -280,6 +280,16 @@ export default function BotIntakePanel({
         await supabase.from('job_item_steps').insert({ job_item_id: jobItem.id, step_name: stepName, status: 'Pending', is_internal: true });
       }
 
+      if (!attachments.length) {
+        await supabase.from('job_logs').insert({
+          job_id: job.id,
+          user_id: currentUser?.id || null,
+          action: 'Waiting on Art',
+          details: `${itemTitle || productMeta.customLabel || productMeta.label || modeCopy.defaultTitle} marked as waiting on art (no files attached)`,
+          job_item_id: jobItem.id,
+        });
+      }
+
       for (const file of attachments) {
         const cleanName = `${job.id}-intake-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
         const { data: uploaded, error: uploadErr } = await supabase.storage.from('uploads').upload(cleanName, file);

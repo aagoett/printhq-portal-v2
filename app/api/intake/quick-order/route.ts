@@ -21,6 +21,7 @@ export type QuickOrderItemPayload = {
   substrate?: string;
   finishing?: string[];
   route_steps?: string[];
+  waitingOnArt?: boolean;
 };
 
 export async function POST(req: NextRequest) {
@@ -117,6 +118,7 @@ export async function POST(req: NextRequest) {
     for (let idx = 0; idx < items.length; idx++) {
       const item = items[idx];
       const file = files[idx];
+      const waitingOnArt = Boolean((item as any)?.waitingOnArt);
 
       const workflowSteps = (item.route_steps && item.route_steps.length ? item.route_steps : defaultWorkflowSteps) as string[];
       const initialStatus = workflowSteps[0] || 'Pending';
@@ -157,8 +159,9 @@ export async function POST(req: NextRequest) {
       if (itemError || !newItem) throw itemError;
 
       const hasFile = file && file instanceof File && file.size > 0;
+      const isWaitingOnArt = waitingOnArt || !hasFile;
 
-      if (hasFile && file) {
+      if (hasFile && !waitingOnArt && file) {
         const fileExt = file.name.split('.').pop();
         const fileName = `${job.id}-${Math.random().toString(36).substring(7)}.${fileExt}`;
         const { data: fileData, error: uploadError } = await admin.storage.from('uploads').upload(fileName, file);
@@ -173,14 +176,14 @@ export async function POST(req: NextRequest) {
           asset_type: 'source',
           status: 'pending',
         });
-      } else {
-        await admin.from('job_logs').insert({
+      } else if (isWaitingOnArt) {
+        const { error: waitingLogError } = await admin.from('job_logs').insert({
           job_id: job.id,
           user_id: authedUser.id,
           action: 'Waiting on Art',
-          details: `${item.title || item.product_name || 'Item'} marked as waiting on art`,
-          job_item_id: newItem.id,
+          details: `${item.title || item.product_name || 'Item'} marked as waiting on art${hasFile ? '' : ' (no file uploaded)'}`,
         });
+        if (waitingLogError) throw waitingLogError;
       }
 
       for (const stepName of workflowSteps) {
@@ -193,12 +196,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    await admin.from('job_logs').insert({
+    const { error: summaryLogError } = await admin.from('job_logs').insert({
       job_id: job.id,
       user_id: authedUser.id,
       action: mode === 'internal-job' ? 'Internal Job' : 'Quick Order',
       details: `${items.length} item(s) created from intake (${mode}).`,
     });
+    if (summaryLogError) throw summaryLogError;
 
     return NextResponse.json({ success: true, orderId: order.id, jobId: job.id });
   } catch (error: any) {
