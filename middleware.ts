@@ -56,7 +56,7 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  const internalPaths = ['/dashboard/settings', '/dashboard/pricing', '/dashboard/customers', '/dashboard/intake', '/dashboard/invoices']
+  const internalPaths = ['/dashboard/settings', '/dashboard/pricing', '/dashboard/customers', '/dashboard/intake', '/dashboard/invoices', '/dashboard/mission-control']
   const isInternalPath = internalPaths.some((path) => request.nextUrl.pathname.startsWith(path))
 
   if (user && isInternalPath) {
