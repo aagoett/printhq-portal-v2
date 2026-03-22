@@ -1019,7 +1019,17 @@ export default function Dashboard() {
       const queueName = normalizeQueueName(job.current_step || activeItems[0]?.status);
       const distinctItemOwners = new Set(items.map((i: any) => i?.assigned_to).filter(Boolean)).size;
       const readyItems = activeItems.filter((item: any) => !item.waitingOnArt && item.status !== 'Hold');
+      const activeOwnerIds = Array.from(new Set(activeItems.map((i: any) => i?.assigned_to).filter(Boolean)));
+      const hasUnassignedActiveItems = activeItems.some((item: any) => !item?.assigned_to);
+      const splitOwnerCount = new Set([...(job.assigned_to ? [job.assigned_to] : []), ...activeOwnerIds]).size;
+      const isSplitOwner = splitOwnerCount > 1 || (activeOwnerIds.length > 0 && hasUnassignedActiveItems);
+      const isOrphaned = activeItems.length > 0 && !job.assigned_to && hasUnassignedActiveItems;
       const updatedAt = (job as any).updated_at || job.created_at;
+      const createdAtMs = new Date(job.created_at || 0).getTime();
+      const ageDays = (
+        (Number.isFinite(createdAtMs) ? Math.floor((Date.now() - createdAtMs) / (1000 * 60 * 60 * 24)) : 0)
+      );
+      const isAgingWait = isWaiting && ageDays >= 2;
 
       return {
         ...job,
@@ -1036,56 +1046,19 @@ export default function Dashboard() {
         activeItems,
         distinctItemOwners,
         readyItems,
+        activeOwnerIds,
+        hasUnassignedActiveItems,
+        isSplitOwner,
+        isOrphaned,
+        ageDays,
+        isAgingWait,
         updatedAt,
       } as Job & any;
     });
 
-  const enrichedFilteredJobs = filteredJobs.map((job) => {
-    const items = Array.isArray(job.job_items) ? job.job_items : [];
-    const waitingItems = items.filter((item: any) => item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art');
-    const completedItems = items.filter((item: any) => item.status === 'Completed');
-    const activeItems = items.filter((item: any) => item.status !== 'Completed');
-    const dueStatus = getDueStatus(job.due_date);
-    const isLate = dueStatus.label === 'Overdue';
-    const isDueToday = dueStatus.label === 'Today';
-    const isUnassigned = !job.assigned_to;
-    const isWaiting = waitingItems.length > 0;
-    const isBlocked = isLate || isWaiting;
-    const isReady = !isBlocked && !isUnassigned && activeItems.length > 0;
-    const queueName = normalizeQueueName(job.current_step || activeItems[0]?.status);
-    const activeOwnerIds = Array.from(new Set(activeItems.map((item: any) => item?.assigned_to).filter(Boolean)));
-    const hasAssignedItems = activeOwnerIds.length > 0;
-    const hasUnassignedActiveItems = activeItems.some((item: any) => !item?.assigned_to);
-    const splitOwnerCount = new Set([
-      ...(job.assigned_to ? [job.assigned_to] : []),
-      ...activeOwnerIds,
-    ]).size;
-    const isSplitOwner = splitOwnerCount > 1 || (hasAssignedItems && hasUnassignedActiveItems);
-    const isOrphaned = activeItems.length > 0 && !job.assigned_to && activeItems.some((item: any) => !item?.assigned_to);
-    const createdAtMs = new Date(job.created_at || 0).getTime();
-    const ageDays = Number.isFinite(createdAtMs) ? Math.floor((Date.now() - createdAtMs) / (1000 * 60 * 60 * 24)) : 0;
-    const isAgingWait = isWaiting && ageDays >= 2;
-    return {
-      ...job,
-      queueName,
-      dueStatus,
-      isLate,
-      isDueToday,
-      isUnassigned,
-      isWaiting,
-      isBlocked,
-      isReady,
-      waitingItems,
-      completedItems,
-      activeItems,
-      activeOwnerIds,
-      hasUnassignedActiveItems,
-      isSplitOwner,
-      isOrphaned,
-      ageDays,
-      isAgingWait,
-    };
-  }).filter((job: any) => {
+  const enrichedAllJobs = enrichJobs(jobs);
+  const enrichedFilteredJobs = enrichJobs(filteredJobs);
+  const scopedJobs = enrichedFilteredJobs.filter((job: any) => {
     if (opsFilter === 'all') return true;
     if (opsFilter === 'blocked') return job.isBlocked;
     if (opsFilter === 'ready') return job.isReady;
@@ -1097,13 +1070,13 @@ export default function Dashboard() {
     return true;
   });
 
-  const sortedFilteredJobs = getSortedJobs(enrichedFilteredJobs as Job[]);
+  const sortedFilteredJobs = getSortedJobs(scopedJobs as Job[]);
   const baseQueueOrder = queueColumns.length ? queueColumns : defaultQueueOrder;
   const bucketedByQueue: Record<string, any[]> = {};
   [...baseQueueOrder, 'Unassigned / Other'].forEach((queue) => {
     bucketedByQueue[queue] = [];
   });
-  enrichedFilteredJobs.forEach((job: any) => {
+  scopedJobs.forEach((job: any) => {
     const queueName = job.queueName && baseQueueOrder.includes(job.queueName) ? job.queueName : 'Unassigned / Other';
     bucketedByQueue[queueName] = bucketedByQueue[queueName] || [];
     bucketedByQueue[queueName].push(job);
@@ -1113,41 +1086,15 @@ export default function Dashboard() {
     jobs: bucketedByQueue[queueName] || [],
   }));
   const boardStats = {
-    total: enrichedFilteredJobs.length,
-    blocked: enrichedFilteredJobs.filter((job: any) => job.isBlocked).length,
-    ready: enrichedFilteredJobs.filter((job: any) => job.isReady).length,
-    waiting: enrichedFilteredJobs.filter((job: any) => job.isWaiting).length,
-    unassigned: enrichedFilteredJobs.filter((job: any) => job.isUnassigned).length,
-    orphaned: enrichedFilteredJobs.filter((job: any) => job.isOrphaned).length,
-    agingWaits: enrichedFilteredJobs.filter((job: any) => job.isAgingWait).length,
-    splitOwner: enrichedFilteredJobs.filter((job: any) => job.isSplitOwner).length,
+    total: scopedJobs.length,
+    blocked: scopedJobs.filter((job: any) => job.isBlocked).length,
+    ready: scopedJobs.filter((job: any) => job.isReady).length,
+    waiting: scopedJobs.filter((job: any) => job.isWaiting).length,
+    unassigned: scopedJobs.filter((job: any) => job.isUnassigned).length,
+    orphaned: scopedJobs.filter((job: any) => job.isOrphaned).length,
+    agingWaits: scopedJobs.filter((job: any) => job.isAgingWait).length,
+    splitOwner: scopedJobs.filter((job: any) => job.isSplitOwner).length,
   };
-
-  const ownerLoadRows = useMemo(() => {
-    const rows = staff.map((member) => {
-      const ownerJobs = enrichedFilteredJobs.filter((job: any) => job.assigned_to === member.id || job.activeOwnerIds?.includes(member.id));
-      const activeItems = ownerJobs.reduce((sum: number, job: any) => {
-        const ownedItems = (job.activeItems || []).filter((item: any) => (item.assigned_to || job.assigned_to) === member.id).length;
-        return sum + ownedItems;
-      }, 0);
-      const blockedJobs = ownerJobs.filter((job: any) => job.isBlocked).length;
-      const dueTodayJobs = ownerJobs.filter((job: any) => job.isDueToday || job.isLate).length;
-      return {
-        id: member.id,
-        name: member.first_name || member.email || 'Staff',
-        activeItems,
-        jobs: ownerJobs.length,
-        blockedJobs,
-        dueTodayJobs,
-      };
-    }).filter((row) => row.jobs > 0 || row.activeItems > 0);
-
-    return rows.sort((a, b) => {
-      if (b.activeItems !== a.activeItems) return b.activeItems - a.activeItems;
-      if (b.blockedJobs !== a.blockedJobs) return b.blockedJobs - a.blockedJobs;
-      return a.name.localeCompare(b.name);
-    }).slice(0, 6);
-  }, [staff, enrichedFilteredJobs]);
 
   const staffLookup = useMemo(() => {
     const map: Record<string, string> = {};
@@ -1157,7 +1104,98 @@ export default function Dashboard() {
     return map;
   }, [staff]);
 
-  const boardViewColumns = boardColumns.length ? boardColumns : [{ queueName: 'All Work', jobs: enrichedFilteredJobs }];
+  const loadQueues = [...baseQueueOrder, 'Unassigned / Other'];
+  const queueLoad = loadQueues.map((queueName) => {
+    const queueJobs = enrichedAllJobs.filter((job: any) => {
+      const normalized = job.queueName && baseQueueOrder.includes(job.queueName) ? job.queueName : 'Unassigned / Other';
+      return normalized === queueName;
+    });
+    const activeItemCount = queueJobs.reduce((sum: number, job: any) => sum + ((job.activeItems || []).length || 0), 0);
+    return {
+      queueName,
+      jobs: queueJobs.length,
+      items: activeItemCount,
+      overdue: queueJobs.filter((job: any) => job.isLate).length,
+      blocked: queueJobs.filter((job: any) => job.isBlocked).length,
+      ready: queueJobs.filter((job: any) => job.isReady).length,
+      unassigned: queueJobs.filter((job: any) => job.isUnassigned).length,
+    };
+  });
+
+  const ownerLoad = (() => {
+    const map: Record<string, { name: string; jobIds: Set<string>; items: number; blocked: number; waiting: number; ready: number; unclaimedReady: number; }> = {};
+    const upsert = (ownerKey: string) => {
+      if (!map[ownerKey]) {
+        map[ownerKey] = {
+          name: ownerKey === 'unassigned' ? 'Unassigned' : staffLookup[ownerKey] || 'Staff',
+          jobIds: new Set<string>(),
+          items: 0,
+          blocked: 0,
+          waiting: 0,
+          ready: 0,
+          unclaimedReady: 0,
+        };
+      }
+      return map[ownerKey];
+    };
+
+    enrichedAllJobs.forEach((job: any) => {
+      const jobOwner = job.assigned_to || null;
+      const activeItems = Array.isArray(job.activeItems) ? job.activeItems : [];
+      const targetItems = activeItems.length ? activeItems : [{ assigned_to: jobOwner, status: job.current_step, id: `job-${job.id}` }];
+      targetItems.forEach((item: any) => {
+        const ownerKey = item.assigned_to || jobOwner || 'unassigned';
+        const entry = upsert(ownerKey);
+        entry.items += 1;
+        entry.jobIds.add(job.id);
+        if (job.isBlocked) entry.blocked += 1;
+        if (job.isWaiting) entry.waiting += 1;
+        if (job.isReady) entry.ready += 1;
+        if (job.isReady && ownerKey === 'unassigned') entry.unclaimedReady += 1;
+      });
+    });
+
+    return Object.entries(map)
+      .map(([ownerId, entry]) => ({
+        ownerId,
+        name: entry.name,
+        jobs: entry.jobIds.size,
+        items: entry.items,
+        blocked: entry.blocked,
+        waiting: entry.waiting,
+        ready: entry.ready,
+        unclaimedReady: entry.unclaimedReady,
+        status: entry.items >= 8 ? 'overloaded' : entry.items >= 5 ? 'stretched' : 'healthy',
+      }))
+      .sort((a, b) => (b.items !== a.items ? b.items - a.items : b.blocked - a.blocked));
+  })();
+
+  const now = new Date();
+  const daysSince = (value?: string | null) => {
+    if (!value) return 0;
+    const ts = new Date(value).getTime();
+    if (!Number.isFinite(ts)) return 0;
+    return Math.floor((now.getTime() - ts) / (1000 * 60 * 60 * 24));
+  };
+
+  const managerExceptions = {
+    splitOwners: enrichedAllJobs.filter((job: any) => job.distinctItemOwners > 1 || job.isSplitOwner),
+    overdueBlocked: enrichedAllJobs.filter((job: any) => job.isLate && (job.isBlocked || job.isWaiting)),
+    waitingAging: enrichedAllJobs.filter((job: any) => job.isWaiting && daysSince(job.updatedAt as string | undefined) >= 2),
+    proofApproved: enrichedAllJobs.filter((job: any) => String(job.status || '').toLowerCase() === 'proof approved - waiting release'),
+    readyUnclaimed: enrichedAllJobs.filter((job: any) => job.isReady && job.isUnassigned),
+  };
+
+  const ownerLoadRows = ownerLoad.slice(0, 6).map((owner) => ({
+    id: owner.ownerId,
+    name: owner.name,
+    jobs: owner.jobs,
+    activeItems: owner.items,
+    blockedJobs: owner.blocked,
+    dueTodayJobs: owner.ready,
+  }));
+
+  const boardViewColumns = boardColumns.length ? boardColumns : [{ queueName: 'All Work', jobs: scopedJobs }];
 
   if (!isInternal) {
     const customerJobs = filterCustomerVisibleJobs(jobs);
@@ -1944,6 +1982,135 @@ export default function Dashboard() {
                   <OpsStatCard label="Orphaned work" value={boardStats.orphaned} tone="danger" helper="Active work with no job/item owner" icon={<Briefcase size={16} />} active={opsFilter === 'orphaned'} onClick={() => setOpsFilter('orphaned')} />
                   <OpsStatCard label="Aging waits" value={boardStats.agingWaits} tone="warning" helper="Waiting 2+ days" icon={<Clock size={16} />} active={opsFilter === 'aging_waits'} onClick={() => setOpsFilter('aging_waits')} />
                   <OpsStatCard label="Split owners" value={boardStats.splitOwner} tone="muted" helper="Queue + item owners disagree" icon={<ArrowRightCircle size={16} />} active={opsFilter === 'split_owner'} onClick={() => setOpsFilter('split_owner')} />
+                </div>
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Queue load</p>
+                      <h3 className="mt-1 text-lg font-bold text-gray-900">Where work is stacking</h3>
+                      <p className="text-sm text-gray-500">Live job + item counts by queue.</p>
+                    </div>
+                    <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">All queues</span>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {queueLoad.map((queue) => (
+                      <div key={queue.queueName} className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-gray-900">{queue.queueName}</p>
+                            <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-gray-600">
+                              <span className="rounded-full bg-white px-2.5 py-1 font-semibold border border-gray-200">{queue.jobs} jobs</span>
+                              <span className="rounded-full bg-white px-2.5 py-1 font-semibold border border-gray-200">{queue.items} items</span>
+                              <span className="rounded-full bg-red-50 px-2.5 py-1 font-semibold text-red-700 border border-red-200">{queue.overdue} overdue</span>
+                              <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700 border border-amber-200">{queue.blocked} blocked</span>
+                              <span className="rounded-full bg-gray-100 px-2.5 py-1 font-semibold text-gray-700 border border-gray-200">{queue.unassigned} unassigned</span>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <span className="inline-flex items-center gap-1 rounded-full bg-gray-900 px-3 py-1 text-[11px] font-black uppercase tracking-wide text-white">
+                              Ready {queue.ready}
+                            </span>
+                            <p className="text-[11px] text-gray-500 mt-1">{queue.ready} ready • {queue.blocked} blocked</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Owner load</p>
+                      <h3 className="mt-1 text-lg font-bold text-gray-900">Who is overloaded</h3>
+                      <p className="text-sm text-gray-500">Active items per owner, including inherited items.</p>
+                    </div>
+                    <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">Top 6</span>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {ownerLoad.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-[11px] font-semibold text-gray-500">No active assignments yet.</div>
+                    ) : (
+                      ownerLoad.slice(0, 6).map((owner) => {
+                        const tone = owner.status === 'overloaded' ? 'border-red-200 bg-red-50 text-red-800' : owner.status === 'stretched' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800';
+                        return (
+                          <div key={owner.ownerId} className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+                            <div className="flex items-start justify-between">
+                              <div className="min-w-0">
+                                <p className="text-sm font-bold text-gray-900 truncate">{owner.name}</p>
+                                <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-gray-600">
+                                  <span className="rounded-full bg-white px-2.5 py-1 font-semibold border border-gray-200">{owner.items} items</span>
+                                  <span className="rounded-full bg-white px-2.5 py-1 font-semibold border border-gray-200">{owner.jobs} jobs</span>
+                                  <span className="rounded-full bg-white px-2.5 py-1 font-semibold border border-gray-200">{owner.ready} ready</span>
+                                  <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-800 border border-amber-200">{owner.waiting} waiting</span>
+                                  <span className="rounded-full bg-red-50 px-2.5 py-1 font-semibold text-red-800 border border-red-200">{owner.blocked} blocked</span>
+                                  {owner.unclaimedReady > 0 && <span className="rounded-full bg-gray-900 px-2.5 py-1 font-semibold text-white border border-gray-900">{owner.unclaimedReady} unclaimed ready</span>}
+                                </div>
+                              </div>
+                              <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wide border ${tone}`}>{owner.status}</span>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Manager exceptions</p>
+                    <h3 className="mt-1 text-lg font-bold text-gray-900">Triage these before new intake</h3>
+                    <p className="text-sm text-gray-500">Split owners, blocked overdue work, and customer waits that are aging.</p>
+                  </div>
+                  <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">Top signals</span>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {[
+                    { key: 'splitOwners', title: 'Split owners', helper: 'Queue + item owners disagree', jobs: managerExceptions.splitOwners },
+                    { key: 'overdueBlocked', title: 'Overdue + blocked', helper: 'Late and blocked/hold work', jobs: managerExceptions.overdueBlocked },
+                    { key: 'waitingAging', title: 'Waiting on customer', helper: 'Customer/asset waits 2+ days', jobs: managerExceptions.waitingAging },
+                    { key: 'proofApproved', title: 'Proof approved, not released', helper: 'Proof signed but not in production', jobs: managerExceptions.proofApproved },
+                    { key: 'readyUnclaimed', title: 'Ready but unclaimed', helper: 'Ready work with no owner', jobs: managerExceptions.readyUnclaimed },
+                  ].map((bucket) => (
+                    <div key={bucket.key} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-gray-900 truncate">{bucket.title}</p>
+                          <p className="text-[11px] text-gray-600">{bucket.helper}</p>
+                        </div>
+                        <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wide ${bucket.jobs.length ? 'bg-black text-white' : 'bg-gray-200 text-gray-700'}`}>{bucket.jobs.length}</span>
+                      </div>
+                      {bucket.jobs.length === 0 ? (
+                        <p className="mt-3 text-[11px] text-gray-500">All clear.</p>
+                      ) : (
+                        <div className="mt-3 space-y-2">
+                          {bucket.jobs.slice(0, 4).map((job: any) => (
+                            <Link
+                              key={job.id}
+                              href={`/dashboard/jobs/${job.id}`}
+                              className="flex items-start justify-between rounded-lg border border-gray-200 bg-white px-3 py-2 text-left hover:border-black"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-gray-900 truncate">{job.title || 'Untitled job'}</p>
+                                <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-gray-600">
+                                  <span className="rounded-full bg-gray-100 px-2 py-1 font-semibold border border-gray-200">{job.queueName}</span>
+                                  <span className={`rounded-full px-2 py-1 font-semibold border ${job.dueStatus?.label === 'Overdue' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-white text-gray-700 border-gray-200'}`}>{job.dueStatus?.label || 'No due'}</span>
+                                  <span className="rounded-full bg-white px-2 py-1 font-semibold border border-gray-200">{ownerLabel(job.assigned_to)}</span>
+                                </div>
+                              </div>
+                              <ChevronRight size={14} className="text-gray-400" />
+                            </Link>
+                          ))}
+                          {bucket.jobs.length > 4 && (<p className="text-[11px] text-gray-500">+{bucket.jobs.length - 4} more</p>)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
 
