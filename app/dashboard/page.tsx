@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { sendOrderConfirmation } from '../server-actions';
 import ItemDetailDrawer from '@/components/ItemDetailDrawer';
 import CustomerPortalShell from '@/components/CustomerPortalShell';
+import ShopFloorBoard from '@/components/ShopFloorBoard';
 import { applyOverridesToList, parseQuantityList, formatCurrency } from '@/utils/pricing';
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
 import { applyPricingProfileToRoute, calculateProposals, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
@@ -805,7 +806,8 @@ export default function Dashboard() {
     }
   };
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString?: string | null) => {
+    if (!dateString) return '--';
     return new Date(dateString).toLocaleDateString('en-US', {
       month: 'short', day: 'numeric'
     });
@@ -899,9 +901,36 @@ export default function Dashboard() {
   });
 
   const queueColumns = (departmentTabs || []).filter((tab) => tab !== 'My Queue' && tab !== 'All');
+  const defaultQueueOrder = ['Prepress', 'Press', 'Bindery', 'Mailing', 'QC & Ship', 'Delivery / Pickup'];
+  const queueAliases: Record<string, string> = {
+    prepress: 'Prepress',
+    proof: 'Prepress',
+    press: 'Press',
+    'digital press': 'Press',
+    'offset press': 'Press',
+    'wide format': 'Press',
+    bindery: 'Bindery',
+    cut: 'Bindery',
+    trim: 'Bindery',
+    fold: 'Bindery',
+    score: 'Bindery',
+    perf: 'Bindery',
+    drill: 'Bindery',
+    lamination: 'Bindery',
+    mailing: 'Mailing',
+    address: 'Mailing',
+    tabbing: 'Mailing',
+    qc: 'QC & Ship',
+    ship: 'Delivery / Pickup',
+    delivery: 'Delivery / Pickup',
+    pickup: 'Delivery / Pickup',
+  };
   const normalizeQueueName = (value?: string) => {
     if (!value) return 'Unassigned / Other';
-    const exact = queueColumns.find((queue) => queue.toLowerCase() === value.toLowerCase());
+    const lower = value.toLowerCase();
+    const alias = Object.keys(queueAliases).find((key) => lower.includes(key));
+    if (alias) return queueAliases[alias];
+    const exact = queueColumns.find((queue) => queue.toLowerCase() === lower);
     if (exact) return exact;
     return value;
   };
@@ -943,10 +972,19 @@ export default function Dashboard() {
   });
 
   const sortedFilteredJobs = getSortedJobs(enrichedFilteredJobs as Job[]);
-  const boardQueueOrder = queueColumns.length ? queueColumns : Array.from(new Set(enrichedFilteredJobs.map((job: any) => job.queueName).filter(Boolean)));
-  const boardColumns = [...boardQueueOrder, 'Unassigned / Other'].filter((queue, index, arr) => arr.indexOf(queue) === index).map((queueName) => ({
+  const baseQueueOrder = queueColumns.length ? queueColumns : defaultQueueOrder;
+  const bucketedByQueue: Record<string, any[]> = {};
+  [...baseQueueOrder, 'Unassigned / Other'].forEach((queue) => {
+    bucketedByQueue[queue] = [];
+  });
+  enrichedFilteredJobs.forEach((job: any) => {
+    const queueName = job.queueName && baseQueueOrder.includes(job.queueName) ? job.queueName : 'Unassigned / Other';
+    bucketedByQueue[queueName] = bucketedByQueue[queueName] || [];
+    bucketedByQueue[queueName].push(job);
+  });
+  const boardColumns = [...baseQueueOrder, 'Unassigned / Other'].map((queueName) => ({
     queueName,
-    jobs: enrichedFilteredJobs.filter((job: any) => (job.queueName || 'Unassigned / Other') === queueName),
+    jobs: bucketedByQueue[queueName] || [],
   }));
   const boardStats = {
     total: enrichedFilteredJobs.length,
@@ -955,6 +993,16 @@ export default function Dashboard() {
     waiting: enrichedFilteredJobs.filter((job: any) => job.isWaiting).length,
     unassigned: enrichedFilteredJobs.filter((job: any) => job.isUnassigned).length,
   };
+
+  const staffLookup = useMemo(() => {
+    const map: Record<string, string> = {};
+    staff.forEach((s) => {
+      map[s.id] = s.first_name || s.email || 'Staff';
+    });
+    return map;
+  }, [staff]);
+
+  const boardViewColumns = boardColumns.length ? boardColumns : [{ queueName: 'All Work', jobs: enrichedFilteredJobs }];
 
   if (!isInternal) {
     const customerJobs = filterCustomerVisibleJobs(jobs);
@@ -1745,99 +1793,13 @@ export default function Dashboard() {
                    <p>No jobs found in {activeTab}.</p>
                 </div>
               ) : shopFloorView === 'board' ? (
-                <div className="grid gap-4 xl:grid-cols-4">
-                  {boardColumns.map((column) => (
-                    <section key={column.queueName} className="rounded-2xl border border-gray-200 bg-white shadow-sm min-h-[280px]">
-                      <div className="flex items-center justify-between border-b border-gray-100 px-4 py-4 bg-gray-50 rounded-t-2xl">
-                        <div>
-                          <h4 className="text-sm font-black uppercase tracking-[0.14em] text-gray-700">{column.queueName}</h4>
-                          <p className="text-xs text-gray-500">{column.jobs.length} jobs</p>
-                        </div>
-                        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-gray-600 border border-gray-200">{column.jobs.filter((job: any) => job.isBlocked).length} blocked</span>
-                      </div>
-                      <div className="space-y-3 p-4">
-                        {column.jobs.length === 0 ? (
-                          <div className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">No work in this queue.</div>
-                        ) : column.jobs.map((job: any) => {
-                          const customerProfile = customers.find(c => c.id === job.user_id);
-                          const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
-                          const owner = staff.find((s) => s.id === job.assigned_to);
-                          const visibleItems = (job.job_items || []).filter((item: any) => activeTab === 'All' || activeTab === 'My Queue' || item.status === activeTab).slice(0, 3);
-                          return (
-                            <div key={job.id} className={`rounded-2xl border p-4 ${job.isBlocked ? 'border-red-200 bg-red-50/40' : job.isWaiting ? 'border-amber-200 bg-amber-50/40' : 'border-gray-200 bg-white'}`}>
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <Link href={`/dashboard/jobs/${job.id}`} className="text-base font-bold text-gray-900 hover:text-blue-600">{job.title}</Link>
-                                  <p className="mt-1 text-xs text-gray-500">{customerName} · #{job.id.substring(0,6).toUpperCase()}</p>
-                                </div>
-                                <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wide ${job.isLate ? 'bg-red-100 text-red-700' : job.isDueToday ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-700'}`}>{job.dueStatus.label === '--' ? 'No due date' : `Due ${job.dueStatus.label}`}</span>
-                              </div>
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                {job.isBlocked && <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-red-700">Blocked</span>}
-                                {job.isWaiting && <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700">Waiting on art</span>}
-                                {job.isReady && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-700">Ready to run</span>}
-                                {job.isUnassigned && <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-700">Unassigned</span>}
-                              </div>
-                              <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                                <div className="rounded-xl bg-gray-50 px-2 py-2">
-                                  <div className="text-lg font-black text-gray-900">{job.activeItems.length}</div>
-                                  <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Active items</div>
-                                </div>
-                                <div className="rounded-xl bg-gray-50 px-2 py-2">
-                                  <div className="text-lg font-black text-red-600">{job.waitingItems.length}</div>
-                                  <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Waiting</div>
-                                </div>
-                                <div className="rounded-xl bg-gray-50 px-2 py-2">
-                                  <div className="text-lg font-black text-emerald-600">{job.completedItems.length}</div>
-                                  <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Done</div>
-                                </div>
-                              </div>
-                              <div className="mt-4 space-y-2">
-                                <div className="flex items-center justify-between text-xs text-gray-500">
-                                  <span className="font-bold uppercase tracking-wide">Owner</span>
-                                  <span>{owner ? (owner.first_name || owner.email?.split('@')[0]) : 'Unassigned'}</span>
-                                </div>
-                                <select 
-                                  value={job.assigned_to || ''}
-                                  onChange={(e) => handleAssignJob(job.id, e.target.value)}
-                                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700"
-                                >
-                                  <option value="">-- Unassigned --</option>
-                                  {staff.map(s => <option key={s.id} value={s.id}>{s.first_name || s.email?.split('@')[0]}</option>)}
-                                </select>
-                              </div>
-                              <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50 p-3">
-                                <div className="mb-2 flex items-center justify-between">
-                                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-gray-500">Item visibility</p>
-                                  <Link href={`/dashboard/jobs/${job.id}`} className="text-[11px] font-bold text-black">Open job →</Link>
-                                </div>
-                                <div className="space-y-2">
-                                  {visibleItems.length === 0 ? <p className="text-xs text-gray-400">No matching items in this queue.</p> : visibleItems.map((item: any) => {
-                                    const actionable = activeTab !== 'All' && activeTab !== 'My Queue' && item.status === activeTab;
-                                    return (
-                                      <div key={item.id} className="rounded-lg border border-white bg-white px-3 py-2">
-                                        <div className="flex items-start justify-between gap-2">
-                                          <div>
-                                            <p className="text-xs font-bold text-gray-900">{item.description}</p>
-                                            <p className="text-[10px] text-gray-500">{item.quantity?.toLocaleString()} units · {item.size || 'N/A'}</p>
-                                          </div>
-                                          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-blue-700 border border-blue-100">{item.status || 'Pending'}</span>
-                                        </div>
-                                        {actionable && (
-                                          <button onClick={() => handleCompleteItemStep(item, activeTab)} className="mt-2 rounded-full bg-green-600 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-white hover:bg-green-700">Mark done</button>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  ))}
-                </div>
+                <ShopFloorBoard
+                  columns={boardViewColumns}
+                  boardStats={boardStats}
+                  staffLookup={staffLookup}
+                  onOpenItemDrawer={handleOpenItemDrawer}
+                  formatDate={formatDate}
+                />
               ) : (
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-[400px]">
                   <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
@@ -1958,7 +1920,7 @@ function OpsStatCard({ label, value, helper, icon, tone, active, onClick }: { la
   );
 }
 
-function StatusCard({ job, formatDate, dueStatus }: { job: Job, formatDate: (d: string) => string, dueStatus: any }) {
+function StatusCard({ job, formatDate, dueStatus }: { job: Job, formatDate: (d?: string | null) => string, dueStatus: any }) {
   const styles: any = { 'Pending Review': 'bg-amber-100 text-amber-700', 'In Production': 'bg-emerald-100 text-emerald-700' };
   const brandName = job.orders?.brands?.name || 'PrintHQ';
   return (
