@@ -3,6 +3,7 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
 import { CheckCircle, XCircle, Download, FileImage, FileText, Clock, Printer, Mail, MessageSquare, Send } from 'lucide-react';
+import { normalizePortalVisibility } from '@/lib/customerJobs';
 
 export default function PublicJobProofPage({ params }: { params: { id: string } }) {
   const [job, setJob] = useState<any>(null);
@@ -46,6 +47,14 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
       .single();
 
     if (!jobData) { setLoading(false); return; }
+
+    const portalState = normalizePortalVisibility(jobData.portal_visibility);
+    if (portalState === 'internal' || portalState === 'hidden') {
+      setLoading(false);
+      setJob(null);
+      return;
+    }
+
     setJob(jobData);
 
     // Fetch customer-visible steps only
@@ -66,6 +75,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
       .from('job_assets')
       .select('*')
       .eq('job_id', params.id)
+      .eq('portal_visible', true)
       .in('asset_type', ['proof'])
       .neq('status', 'archived')
       .order('created_at', { ascending: false });
@@ -84,6 +94,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
       .from('messages')
       .select('*, profiles(first_name, role)')
       .eq('job_id', params.id)
+      .eq('is_customer_visible', true)
       .order('created_at', { ascending: true });
     if (data) setMessages(data);
   };
@@ -152,8 +163,8 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
         <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
           <XCircle className="text-red-500" size={28} />
         </div>
-        <h1 className="text-xl font-bold text-gray-900 mb-2">Job Not Found</h1>
-        <p className="text-gray-500">This proof link may have expired or the job ID is incorrect.</p>
+        <h1 className="text-xl font-bold text-gray-900 mb-2">Job Not Available</h1>
+        <p className="text-gray-500">This job is not shared to the portal yet or the link is incorrect.</p>
       </div>
     </div>
   );

@@ -11,6 +11,7 @@ import Link from 'next/link';
 import CustomerPortalShell from '@/components/CustomerPortalShell';
 // Fix: Use relative path (3 dots) for Dashboard folder
 import { sendProofNotification } from '../../../server-actions'; 
+import { normalizePortalVisibility } from '@/lib/customerJobs';
 
 // --- HELPER COMPONENT: ADD ITEM FORM ---
 function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel: () => void }) {
@@ -347,6 +348,10 @@ export default function JobInteractiveView({
   const [internalNotes, setInternalNotes] = useState(initialJob.internal_notes || '');
   const [isSaving, setIsSaving] = useState(false);
 
+  const [shareProofToPortal, setShareProofToPortal] = useState(true);
+  const [messageInternal, setMessageInternal] = useState(false);
+  const [portalActionLoading, setPortalActionLoading] = useState(false);
+
   // Preview State
   const [viewingAssetId, setViewingAssetId] = useState<string>('');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -431,6 +436,99 @@ export default function JobInteractiveView({
       await Promise.all([refreshLogs(), refreshMessages()]);
   };
 
+  // --- Portal visibility helpers ---
+  const updatePortalVisibility = async (visibility: 'internal' | 'shell' | 'proof_live' | 'hidden') => {
+    if (!isStaff) return;
+    const normalized = normalizePortalVisibility(visibility);
+    const timestamp = normalized === 'internal' ? null : new Date().toISOString();
+    setJob((prev: any) => ({
+      ...prev,
+      portal_visibility: normalized,
+      portal_shared_at: timestamp,
+      portal_shared_by: user.id,
+    }));
+    await supabase.from('jobs').update({
+      portal_visibility: normalized,
+      portal_shared_at: timestamp,
+      portal_shared_by: user.id,
+    }).eq('id', jobId);
+    await logActivity('Portal visibility', `Set portal visibility to ${normalized}`);
+  };
+
+  const setPortalShell = async () => {
+    if (!isStaff) return;
+    setPortalActionLoading(true);
+    try {
+      await supabase
+        .from('job_assets')
+        .update({ portal_visible: false })
+        .eq('job_id', jobId)
+        .eq('asset_type', 'proof')
+        .neq('status', 'archived');
+      await updatePortalVisibility('shell');
+      await refreshAssets();
+    } finally {
+      setPortalActionLoading(false);
+    }
+  };
+
+  const hidePortalFromCustomer = async () => {
+    if (!isStaff) return;
+    setPortalActionLoading(true);
+    try {
+      await supabase
+        .from('job_assets')
+        .update({ portal_visible: false })
+        .eq('job_id', jobId)
+        .eq('asset_type', 'proof')
+        .neq('status', 'archived');
+      await updatePortalVisibility('hidden');
+      await refreshAssets();
+    } finally {
+      setPortalActionLoading(false);
+    }
+  };
+
+  const resetPortalInternal = async () => {
+    if (!isStaff) return;
+    setPortalActionLoading(true);
+    try {
+      await supabase
+        .from('job_assets')
+        .update({ portal_visible: false })
+        .eq('job_id', jobId)
+        .eq('asset_type', 'proof')
+        .neq('status', 'archived');
+      await updatePortalVisibility('internal');
+      await refreshAssets();
+    } finally {
+      setPortalActionLoading(false);
+    }
+  };
+
+  const toggleAssetPortalVisibility = async (assetId: string, makeVisible: boolean) => {
+    if (!isStaff) return;
+    const timestamp = makeVisible ? new Date().toISOString() : null;
+    setAssets((current) => current.map((asset: any) =>
+      asset.id === assetId ? { ...asset, portal_visible: makeVisible, portal_shared_at: timestamp } : asset
+    ));
+    await supabase.from('job_assets').update({
+      portal_visible: makeVisible,
+      portal_shared_at: timestamp,
+    }).eq('id', assetId);
+    if (makeVisible && normalizePortalVisibility(job.portal_visibility) === 'internal') {
+      await updatePortalVisibility('proof_live');
+    }
+    if (!makeVisible) {
+      const remainingShared = assets.some((a: any) => a.id !== assetId && a.asset_type === 'proof' && a.status !== 'archived' && a.portal_visible !== false);
+      if (!remainingShared && normalizePortalVisibility(job.portal_visibility) === 'proof_live') {
+        setJob((prev: any) => ({ ...prev, portal_visibility: 'shell' }));
+        await supabase.from('jobs').update({ portal_visibility: 'shell' }).eq('id', jobId);
+      }
+    }
+  };
+
+  // --- ITEM CRUD OPERATIONS ---
   // --- ITEM CRUD OPERATIONS ---
   const handleAddItem = async (newItem: any) => {
     if (!isStaff) return;
@@ -631,6 +729,15 @@ export default function JobInteractiveView({
     }
   };
 
+  const openUploadModal = (itemId?: string) => {
+    if (!isStaff) return;
+    setProofItemId(itemId);
+    setShareProofToPortal(true);
+    setUploadFile(null);
+    setUploadMessage('');
+    setShowUploadModal(true);
+  };
+
   const handleSubmitProof = async () => {
       if (!isStaff) return;
       if (!uploadFile || !user) return;
@@ -660,14 +767,19 @@ export default function JobInteractiveView({
           file_url: data?.path, 
           file_name: uploadFile.name, 
           asset_type: 'proof', 
-          status: 'pending'
+          status: 'pending',
+          portal_visible: shareProofToPortal,
+          portal_shared_at: shareProofToPortal ? new Date().toISOString() : null,
       }).select().single();
 
       const itemDesc = proofItemId ? items.find(i => i.id === proofItemId)?.description : 'Main Job';
-      await sendProofNotification(jobId, data?.path || '', `${uploadMessage} (Item: ${itemDesc})`);
+      if (shareProofToPortal) {
+        await updatePortalVisibility('proof_live');
+        await sendProofNotification(jobId, data?.path || '', `${uploadMessage} (Item: ${itemDesc})`);
+      }
       
       if (newAsset) { await refreshAssets(); loadPreview(newAsset); }
-      setIsUploading(false); setShowUploadModal(false); setUploadFile(null); setUploadMessage(''); setProofItemId(undefined);
+      setIsUploading(false); setShowUploadModal(false); setUploadFile(null); setUploadMessage(''); setProofItemId(undefined); setShareProofToPortal(true);
   };
 
   const handleApproveProof = async (assetId: string) => {
@@ -679,8 +791,9 @@ export default function JobInteractiveView({
 
   const handleSendMessage = async () => {
     if (!newMessage.trim()) return;
-    const msg = newMessage; setNewMessage(''); 
-    await supabase.from('messages').insert({ job_id: jobId, user_id: user.id, content: msg });
+    const msg = newMessage; setNewMessage('');
+    await supabase.from('messages').insert({ job_id: jobId, user_id: user.id, content: msg, is_customer_visible: !messageInternal });
+    setMessageInternal(false);
   };
 
   const handleUpdateStepNote = async (stepId: string, note: string) => {
@@ -734,50 +847,74 @@ export default function JobInteractiveView({
   };
 
   const countdown = getCountdown();
-  const portalVisibleAssets = assets.filter((asset: any) => asset.asset_type === 'proof' && asset.status !== 'archived');
-  const sharedPortalCount = portalVisibleAssets.length;
+  const portalSharedAssets = assets.filter((asset: any) => asset.asset_type === 'proof' && asset.status !== 'archived' && asset.portal_visible !== false);
+  const sharedPortalCount = portalSharedAssets.length;
   const archivedProofCount = assets.filter((asset: any) => asset.asset_type === 'proof' && asset.status === 'archived').length;
-  const visibleAssets = isStaff ? assets : portalVisibleAssets;
+  const visibleAssets = isStaff ? assets : portalSharedAssets;
   const currentAsset = visibleAssets.find(a => a.id === viewingAssetId) || visibleAssets[0] || assets.find(a => a.id === viewingAssetId);
   const isApprovedAsset = currentAsset?.status === 'approved';
   const originalAsset = assets.find(a => a.asset_type === 'source');
   const portalHref = `/portal/jobs/${jobId}`;
-  const latestPortalProof = portalVisibleAssets[0];
+  const latestPortalProof = portalSharedAssets[0];
+  const portalVisibility = normalizePortalVisibility(job.portal_visibility || initialJob?.portal_visibility || 'internal');
+  const isPortalHidden = portalVisibility === 'hidden';
+  const isPortalShell = portalVisibility === 'shell';
+  const isPortalProofLive = portalVisibility === 'proof_live';
   const portalState = (() => {
-    if (job.status === 'Changes Requested') {
+    if (portalVisibility === 'hidden') {
       return {
-        label: 'Changes requested',
-        description: 'Customer asked for edits. Keep the current proof private until the next revision is ready to share.',
-        badgeClass: 'bg-amber-100 text-amber-800 border-amber-200',
-        panelClass: 'border-amber-200 bg-amber-50',
+        label: 'Hidden from portal',
+        description: 'Portal access is disabled. Customer cannot see this job until you change visibility.',
+        badgeClass: 'bg-gray-100 text-gray-700 border-gray-200',
+        panelClass: 'border-gray-200 bg-gray-50',
       };
     }
-    if (latestPortalProof?.status === 'approved' || ['In Production', 'Shipped', 'Complete'].includes(job.status)) {
+    if (portalVisibility === 'shell') {
       return {
-        label: 'Approved proof live',
-        description: 'Customer can still see the approved proof and job shell, but approval is locked and production is underway.',
-        badgeClass: 'bg-green-100 text-green-800 border-green-200',
-        panelClass: 'border-green-200 bg-green-50',
+        label: 'Portal shell only',
+        description: 'Customer sees the job shell, line items, and shared messages. Proofs stay hidden until you share them.',
+        badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+        panelClass: 'border-blue-200 bg-blue-50',
       };
     }
-    if (latestPortalProof) {
-      return {
-        label: 'Awaiting customer review',
-        description: 'A live proof is on the portal now. Sharing another proof will replace the current pending version for this item or job.',
-        badgeClass: 'bg-purple-100 text-purple-800 border-purple-200',
-        panelClass: 'border-purple-200 bg-purple-50',
-      };
+    if (portalVisibility === 'proof_live') {
+      if (job.status === 'Changes Requested') {
+        return {
+          label: 'Changes requested',
+          description: 'Customer asked for edits. Keep the current proof private until the next revision is ready to share.',
+          badgeClass: 'bg-amber-100 text-amber-800 border-amber-200',
+          panelClass: 'border-amber-200 bg-amber-50',
+        };
+      }
+      if (latestPortalProof?.status === 'approved' || ['In Production', 'Shipped', 'Complete'].includes(job.status)) {
+        return {
+          label: 'Approved proof live',
+          description: 'Customer can still see the approved proof and job shell, but approval is locked and production is underway.',
+          badgeClass: 'bg-green-100 text-green-800 border-green-200',
+          panelClass: 'border-green-200 bg-green-50',
+        };
+      }
+      if (latestPortalProof) {
+        return {
+          label: 'Awaiting customer review',
+          description: 'A live proof is on the portal now. Sharing another proof will replace the current pending version for this item or job.',
+          badgeClass: 'bg-purple-100 text-purple-800 border-purple-200',
+          panelClass: 'border-purple-200 bg-purple-50',
+        };
+      }
     }
     return {
       label: 'Internal only',
-      description: 'Nothing customer-visible yet. Source files and shop notes stay private until you share a proof to the portal.',
+      description: 'Nothing customer-visible yet. Source files and shop notes stay private until you share a shell or proof to the portal.',
       badgeClass: 'bg-gray-100 text-gray-700 border-gray-200',
       panelClass: 'border-gray-200 bg-gray-50',
     };
   })();
+  const customerMessages = messages.filter((m: any) => m.is_customer_visible !== false);
+  const visibleMessages = isStaff ? messages : customerMessages;
 
   if (!isStaff) {
-    const sharedProofs = portalVisibleAssets;
+    const sharedProofs = portalSharedAssets;
 
     return (
       <CustomerPortalShell
@@ -906,7 +1043,7 @@ export default function JobInteractiveView({
                 <h2 className="mt-1 text-xl font-black text-gray-900">Job conversation</h2>
               </div>
               <div className="max-h-[620px] overflow-y-auto px-6 py-5 space-y-3">
-                {messages.length === 0 ? <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-sm text-gray-400">No messages yet.</div> : messages.map((msg) => (
+                {customerMessages.length === 0 ? <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-sm text-gray-400">No messages yet.</div> : customerMessages.map((msg) => (
                   <div key={msg.id} className={`flex flex-col ${msg.user_id === user?.id ? 'items-end' : 'items-start'}`}>
                     <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm ${msg.user_id === user?.id ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>
                       {msg.content}
@@ -1089,8 +1226,29 @@ export default function JobInteractiveView({
               <a href={portalHref} target="_blank" className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-gray-700 hover:border-black hover:text-black">
                 <ExternalLink size={14} /> Open Portal
               </a>
-              <button onClick={() => setShowUploadModal(true)} className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-white hover:bg-gray-800">
-                <Globe size={14} /> Share to Portal
+              <button
+                type="button"
+                onClick={setPortalShell}
+                disabled={portalActionLoading}
+                className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-gray-700 hover:border-black hover:text-black disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Globe size={14} /> {isPortalShell ? 'Shell live' : 'Shell only'}
+              </button>
+              <button
+                type="button"
+                onClick={() => openUploadModal()}
+                disabled={portalActionLoading}
+                className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Globe size={14} /> {isPortalProofLive ? 'Replace portal proof' : 'Share proof to portal'}
+              </button>
+              <button
+                type="button"
+                onClick={isPortalHidden ? resetPortalInternal : hidePortalFromCustomer}
+                disabled={portalActionLoading}
+                className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-black uppercase tracking-[0.18em] ${isPortalHidden ? 'border-green-200 bg-green-50 text-green-700 hover:border-green-400' : 'border-red-200 bg-red-50 text-red-700 hover:border-red-400'} disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                {isPortalHidden ? 'Restore internal-only' : 'Hide from portal'}
               </button>
             </div>
           </div>
@@ -1162,7 +1320,7 @@ export default function JobInteractiveView({
             onDeleteStep={handleDeleteStep}
             onMoveStep={handleMoveStep}
             onReorderSteps={handleReorderSteps}
-            onOpenProofModal={(itemId) => { if (!isStaff) return; setProofItemId(itemId); setShowUploadModal(true); }}
+            onOpenProofModal={(itemId) => { if (!isStaff) return; openUploadModal(itemId); }}
             onLogActivity={logActivity}
             logs={logs}
             userRole={userRole} 
@@ -1196,7 +1354,7 @@ export default function JobInteractiveView({
                      {isStaff && (
                        <div className="flex items-center gap-2">
                          <a href={portalHref} target="_blank" className="text-[10px] border border-gray-200 bg-white px-2 py-1 rounded font-bold text-gray-600 hover:border-black hover:text-black">Portal</a>
-                         <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
+                         <button onClick={() => openUploadModal()} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
                        </div>
                      )}
                 </div>
@@ -1210,17 +1368,27 @@ export default function JobInteractiveView({
                                 {asset.asset_type === 'source' ? <FileText size={16} className="text-gray-400"/> : <FileImage size={16} className="text-purple-500"/>}
                                 <div><p className="text-xs font-bold text-gray-700 truncate w-32">{asset.file_name}</p><p className="text-[10px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</p></div>
                             </div>
-                            <div className="flex flex-wrap gap-1">
+                            <div className="flex flex-wrap gap-1 items-center">
                                 {asset.asset_type === 'source' ? (
                                   <span className="text-[9px] font-bold bg-gray-100 text-gray-700 px-1.5 rounded border border-gray-200">INTERNAL ONLY</span>
                                 ) : asset.status === 'archived' ? (
                                   <span className="text-[9px] font-bold bg-gray-100 text-gray-500 px-1.5 rounded border border-gray-200">REPLACED</span>
+                                ) : asset.portal_visible === false ? (
+                                  <span className="text-[9px] font-bold bg-gray-100 text-gray-600 px-1.5 rounded border border-gray-200">Hidden from portal</span>
                                 ) : asset.status === 'approved' ? (
                                   <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1.5 rounded flex items-center gap-1 border border-green-200">LIVE · APPROVED</span>
                                 ) : (
                                   <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1.5 rounded border border-purple-200">LIVE ON PORTAL</span>
                                 )}
                                 {linkedItem && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 rounded flex items-center gap-1 border border-blue-200 truncate max-w-full">LINKED: {linkedItem.description}</span>}
+                                {isStaff && asset.asset_type === 'proof' && asset.status !== 'archived' && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); toggleAssetPortalVisibility(asset.id, asset.portal_visible === false); }}
+                                    className="text-[9px] font-bold px-2 py-1 rounded border border-gray-200 bg-white hover:border-black transition"
+                                  >
+                                    {asset.portal_visible === false ? 'Share to portal' : 'Hide from portal'}
+                                  </button>
+                                )}
                             </div>
                         </div>
                         );
@@ -1236,13 +1404,19 @@ export default function JobInteractiveView({
                 <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
                     {rightTab === 'chat' && (
                         <>
-                            {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
-                            {messages.map((msg) => (
+                            {visibleMessages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
+                            {visibleMessages.map((msg) => {
+                              const internalHidden = msg.is_customer_visible === false;
+                              return (
                                 <div key={msg.id} className={`flex flex-col ${msg.user_id === user?.id ? 'items-end' : 'items-start'}`}>
-                                    <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${msg.user_id === user?.id ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
+                                    <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${msg.user_id === user?.id ? 'bg-black text-white' : internalHidden ? 'bg-amber-50 text-amber-900 border border-amber-200' : 'bg-gray-100 text-gray-800'}`}>
+                                      {msg.content}
+                                      {internalHidden && <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold uppercase text-amber-700">Internal</span>}
+                                    </div>
                                     <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.email?.split('@')[0]}</span>
                                 </div>
-                            ))}
+                              );
+                            })}
                             <div ref={messagesEndRef} />
                         </>
                     )}
@@ -1260,11 +1434,17 @@ export default function JobInteractiveView({
                     )}
                 </div>
                 {rightTab === 'chat' && (
-                    <div className="p-2 border-t border-gray-100 bg-gray-50">
+                    <div className="p-2 border-t border-gray-100 bg-gray-50 space-y-2">
                         <div className="flex gap-2">
                             <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-200 text-xs focus:outline-none focus:border-black" placeholder="Type here..." />
                             <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
                         </div>
+                        {isStaff && (
+                          <label className="flex items-center gap-2 text-[10px] text-gray-500 pl-1">
+                            <input type="checkbox" checked={messageInternal} onChange={(e) => setMessageInternal(e.target.checked)} className="rounded border-gray-300" />
+                            Internal note (hide from portal)
+                          </label>
+                        )}
                     </div>
                 )}
             </div>

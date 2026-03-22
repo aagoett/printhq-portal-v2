@@ -46,7 +46,7 @@ export default function CustomerJobsPage() {
 
       let query = supabase
         .from('jobs')
-        .select('id, title, status, created_at, due_date, current_step, guest_email, user_id')
+        .select('id, title, status, portal_visibility, created_at, due_date, current_step, guest_email, user_id')
         .order('created_at', { ascending: false });
 
       if (!isInternal) {
