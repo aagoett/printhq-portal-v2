@@ -32,6 +32,10 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
+  const recordAudit = async (action: string, details: string) => {
+    await supabase.from('job_logs').insert({ job_id: params.id, action, details, user_id: null });
+  };
+
   useEffect(() => {
     fetchJobData();
 
@@ -133,6 +137,12 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     await supabase.from('job_assets').update({ status: 'approved' })
       .eq('job_id', params.id).eq('asset_type', 'proof').eq('status', 'pending');
     await supabase.from('jobs').update({ status: 'In Production', customer_action_required: false, customer_action_type: null, customer_action_note: null }).eq('id', params.id);
+    await supabase.from('messages').insert({
+      job_id: params.id,
+      content: `${senderName || 'Customer'} approved the proof and released to production`,
+      is_customer_visible: true,
+    });
+    await recordAudit('Proof approved (customer)', 'Customer approved proof from portal');
     setJob((j: any) => ({ ...j, status: 'In Production', customer_action_required: false, customer_action_type: null, customer_action_note: null }));
     setSuccessMsg('✅ Proof approved! Your job has been sent to production. We will be in touch with shipping details.');
     setActionLoading(false);
@@ -148,6 +158,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
       content: `[Changes Requested] ${note}`,
       is_customer_visible: true,
     });
+    await recordAudit('Customer change request', note);
     setSuccessMsg('✏️ Change request submitted! Our team will revise the artwork and share the next proof here.');
     setJob((j: any) => ({ ...j, status: 'Changes Requested', notes: note, customer_action_required: false }));
     setRequestChangesNote('');
@@ -161,6 +172,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     await supabase.from('messages').insert({
       job_id: params.id,
       content: senderName ? `${senderName}: ${newMessage}` : newMessage,
+      is_customer_visible: true,
     });
     setNewMessage('');
     setSendingMsg(false);
@@ -202,6 +214,8 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
       content: `${senderName || 'Customer'} uploaded artwork: ${artFile.name}`,
       is_customer_visible: true,
     });
+
+    await recordAudit('Customer upload', `${artFile.name} uploaded from portal`);
 
     setArtUploadSuccess(`${artFile.name} uploaded. Thank you!`);
     setArtFile(null);
