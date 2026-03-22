@@ -611,6 +611,14 @@ export default function JobInteractiveView({
       });
       if (dbError) throw dbError;
 
+      const itemDesc = items.find(i => i.id == itemId)?.description || 'Job item';
+      await supabase.from('messages').insert({
+        job_id: jobId,
+        user_id: user.id,
+        content: `[Asset] ${file.name} uploaded to ${itemDesc}`,
+        is_customer_visible: false,
+      });
+
       await refreshAssets();
       await logActivity('Asset Linked', `Uploaded ${file.name} to item.`, itemId);
   };
@@ -804,6 +812,15 @@ export default function JobInteractiveView({
       }).select().single();
 
       const itemDesc = proofItemId ? items.find(i => i.id === proofItemId)?.description : 'Main Job';
+      const proofMessage = uploadMessage || 'New proof posted';
+      await supabase.from('messages').insert({
+        job_id: jobId,
+        user_id: user.id,
+        content: `[Proof Shared] ${proofMessage}${itemDesc ? ` • ${itemDesc}` : ''}`,
+        is_customer_visible: shareProofToPortal,
+      });
+      await logActivity('Proof shared', `${proofMessage}${shareProofToPortal ? ' (customer-visible)' : ' (internal only)'}`, proofItemId);
+
       if (shareProofToPortal) {
         await updatePortalVisibility('proof_live');
         await setCustomerAction('approve_proof', uploadMessage || 'Review and approve the latest proof.');
@@ -816,6 +833,14 @@ export default function JobInteractiveView({
       if (!confirm("Mark APPROVED?")) return;
       await supabase.from('job_assets').update({ status: 'approved' }).eq('id', assetId);
       await supabase.from('jobs').update({ status: 'In Production', customer_action_required: false, customer_action_type: null, customer_action_note: null }).eq('id', jobId);
+      const approvedAsset = assets.find((a: any) => a.id === assetId);
+      await supabase.from('messages').insert({
+        job_id: jobId,
+        user_id: user.id,
+        content: `[Proof Approved] ${approvedAsset?.file_name || 'Proof'} approved for production`,
+        is_customer_visible: true,
+      });
+      await logActivity('Proof approved (staff)', `Approved ${approvedAsset?.file_name || 'proof'} for production`);
       setJob((prev: any) => ({ ...prev, status: 'In Production', customer_action_required: false, customer_action_type: null, customer_action_note: null }));
       refreshAssets();
   };
@@ -824,6 +849,7 @@ export default function JobInteractiveView({
     if (!newMessage.trim()) return;
     const msg = newMessage; setNewMessage('');
     await supabase.from('messages').insert({ job_id: jobId, user_id: user.id, content: msg, is_customer_visible: !messageInternal });
+    await logActivity(messageInternal ? 'Internal note' : 'Message', msg);
     setMessageInternal(false);
   };
 
@@ -975,6 +1001,47 @@ export default function JobInteractiveView({
           : 'No portal handoff is active yet.';
   const customerMessages = messages.filter((m: any) => m.is_customer_visible !== false);
   const visibleMessages = isStaff ? messages : customerMessages;
+  const customerTimeline = useMemo(() => {
+    const proofEvents = portalSharedAssets.map((asset: any) => {
+      const linkedItem = asset.job_item_id ? items.find((item: any) => item.id === asset.job_item_id) : null;
+      const stateLabel = asset.status === 'approved' ? 'Proof approved' : 'Proof shared';
+      const detailBits = [
+        linkedItem ? linkedItem.description : 'Job-wide proof',
+        asset.file_name,
+      ].filter(Boolean);
+      return {
+        id: `asset-${asset.id}`,
+        occurredAt: asset.portal_shared_at || asset.created_at,
+        title: stateLabel,
+        detail: detailBits.join(' • '),
+        tone: asset.status === 'approved' ? 'green' : 'purple',
+      };
+    });
+
+    const messageEvents = customerMessages.map((msg: any) => ({
+      id: `message-${msg.id}`,
+      occurredAt: msg.created_at,
+      title: msg.user_id === user?.id ? 'You replied' : 'PrintHQ replied',
+      detail: msg.content,
+      tone: msg.user_id === user?.id ? 'gray' : 'blue',
+    }));
+
+    const actionEvents: any[] = [];
+    if (customerActionRequired && customerActionType) {
+      actionEvents.push({
+        id: `action-${customerActionType}-${job.updated_at || job.created_at}`,
+        occurredAt: job.updated_at || job.created_at,
+        title: customerActionType === 'upload_artwork' ? 'Artwork requested' : customerActionType === 'approve_proof' ? 'Approval requested' : 'Customer action requested',
+        detail: customerAction.description,
+        tone: customerActionType === 'upload_artwork' ? 'orange' : 'amber',
+      });
+    }
+
+    return [...proofEvents, ...messageEvents, ...actionEvents]
+      .filter((event) => event.occurredAt)
+      .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
+      .slice(0, 8);
+  }, [portalSharedAssets, items, customerMessages, user?.id, customerActionRequired, customerActionType, customerAction.description, job.updated_at, job.created_at]);
 
   if (!isStaff) {
     const sharedProofs = portalSharedAssets;
@@ -995,6 +1062,41 @@ export default function JobInteractiveView({
         }
       >
         <div className="space-y-6">
+          <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className={`rounded-3xl border p-5 shadow-sm ${portalState.panelClass}`}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Portal status</p>
+                  <h2 className="mt-1 text-xl font-black text-gray-900">{portalState.label}</h2>
+                  <p className="mt-2 max-w-2xl text-sm text-gray-700">{portalState.description}</p>
+                </div>
+                <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${portalState.badgeClass}`}>{portalState.label}</span>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div className="rounded-2xl border border-white/70 bg-white/80 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-500">Your next step</p>
+                  <p className="mt-2 text-sm font-semibold text-gray-900">{portalNextAction}</p>
+                </div>
+                <div className="rounded-2xl border border-white/70 bg-white/80 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-500">What stays private</p>
+                  <p className="mt-2 text-sm text-gray-700">Internal shop notes, source files, and staff-only workflow details never appear in this view.</p>
+                </div>
+              </div>
+            </div>
+
+            {customerAction.required ? (
+              <div className={`rounded-3xl border p-5 shadow-sm ${customerAction.tone === 'orange' ? 'border-orange-200 bg-orange-50' : customerAction.tone === 'blue' ? 'border-purple-200 bg-purple-50' : 'border-amber-200 bg-amber-50'}`}>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Action required</p>
+                <h2 className="mt-1 text-xl font-black text-gray-900">{customerAction.label}</h2>
+                <p className="mt-2 text-sm text-gray-700">{customerAction.description}</p>
+                <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-semibold text-gray-600">
+                  <span className="rounded-full border border-white/80 bg-white px-3 py-1">Replies stay attached to this job</span>
+                  <span className="rounded-full border border-white/80 bg-white px-3 py-1">You will only see customer-safe updates</span>
+                </div>
+              </div>
+            ) : null}
+          </section>
+
           <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
             <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
               <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Overview</p>
@@ -1050,6 +1152,32 @@ export default function JobInteractiveView({
                   <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-gray-500">
                     {item.size ? <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1">{item.size}</span> : null}
                     {item.paper_stock ? <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1">{item.paper_stock}</span> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Timeline</p>
+                <h2 className="mt-1 text-xl font-black text-gray-900">Proofs, requests, and replies</h2>
+              </div>
+              <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-black text-gray-600">{customerTimeline.length} events</span>
+            </div>
+            <div className="mt-5 space-y-3">
+              {customerTimeline.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-sm text-gray-400">No customer-facing activity yet.</div>
+              ) : customerTimeline.map((event) => (
+                <div key={event.id} className="flex gap-3 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                  <div className={`mt-1 h-2.5 w-2.5 rounded-full ${event.tone === 'green' ? 'bg-green-500' : event.tone === 'purple' ? 'bg-purple-500' : event.tone === 'orange' ? 'bg-orange-500' : event.tone === 'blue' ? 'bg-blue-500' : 'bg-gray-400'}`} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-bold text-gray-900">{event.title}</p>
+                      <span className="text-[11px] text-gray-400">{new Date(event.occurredAt).toLocaleString()}</span>
+                    </div>
+                    <p className="mt-1 text-sm text-gray-600">{event.detail}</p>
                   </div>
                 </div>
               ))}
@@ -1518,6 +1646,12 @@ export default function JobInteractiveView({
                 </div>
                 {rightTab === 'chat' && (
                     <div className="p-2 border-t border-gray-100 bg-gray-50 space-y-2">
+                        {isStaff && (
+                          <div className={`rounded-xl border px-3 py-2 text-[11px] ${messageInternal ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-blue-200 bg-blue-50 text-blue-900'}`}>
+                            <p className="font-black uppercase tracking-[0.18em]">{messageInternal ? 'Internal-only note' : 'Customer-visible reply'}</p>
+                            <p className="mt-1 opacity-80">{messageInternal ? 'This stays inside the shop. Customer cannot see it in the portal or job thread preview.' : 'This posts to the job thread and is visible in the customer portal timeline.'}</p>
+                          </div>
+                        )}
                         <div className="flex gap-2">
                             <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-200 text-xs focus:outline-none focus:border-black" placeholder="Type here..." />
                             <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
