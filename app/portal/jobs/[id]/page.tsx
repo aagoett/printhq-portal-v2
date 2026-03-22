@@ -136,15 +136,16 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     setActionLoading(true);
     await supabase.from('job_assets').update({ status: 'approved' })
       .eq('job_id', params.id).eq('asset_type', 'proof').eq('status', 'pending');
-    await supabase.from('jobs').update({ status: 'In Production', customer_action_required: false, customer_action_type: null, customer_action_note: null }).eq('id', params.id);
+    const nextStatus = 'Proof Approved - Waiting Release';
+    await supabase.from('jobs').update({ status: nextStatus, customer_action_required: false, customer_action_type: null, customer_action_note: null }).eq('id', params.id);
     await supabase.from('messages').insert({
       job_id: params.id,
       content: `${senderName || 'Customer'} approved the proof and released to production`,
       is_customer_visible: true,
     });
     await recordAudit('Proof approved (customer)', 'Customer approved proof from portal');
-    setJob((j: any) => ({ ...j, status: 'In Production', customer_action_required: false, customer_action_type: null, customer_action_note: null }));
-    setSuccessMsg('✅ Proof approved! Your job has been sent to production. We will be in touch with shipping details.');
+    setJob((j: any) => ({ ...j, status: nextStatus, customer_action_required: false, customer_action_type: null, customer_action_note: null }));
+    setSuccessMsg('✅ Proof approved! We will release to production as soon as remaining holds (if any) are cleared.');
     setActionLoading(false);
   };
 
@@ -245,7 +246,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   );
 
   const brandName = job.orders?.brands?.name || 'PrintHQ';
-  const isApproved = job.status === 'In Production' || job.status === 'Shipped' || job.status === 'Complete';
+  const isApproved = job.status === 'In Production' || job.status === 'Shipped' || job.status === 'Complete' || job.status === 'Proof Approved - Waiting Release';
   const isChangesRequested = job.status === 'Changes Requested';
   const pendingProof = assets.find(a => a.status === 'pending');
   const awaitingArtworkItems = items.filter((item: any) => item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art');

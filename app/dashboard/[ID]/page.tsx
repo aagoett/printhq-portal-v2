@@ -106,7 +106,7 @@ export default function JobDetailsPage() {
   const handleApproveProof = async () => {
     if(!confirm("Are you sure you want to approve this proof for printing?")) return;
     
-    await supabase.from('jobs').update({ proof_status: 'Approved', status: 'In Production' }).eq('id', params.id);
+    await supabase.from('jobs').update({ proof_status: 'Approved', status: 'Proof Approved - Waiting Release' }).eq('id', params.id);
     window.location.reload();
   };
 

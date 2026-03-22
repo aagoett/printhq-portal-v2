@@ -74,8 +74,8 @@ export default function PublicJobTracker() {
       if(!confirm("Are you sure you want to approve this for print?")) return;
       
       await supabase.from('job_assets').update({ status: 'approved' }).eq('id', assetId);
-      await supabase.from('jobs').update({ status: 'In Production' }).eq('id', params.id);
-      alert("Thank you! We have notified the production team.");
+      await supabase.from('jobs').update({ status: 'Proof Approved - Waiting Release' }).eq('id', params.id);
+      alert("Thank you! We have recorded your approval. We'll release to production as soon as any holds are cleared.");
       fetchJobDetails(); // Refresh
   };
 
@@ -114,7 +114,7 @@ export default function PublicJobTracker() {
                     #{job.id.substring(0,8).toUpperCase()} • {brandName}
                 </p>
             </div>
-            <div className={`px-4 py-1.5 rounded-full text-[10px] md:text-xs font-bold uppercase tracking-wide ${job.status === 'In Production' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+            <div className={`px-4 py-1.5 rounded-full text-[10px] md:text-xs font-bold uppercase tracking-wide ${['In Production','Proof Approved - Waiting Release'].includes(job.status) ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
                 {job.status}
             </div>
         </div>

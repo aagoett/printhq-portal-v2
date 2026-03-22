@@ -33,7 +33,7 @@ export default function ItemDetailDrawer({
   onUpdate: (id: string, data: any) => void,
   onUpload: (file: File, itemId: string) => Promise<void>,
   onAddStep: (itemId: string, stepName: string, isInternal: boolean) => void,
-  onToggleStep: (stepId: string, currentStatus: string) => void,
+  onToggleStep: (stepId: string, currentStatus: string, itemId?: string) => void,
   onUpdateStepNote?: (stepId: string, note: string) => Promise<void>,
   onDeleteStep: (stepId: string) => void,
   onMoveStep: (stepId: string, direction: 'up' | 'down') => void,
@@ -260,7 +260,7 @@ export default function ItemDetailDrawer({
                          </div>
                          
                          <button 
-                           onClick={() => onToggleStep(step.id, step.status)}
+                           onClick={() => onToggleStep(step.id, step.status, item.id)}
                            className={`flex-shrink-0 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${isDone ? 'bg-green-500 border-green-600 text-white' : 'bg-white border-gray-300 hover:border-black shadow-inner'}`}
                          >
                            {isDone && <CheckSquare size={14}/>}

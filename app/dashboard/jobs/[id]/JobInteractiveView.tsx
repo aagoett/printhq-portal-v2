@@ -66,7 +66,9 @@ function JobItemsTable({
   onOpenProofModal,
   onLogActivity,
   logs,
-  userRole 
+  userRole,
+  getBlockingReasons,
+  isReleaseBlocked,
 }: { 
   items: any[], 
   assets: any[], 
@@ -75,14 +77,16 @@ function JobItemsTable({
   onUpdateItem: (id: string, data: any) => void,
   onItemUpload: (file: File, itemId: string) => Promise<void>,
   onAddStep: (itemId: string, stepName: string, isInternal: boolean) => void,
-  onToggleStep: (stepId: string, currentStatus: string) => void,
+  onToggleStep: (stepId: string, currentStatus: string, itemId?: string) => void,
   onDeleteStep: (stepId: string) => void,
   onMoveStep: (stepId: string, direction: 'up' | 'down') => void,
   onReorderSteps: (itemId: string, newSteps: any[]) => void,
   onOpenProofModal: (itemId?: string) => void,
   onLogActivity: (action: string, details: string, itemId?: string) => Promise<void>,
   logs: any[],
-  userRole: string 
+  userRole: string,
+  getBlockingReasons: (itemId?: string, includeWarnings?: boolean) => any[],
+  isReleaseBlocked: (itemId?: string) => boolean,
 }) {
   const [isAdding, setIsAdding] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -155,6 +159,8 @@ function JobItemsTable({
               {items.map((item, index) => {
                  const hasFiles = assets.some(a => a.job_item_id === item.id);
                  const steps = item.job_item_steps || [];
+                 const itemBlockers = getBlockingReasons(item.id, true);
+                 const itemBlocked = isReleaseBlocked(item.id);
                  return (
                 <tr 
                   key={item.id} 
@@ -171,6 +177,7 @@ function JobItemsTable({
                         <div className="flex items-center gap-3">
                           <h4 className="text-lg font-black text-gray-900 tracking-tight leading-none uppercase">{item.description}</h4>
                           {hasFiles && <Paperclip size={14} className="text-blue-500" />}
+                          {itemBlocked && <span className="text-[9px] font-black uppercase tracking-[0.2em] text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded">Blocked</span>}
                         </div>
                       </div>
                       
@@ -310,6 +317,7 @@ interface JobViewProps {
   initialAssets: any[];
   initialMessages: any[];
   initialLogs: any[];
+  initialBlockers: any[];
   jobId: string;
 }
 
@@ -321,6 +329,7 @@ export default function JobInteractiveView({
   initialAssets, 
   initialMessages, 
   initialLogs, 
+  initialBlockers,
   jobId 
 }: JobViewProps) {
 
@@ -330,6 +339,7 @@ export default function JobInteractiveView({
   const [messages, setMessages] = useState(initialMessages);
   const [logs, setLogs] = useState(initialLogs); 
   const [assets, setAssets] = useState(initialAssets);
+  const [blockers, setBlockers] = useState(initialBlockers || []);
   const [userRole, setUserRole] = useState('customer');
   
   const isStaff = userRole !== 'customer';
@@ -352,6 +362,12 @@ export default function JobInteractiveView({
   const [messageInternal, setMessageInternal] = useState(false);
   const [portalActionLoading, setPortalActionLoading] = useState(false);
   const [customerActionNote, setCustomerActionNote] = useState(initialJob.customer_action_note || '');
+
+  const [blockerType, setBlockerType] = useState<'artwork' | 'proof' | 'customer' | 'spec' | 'payment' | 'inventory' | 'scheduling' | 'other'>('artwork');
+  const [blockerSeverity, setBlockerSeverity] = useState<'block' | 'hold' | 'warn'>('block');
+  const [blockerReason, setBlockerReason] = useState('');
+  const [blockerNextStep, setBlockerNextStep] = useState('');
+  const [blockerItemId, setBlockerItemId] = useState<string | null>(null);
 
   // Preview State
   const [viewingAssetId, setViewingAssetId] = useState<string>('');
@@ -386,6 +402,8 @@ export default function JobInteractiveView({
         () => refreshMessages())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'job_assets', filter: `job_id=eq.${jobId}` }, 
         () => refreshAssets())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'job_blockers', filter: `job_id=eq.${jobId}` }, 
+        () => refreshBlockers())
       .subscribe();
 
     if (assets.length > 0) {
@@ -397,6 +415,7 @@ export default function JobInteractiveView({
     // NEW: Fetch Workflow Settings on Load
     fetchWorkflowQueues();
     fetchUserRole();
+    refreshBlockers();
 
     return () => { supabase.removeChannel(channel); };
   }, [jobId]);
@@ -424,6 +443,11 @@ export default function JobInteractiveView({
   const refreshLogs = async () => {
     const { data } = await supabase.from('job_logs').select('*, profiles(email)').eq('job_id', jobId).order('created_at', { ascending: false });
     if (data) setLogs(data);
+  };
+
+  const refreshBlockers = async () => {
+    const { data } = await supabase.from('job_blockers').select('*').eq('job_id', jobId).order('created_at', { ascending: false });
+    if (data) setBlockers(data);
   };
 
   const logActivity = async (action: string, details: string, itemId?: string) => {
@@ -588,9 +612,24 @@ export default function JobInteractiveView({
 
   const handleUpdateItem = async (id: string, updates: any) => {
     if (!isStaff) return;
+    const currentItem = items.find((i: any) => i.id === id);
+    if (updates.status) {
+      const blocking = blockingReasonsForItem(id);
+      if (blocking.length > 0 && !['Pending', 'Cancelled'].includes(updates.status)) {
+        alert(`Release blocked: ${blocking[0].label} — ${blocking[0].detail}`);
+        await logActivity('Release gate blocked', `Attempted to set item status to ${updates.status} while blocked: ${blocking[0].label}`, id);
+        return;
+      }
+    }
     setItems(current => current.map(i => i.id === id ? { ...i, ...updates } : i));
     const { error } = await supabase.from('job_items').update(updates).eq('id', id);
-    if (error) alert("Error saving item: " + error.message);
+    if (error) {
+      alert("Error saving item: " + error.message);
+      // rollback UI if needed
+      if (currentItem) {
+        setItems(current => current.map(i => i.id === id ? currentItem : i));
+      }
+    }
   };
 
   const handleUpdateJob = async (id: string, updates: any) => {
@@ -684,11 +723,18 @@ export default function JobInteractiveView({
     }
   };
 
-  const handleToggleStep = async (stepId: string, currentStatus: string) => {
+  const handleToggleStep = async (stepId: string, currentStatus: string, itemId?: string) => {
     if (!isStaff) return;
     const statusOptions = ['Pending', 'In Production', 'To Bindery', 'In Bindery', 'Bindery Complete', 'Completed', 'Cancelled'];
     const currentIndex = statusOptions.indexOf(currentStatus);
     const newStatus = currentIndex === statusOptions.length - 1 ? statusOptions[0] : statusOptions[currentIndex + 1];
+
+    const blocking = blockingReasonsForItem(itemId);
+    if (blocking.length > 0 && !['Pending', 'Cancelled'].includes(newStatus)) {
+      alert(`Release blocked: ${blocking[0].label} — ${blocking[0].detail}`);
+      await logActivity('Release gate blocked', `Attempted to move step to ${newStatus} while blocked: ${blocking[0].label}`, itemId);
+      return;
+    }
 
     setItems(current => current.map(i => ({
       ...i,
@@ -698,7 +744,7 @@ export default function JobInteractiveView({
     await supabase.from('job_item_steps').update({ status: newStatus }).eq('id', stepId);
 
     // After toggle, sync the parent item status
-    const item = items.find(i => i.job_item_steps?.some((s: any) => s.id === stepId));
+    const item = items.find(i => i.id === itemId || i.job_item_steps?.some((s: any) => s.id === stepId));
     if (item) {
       const updatedSteps = item.job_item_steps.map((s: any) => s.id === stepId ? { ...s, status: newStatus } : s);
       await syncItemStatus(item.id, updatedSteps);
@@ -749,6 +795,49 @@ export default function JobInteractiveView({
       const remainingSteps = item.job_item_steps.filter((s: any) => s.id !== stepId);
       await syncItemStatus(item.id, remainingSteps);
     }
+  };
+
+  const handleCreateBlocker = async () => {
+    if (!isStaff) return;
+    const reason = blockerReason.trim();
+    if (!reason) {
+      alert('Add a blocker reason first.');
+      return;
+    }
+    const payload: any = {
+      job_id: jobId,
+      job_item_id: blockerItemId || null,
+      blocker_type: blockerType,
+      severity: blockerSeverity,
+      reason,
+      next_step: blockerNextStep || null,
+      created_by: user.id,
+    };
+    const { data, error } = await supabase.from('job_blockers').insert(payload).select().single();
+    if (error) {
+      alert('Error saving blocker: ' + error.message);
+      return;
+    }
+    setBlockers((current: any[]) => [data, ...current]);
+    setBlockerReason('');
+    setBlockerNextStep('');
+    setBlockerItemId(null);
+    setBlockerSeverity('block');
+    setBlockerType('artwork');
+    const label = blockerMeta[blockerType]?.label || 'Blocker added';
+    await logActivity('Blocker added', `${label}: ${reason}`, blockerItemId || undefined);
+  };
+
+  const resolveBlocker = async (id: string) => {
+    if (!isStaff) return;
+    const { error } = await supabase.from('job_blockers').update({ status: 'resolved', resolved_at: new Date().toISOString(), resolved_by: user.id }).eq('id', id);
+    if (error) {
+      alert('Error clearing blocker: ' + error.message);
+      return;
+    }
+    setBlockers((current: any[]) => current.map((b: any) => b.id === id ? { ...b, status: 'resolved', resolved_at: new Date().toISOString(), resolved_by: user.id } : b));
+    await logActivity('Blocker resolved', `Resolved blocker ${id}`);
+    refreshBlockers();
   };
 
   // --- GENERAL APP LOGIC ---
@@ -832,7 +921,9 @@ export default function JobInteractiveView({
   const handleApproveProof = async (assetId: string) => {
       if (!confirm("Mark APPROVED?")) return;
       await supabase.from('job_assets').update({ status: 'approved' }).eq('id', assetId);
-      await supabase.from('jobs').update({ status: 'In Production', customer_action_required: false, customer_action_type: null, customer_action_note: null }).eq('id', jobId);
+      const blocking = blockingReasonsForItem(undefined).filter((b) => b.blocker_type !== 'proof');
+      const nextStatus = blocking.length > 0 ? 'Proof Approved - Waiting Release' : 'In Production';
+      await supabase.from('jobs').update({ status: nextStatus, customer_action_required: false, customer_action_type: null, customer_action_note: null }).eq('id', jobId);
       const approvedAsset = assets.find((a: any) => a.id === assetId);
       await supabase.from('messages').insert({
         job_id: jobId,
@@ -841,7 +932,10 @@ export default function JobInteractiveView({
         is_customer_visible: true,
       });
       await logActivity('Proof approved (staff)', `Approved ${approvedAsset?.file_name || 'proof'} for production`);
-      setJob((prev: any) => ({ ...prev, status: 'In Production', customer_action_required: false, customer_action_type: null, customer_action_note: null }));
+      if (blocking.length > 0) {
+        await logActivity('Release gate blocked', `Proof approved but still blocked: ${blocking[0].label}`);
+      }
+      setJob((prev: any) => ({ ...prev, status: nextStatus, customer_action_required: false, customer_action_type: null, customer_action_note: null }));
       refreshAssets();
   };
 
@@ -966,7 +1060,7 @@ export default function JobInteractiveView({
           panelClass: 'border-purple-200 bg-purple-50',
         };
       }
-      if (latestPortalProof?.status === 'approved' || ['In Production', 'Shipped', 'Complete'].includes(job.status)) {
+      if (latestPortalProof?.status === 'approved' || ['In Production', 'Shipped', 'Complete', 'Proof Approved - Waiting Release'].includes(job.status)) {
         return {
           label: 'Approved proof live',
           description: 'Customer can still see the approved proof and job shell, but approval is locked and production is underway.',
@@ -994,62 +1088,156 @@ export default function JobInteractiveView({
     ? customerAction.description
     : portalVisibility === 'proof_live' && latestPortalProof?.status !== 'approved'
       ? 'Customer should review the live proof and either approve it or request changes.'
-      : portalVisibility === 'proof_live' && (latestPortalProof?.status === 'approved' || ['In Production', 'Shipped', 'Complete'].includes(job.status))
+      : portalVisibility === 'proof_live' && (latestPortalProof?.status === 'approved' || ['In Production', 'Shipped', 'Complete', 'Proof Approved - Waiting Release'].includes(job.status))
         ? 'No customer action needed. Proof is approved and production is moving.'
         : portalVisibility === 'shell'
           ? 'Customer can see the shell, thread, and shared updates, but no proof yet.'
           : 'No portal handoff is active yet.';
   const dueRisk = countdown.text.includes('LATE') ? 'late' : countdown.text === 'DUE TODAY' ? 'today' : 'safe';
-  const jobBlockers = [
-    awaitingArtworkItems.length > 0 ? {
-      key: 'artwork',
-      tone: 'orange',
-      label: 'Waiting on artwork',
-      detail: `${awaitingArtworkItems.length} item${awaitingArtworkItems.length === 1 ? '' : 's'} still need customer files or copy.`,
-      nextStep: 'Get final art uploaded before pushing proofing or release.',
-    } : null,
-    customerAction.required ? {
+
+  type BlockerDisplay = {
+    key: string;
+    id?: string;
+    tone: string;
+    label: string;
+    detail: string;
+    nextStep: string;
+    job_item_id?: string | null;
+    source: 'explicit' | 'system';
+    blocking: boolean;
+    severity: 'block' | 'hold' | 'warn';
+    blocker_type?: string;
+  };
+
+  const blockerMeta: Record<string, { label: string; tone: string; nextStep: string }> = {
+    artwork: { label: 'Waiting on artwork', tone: 'orange', nextStep: 'Collect final art/copy before release.' },
+    proof: { label: 'Proof approval required', tone: 'purple', nextStep: 'Get approval or a clean revision note.' },
+    customer: { label: 'Customer action required', tone: 'amber', nextStep: 'Collect the requested customer response.' },
+    spec: { label: 'Specs incomplete', tone: 'gray', nextStep: 'Fill the missing specs or build items before release.' },
+    payment: { label: 'Payment/PO required', tone: 'red', nextStep: 'Collect payment/PO before releasing to production.' },
+    inventory: { label: 'Paper/stock not secured', tone: 'red', nextStep: 'Confirm stock/PO before scheduling press time.' },
+    scheduling: { label: 'Scheduling hold', tone: 'amber', nextStep: 'Re-sequence or confirm the production slot.' },
+    other: { label: 'Hold', tone: 'gray', nextStep: 'Resolve the noted issue before releasing.' },
+  } as const;
+
+  const openExplicitBlockers = (blockers || []).filter((b: any) => b.status === 'open');
+  const explicitBlockers: BlockerDisplay[] = openExplicitBlockers.map((b: any) => {
+    const meta = blockerMeta[b.blocker_type as keyof typeof blockerMeta] || blockerMeta.other;
+    const itemLabel = b.job_item_id ? items.find((i: any) => i.id === b.job_item_id)?.description : null;
+    const severityTone = b.severity === 'warn' ? 'blue' : b.severity === 'hold' ? 'amber' : meta.tone;
+    return {
+      key: `explicit-${b.id}`,
+      tone: severityTone,
+      label: itemLabel ? `${meta.label} (${itemLabel})` : meta.label,
+      detail: itemLabel ? `${b.reason} — Item: ${itemLabel}` : b.reason,
+      nextStep: b.next_step || meta.nextStep,
+      job_item_id: b.job_item_id,
+      source: 'explicit',
+      blocking: b.severity !== 'warn',
+      severity: b.severity,
+      blocker_type: b.blocker_type,
+      id: b.id,
+    };
+  });
+
+  const hasExplicit = (type: string, itemId?: string | null) =>
+    openExplicitBlockers.some((b: any) => b.blocker_type === type && (itemId ? b.job_item_id === itemId : true));
+
+  const systemBlockers: BlockerDisplay[] = [];
+
+  awaitingArtworkItems.forEach((item: any) => {
+    if (!hasExplicit('artwork', item.id)) {
+      systemBlockers.push({
+        key: `artwork-${item.id}`,
+        tone: 'orange',
+        label: `Waiting on artwork (${item.description || 'Item'})`,
+        detail: `${item.description || 'Item'} still needs files or copy before release.`,
+        nextStep: 'Collect files before releasing this item.',
+        job_item_id: item.id,
+        source: 'system',
+        blocking: true,
+        severity: 'block',
+        blocker_type: 'artwork',
+      });
+    }
+  });
+
+  if (customerAction.required && !hasExplicit(customerActionType === 'approve_proof' ? 'proof' : 'customer', null)) {
+    systemBlockers.push({
       key: 'customer-action',
       tone: customerAction.tone === 'orange' ? 'orange' : customerAction.tone === 'blue' ? 'purple' : 'amber',
       label: customerAction.label,
       detail: customerAction.description,
-      nextStep: customerActionType === 'approve_proof' ? 'Wait for customer approval or collect one clean revision request.' : 'Customer must respond inside the job thread before work can move.',
-    } : null,
-    items.length === 0 ? {
+      nextStep: customerActionType === 'approve_proof' ? 'Wait for approval or capture a clean revision request.' : 'Customer must respond in the thread before release.',
+      job_item_id: null,
+      source: 'system',
+      blocking: true,
+      severity: 'block',
+      blocker_type: customerActionType === 'approve_proof' ? 'proof' : 'customer',
+    });
+  }
+
+  if (items.length === 0 && !hasExplicit('spec')) {
+    systemBlockers.push({
       key: 'no-items',
       tone: 'gray',
       label: 'No production items built',
       detail: 'This job has no line items yet, so the floor has nothing concrete to run.',
       nextStep: 'Add at least one production item with qty and workflow steps.',
-    } : null,
-    portalVisibility === 'proof_live' && !!latestPortalProof && latestPortalProof.status !== 'approved' ? {
+      job_item_id: null,
+      source: 'system',
+      blocking: true,
+      severity: 'block',
+      blocker_type: 'spec',
+    });
+  }
+
+  if (portalVisibility === 'proof_live' && !!latestPortalProof && latestPortalProof.status !== 'approved' && !hasExplicit('proof', latestPortalProof.job_item_id || null)) {
+    systemBlockers.push({
       key: 'proof-pending',
       tone: 'purple',
       label: 'Proof live but not approved',
       detail: 'Customer can see the proof, but production release is still waiting on an approval or revision note.',
       nextStep: 'Hold release until the live proof is approved or replaced.',
-    } : null,
-    portalVisibility === 'shell' && sharedPortalCount === 0 ? {
-      key: 'shell-only',
-      tone: 'blue',
-      label: 'Portal shell only',
-      detail: 'Customer can see the job shell, but no proof or release-ready file has been shared yet.',
-      nextStep: 'Share a proof when the shop is ready for customer review.',
-    } : null,
-    dueRisk === 'late' ? {
+      job_item_id: latestPortalProof.job_item_id,
+      source: 'system',
+      blocking: true,
+      severity: 'block',
+      blocker_type: 'proof',
+    });
+  }
+
+  if (dueRisk === 'late' && !hasExplicit('scheduling')) {
+    systemBlockers.push({
       key: 'late',
       tone: 'red',
       label: 'Past due',
       detail: 'The due date has already passed, so this job needs operator attention even if nothing else is blocked.',
       nextStep: 'Re-sequence the work or reset expectations now.',
-    } : dueRisk === 'today' ? {
+      job_item_id: null,
+      source: 'system',
+      blocking: false,
+      severity: 'warn',
+      blocker_type: 'scheduling',
+    });
+  } else if (dueRisk === 'today' && !hasExplicit('scheduling')) {
+    systemBlockers.push({
       key: 'due-today',
       tone: 'amber',
       label: 'Due today',
       detail: 'This job ships today, so any missing customer action is now a same-day release risk.',
       nextStep: 'Resolve open dependencies before the floor burns time on it.',
-    } : null,
-  ].filter(Boolean) as Array<{ key: string; tone: string; label: string; detail: string; nextStep: string }>;
+      job_item_id: null,
+      source: 'system',
+      blocking: false,
+      severity: 'warn',
+      blocker_type: 'scheduling',
+    });
+  }
+
+  const combinedBlockers: BlockerDisplay[] = [...explicitBlockers, ...systemBlockers];
+  const blockersForScope = (itemId?: string, includeWarnings = false) => combinedBlockers.filter((b) => (!itemId || b.job_item_id === itemId || !b.job_item_id) && (includeWarnings || b.blocking));
+
   const releaseChecklist = [
     {
       key: 'items',
@@ -1060,7 +1248,7 @@ export default function JobInteractiveView({
     {
       key: 'art',
       label: 'Artwork dependency cleared',
-      done: awaitingArtworkItems.length === 0,
+      done: awaitingArtworkItems.length === 0 && blockersForScope(undefined).every((b) => b.blocker_type !== 'artwork'),
       note: awaitingArtworkItems.length === 0 ? 'No items are flagged waiting on art.' : `${awaitingArtworkItems.length} item${awaitingArtworkItems.length === 1 ? '' : 's'} still waiting on art.`,
     },
     {
@@ -1069,21 +1257,31 @@ export default function JobInteractiveView({
       done: !customerAction.required && !(portalVisibility === 'proof_live' && latestPortalProof?.status !== 'approved'),
       note: !customerAction.required && !(portalVisibility === 'proof_live' && latestPortalProof?.status !== 'approved') ? 'No open customer approval gate.' : 'Customer action is still open.',
     },
+    {
+      key: 'blockers',
+      label: 'Blockers / holds cleared',
+      done: blockersForScope(undefined).length === 0,
+      note: blockersForScope(undefined).length === 0 ? 'No open blockers or holds.' : `${blockersForScope(undefined).length} open blocker${blockersForScope(undefined).length === 1 ? '' : 's'} remain.`,
+    },
   ];
   const releaseBlocked = releaseChecklist.some((item) => !item.done);
+  const primaryBlocker = blockersForScope(undefined, true)[0];
   const releaseGate = releaseBlocked
     ? {
         label: 'Production release blocked',
         tone: 'red',
-        detail: jobBlockers[0]?.detail || 'There is still an unresolved dependency before this should be released to production.',
-        nextStep: jobBlockers[0]?.nextStep || 'Clear the open dependency first.',
+        detail: primaryBlocker?.detail || 'There is still an unresolved dependency before this should be released to production.',
+        nextStep: primaryBlocker?.nextStep || 'Clear the open dependency first.',
       }
     : {
         label: 'Production release clear',
         tone: 'green',
-        detail: 'No open art or customer-approval gate is visible on this job.',
+        detail: 'No open art, approval, or blocking hold is visible on this job.',
         nextStep: 'Safe to move the job forward on the shop side.',
       };
+  const jobBlockers = blockersForScope(undefined, true);
+  const blockingReasonsForItem = (itemId?: string, includeWarnings = false) => blockersForScope(itemId, includeWarnings);
+  const isReleaseBlockedForItem = (itemId?: string) => blockersForScope(itemId).length > 0;
   const customerMessages = messages.filter((m: any) => m.is_customer_visible !== false);
   const visibleMessages = isStaff ? messages : customerMessages;
   const customerTimeline = useMemo(() => {
@@ -1518,23 +1716,74 @@ export default function JobInteractiveView({
               </div>
               <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700">{jobBlockers.length} blocker{jobBlockers.length === 1 ? '' : 's'}</span>
             </div>
+
+            {isStaff && (
+              <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
+                <div className="grid gap-2 sm:grid-cols-5">
+                  <select value={blockerType} onChange={(e) => setBlockerType(e.target.value as any)} className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-[0.16em]">
+                    <option value="artwork">Waiting on artwork</option>
+                    <option value="proof">Proof approval</option>
+                    <option value="customer">Customer action</option>
+                    <option value="spec">Specs / build missing</option>
+                    <option value="payment">Payment / PO</option>
+                    <option value="inventory">Paper / stock</option>
+                    <option value="scheduling">Scheduling hold</option>
+                    <option value="other">Other hold</option>
+                  </select>
+                  <select value={blockerSeverity} onChange={(e) => setBlockerSeverity(e.target.value as any)} className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-[0.16em]">
+                    <option value="block">Block</option>
+                    <option value="hold">Hold</option>
+                    <option value="warn">Warn</option>
+                  </select>
+                  <select value={blockerItemId || ''} onChange={(e) => setBlockerItemId(e.target.value ? e.target.value : null)} className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-[0.16em]">
+                    <option value="">Job-wide</option>
+                    {items.map((it: any) => (
+                      <option key={it.id} value={it.id}>Item: {it.description}</option>
+                    ))}
+                  </select>
+                  <input value={blockerReason} onChange={(e) => setBlockerReason(e.target.value)} placeholder="Reason / what's blocked" className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px]" />
+                  <input value={blockerNextStep} onChange={(e) => setBlockerNextStep(e.target.value)} placeholder="Next step to clear" className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px]" />
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={handleCreateBlocker} className="inline-flex items-center gap-2 rounded border border-gray-300 bg-black px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-white shadow-sm hover:bg-gray-800">Add blocker / hold</button>
+                </div>
+              </div>
+            )}
+
             <div className="mt-4 space-y-3">
               {jobBlockers.length === 0 ? (
                 <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-4 text-sm text-green-800">
                   No active blocker detected from art, approval, portal handoff, or missing line-item setup.
                 </div>
-              ) : jobBlockers.map((blocker) => (
+              ) : jobBlockers.map((blocker) => {
+                const linkedItem = blocker.job_item_id ? items.find((i: any) => i.id === blocker.job_item_id) : null;
+                const blockerId = blocker.source === 'explicit' ? (blocker.id || blocker.key.replace('explicit-', '')) : null;
+                return (
                 <div key={blocker.key} className={`rounded-2xl border px-4 py-4 ${blocker.tone === 'red' ? 'border-red-200 bg-red-50 text-red-900' : blocker.tone === 'orange' ? 'border-orange-200 bg-orange-50 text-orange-900' : blocker.tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-900' : blocker.tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-900' : blocker.tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-gray-200 bg-gray-50 text-gray-900'}`}>
                   <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-[0.18em]">Blocker reason</p>
-                      <p className="mt-1 text-sm font-bold">{blocker.label}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em]">{blocker.blocking ? 'Blocker reason' : 'Waiting / Warning'}</p>
+                      {blocker.source === 'explicit' ? (
+                        <span className="text-[9px] rounded-full border border-gray-300 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-gray-700">Recorded</span>
+                      ) : (
+                        <span className="text-[9px] rounded-full border border-gray-300 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-gray-500">System</span>
+                      )}
+                      {blocker.blocking ? (
+                        <span className="text-[9px] rounded-full border border-red-200 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-red-700">Blocking</span>
+                      ) : (
+                        <span className="text-[9px] rounded-full border border-amber-200 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-amber-700">Waiting</span>
+                      )}
+                      {linkedItem && <span className="text-[9px] rounded-full border border-blue-200 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-blue-700">Item: {linkedItem.description}</span>}
                     </div>
+                    {isStaff && blockerId && (
+                      <button onClick={() => resolveBlocker(blockerId)} className="text-[10px] font-black uppercase tracking-[0.18em] rounded-full border border-gray-300 bg-white px-2 py-1 text-gray-700 hover:border-black">Resolve</button>
+                    )}
                   </div>
+                  <p className="mt-1 text-sm font-bold">{blocker.label}</p>
                   <p className="mt-2 text-sm opacity-90">{blocker.detail}</p>
                   <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] opacity-80">What must happen: {blocker.nextStep}</p>
                 </div>
-              ))}
+              );})}
             </div>
           </div>
         </div>
@@ -1673,7 +1922,9 @@ export default function JobInteractiveView({
             onOpenProofModal={(itemId) => { if (!isStaff) return; openUploadModal(itemId); }}
             onLogActivity={logActivity}
             logs={logs}
-            userRole={userRole} 
+            userRole={userRole}
+            getBlockingReasons={blockingReasonsForItem}
+            isReleaseBlocked={isReleaseBlockedForItem}
           />
 
              <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden min-h-[500px] relative ${isApprovedAsset ? 'border-green-400 ring-2 ring-green-100' : 'border-gray-200'}`}>
