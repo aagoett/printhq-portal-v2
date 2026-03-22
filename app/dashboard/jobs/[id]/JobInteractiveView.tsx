@@ -857,6 +857,7 @@ export default function JobInteractiveView({
   const portalHref = `/portal/jobs/${jobId}`;
   const latestPortalProof = portalSharedAssets[0];
   const portalVisibility = normalizePortalVisibility(job.portal_visibility || initialJob?.portal_visibility || 'internal');
+  const awaitingArtworkItems = items.filter((item: any) => item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art');
   const isPortalHidden = portalVisibility === 'hidden';
   const isPortalShell = portalVisibility === 'shell';
   const isPortalProofLive = portalVisibility === 'proof_live';
@@ -910,6 +911,15 @@ export default function JobInteractiveView({
       panelClass: 'border-gray-200 bg-gray-50',
     };
   })();
+  const portalNextAction = awaitingArtworkItems.length > 0
+    ? `Customer still owes artwork/instructions for ${awaitingArtworkItems.length} item${awaitingArtworkItems.length === 1 ? '' : 's'}.`
+    : portalVisibility === 'proof_live' && latestPortalProof?.status !== 'approved'
+      ? 'Customer should review the live proof and either approve it or request changes.'
+      : portalVisibility === 'proof_live' && (latestPortalProof?.status === 'approved' || ['In Production', 'Shipped', 'Complete'].includes(job.status))
+        ? 'No customer action needed. Proof is approved and production is moving.'
+        : portalVisibility === 'shell'
+          ? 'Customer can see the shell, thread, and shared updates, but no proof yet.'
+          : 'No portal handoff is active yet.';
   const customerMessages = messages.filter((m: any) => m.is_customer_visible !== false);
   const visibleMessages = isStaff ? messages : customerMessages;
 
@@ -1083,6 +1093,7 @@ export default function JobInteractiveView({
                                 <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Share to portal</p>
                                 <p className="mt-1 text-sm font-semibold text-gray-900">{proofItemId ? `This proof will go live for ${items.find(i => i.id === proofItemId)?.description || 'this item'}.` : 'This proof will go live on the customer job shell.'}</p>
                                 <p className="mt-2 text-xs text-gray-600">Source files and internal notes stay private. If a pending proof is already live for this scope, it will be replaced automatically.</p>
+                                <p className="mt-2 text-xs font-semibold text-gray-700">Customer next action: {proofItemId ? 'Review this proof inside the same job thread and respond without leaving the portal.' : portalNextAction}</p>
                             </div>
                             <span className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${portalState.badgeClass}`}>{portalState.label}</span>
                         </div>
@@ -1216,6 +1227,7 @@ export default function JobInteractiveView({
                 <span className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${portalState.badgeClass}`}>{portalState.label}</span>
               </div>
               <p className="max-w-3xl text-sm text-gray-700">{portalState.description}</p>
+              <p className="max-w-3xl text-xs font-semibold uppercase tracking-[0.18em] text-gray-600">Customer next action: {portalNextAction}</p>
               <div className="flex flex-wrap gap-2 text-[11px] text-gray-600">
                 <span className="rounded-full border border-white/70 bg-white px-3 py-1">Live proofs {sharedPortalCount}</span>
                 <span className="rounded-full border border-white/70 bg-white px-3 py-1">Archived proofs {archivedProofCount}</span>

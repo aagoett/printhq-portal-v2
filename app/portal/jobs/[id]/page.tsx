@@ -2,12 +2,13 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
-import { CheckCircle, XCircle, Download, FileImage, FileText, Clock, Printer, Mail, MessageSquare, Send } from 'lucide-react';
+import { CheckCircle, XCircle, Download, FileImage, FileText, Clock, Printer, Mail, MessageSquare, Send, AlertTriangle, Palette } from 'lucide-react';
 import { normalizePortalVisibility } from '@/lib/customerJobs';
 
 export default function PublicJobProofPage({ params }: { params: { id: string } }) {
   const [job, setJob] = useState<any>(null);
   const [assets, setAssets] = useState<any[]>([]);
+  const [items, setItems] = useState<any[]>([]);
   const [steps, setSteps] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
   const [viewingAssetId, setViewingAssetId] = useState<string>('');
@@ -16,6 +17,8 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [requestChangesNote, setRequestChangesNote] = useState('');
+  const [showChangeForm, setShowChangeForm] = useState(false);
   const [newMessage, setNewMessage] = useState('');
   const [senderName, setSenderName] = useState('');
   const [sendingMsg, setSendingMsg] = useState(false);
@@ -64,6 +67,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
       .eq('job_id', params.id);
 
     if (itemsData) {
+      setItems(itemsData);
       const visibleSteps = itemsData.flatMap(item =>
         (item.job_item_steps || []).filter((s: any) => s.is_internal === false)
       );
@@ -124,16 +128,19 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   };
 
   const handleRequestChanges = async () => {
-    const note = prompt('Describe the changes needed:');
+    const note = requestChangesNote.trim();
     if (!note) return;
     setActionLoading(true);
     await supabase.from('jobs').update({ status: 'Changes Requested', notes: note }).eq('id', params.id);
     await supabase.from('messages').insert({
       job_id: params.id,
       content: `[Changes Requested] ${note}`,
+      is_customer_visible: true,
     });
-    setSuccessMsg('✏️ Change request submitted! Our team will revise and send a new proof.');
-    setJob((j: any) => ({ ...j, status: 'Changes Requested' }));
+    setSuccessMsg('✏️ Change request submitted! Our team will revise the artwork and share the next proof here.');
+    setJob((j: any) => ({ ...j, status: 'Changes Requested', notes: note }));
+    setRequestChangesNote('');
+    setShowChangeForm(false);
     setActionLoading(false);
   };
 
@@ -173,29 +180,44 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   const isApproved = job.status === 'In Production' || job.status === 'Shipped' || job.status === 'Complete';
   const isChangesRequested = job.status === 'Changes Requested';
   const pendingProof = assets.find(a => a.status === 'pending');
+  const awaitingArtworkItems = items.filter((item: any) => item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art');
+  const needsCustomerArtwork = awaitingArtworkItems.length > 0;
+  const actionRequiredLabel = needsCustomerArtwork
+    ? 'Send artwork or instructions'
+    : pendingProof && !isApproved && !isChangesRequested
+      ? 'Review and approve proof'
+      : isChangesRequested
+        ? 'PrintHQ is revising your proof'
+        : 'No action required right now';
   const portalState = isApproved
     ? {
         label: 'Approved and in production',
         description: 'Your approval is locked in. You can still review the approved proof and follow job updates here.',
         className: 'bg-green-50 border-green-200 text-green-800',
       }
-    : isChangesRequested
+    : needsCustomerArtwork
       ? {
-          label: 'Revision requested',
-          description: 'We received your feedback. The next proof will appear here when it is ready.',
-          className: 'bg-amber-50 border-amber-200 text-amber-800',
+          label: 'Customer action required',
+          description: 'We still need artwork or final content from you before proofing can continue. Reply in the thread below so the portal handoff stays attached to this job.',
+          className: 'bg-orange-50 border-orange-200 text-orange-800',
         }
-      : pendingProof
+      : isChangesRequested
         ? {
-            label: 'Proof ready for review',
-            description: 'Review the current proof below. Approve it to release the job to production, or request changes if anything is off.',
-            className: 'bg-blue-50 border-blue-200 text-blue-800',
+            label: 'Revision requested',
+            description: 'We received your feedback. The next proof will appear here when it is ready.',
+            className: 'bg-amber-50 border-amber-200 text-amber-800',
           }
-        : {
-            label: 'Portal shell ready',
-            description: 'Your job is in our system. Files, proofs, and updates will appear here as soon as they are ready to share.',
-            className: 'bg-gray-50 border-gray-200 text-gray-700',
-          };
+        : pendingProof
+          ? {
+              label: 'Customer action required',
+              description: 'A proof is live now. Review it carefully, then approve for print or request changes from this page.',
+              className: 'bg-blue-50 border-blue-200 text-blue-800',
+            }
+          : {
+              label: 'Portal shell ready',
+              description: 'Your job is in our system. Files, proofs, and updates will appear here as soon as they are ready to share.',
+              className: 'bg-gray-50 border-gray-200 text-gray-700',
+            };
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -228,6 +250,24 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
 
       <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
 
+        {(!isApproved && (needsCustomerArtwork || pendingProof)) && (
+          <div className={`rounded-2xl border px-5 py-4 shadow-sm ${needsCustomerArtwork ? 'bg-orange-50 border-orange-200 text-orange-900' : 'bg-blue-50 border-blue-200 text-blue-900'}`}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-3">
+                {needsCustomerArtwork ? <Palette className="mt-0.5" size={18} /> : <AlertTriangle className="mt-0.5" size={18} />}
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] opacity-70">Customer action required</p>
+                  <p className="mt-1 text-sm font-semibold">{needsCustomerArtwork ? 'Artwork or copy is still missing for at least one line item.' : 'A proof is waiting for your review before we can move this job forward.'}</p>
+                  <p className="mt-1 text-sm opacity-80">{needsCustomerArtwork ? 'Reply below with files, copy, or exact instructions so the shop can continue without breaking the job thread.' : 'Review the shared proof below, then approve it for print or request changes from this same page.'}</p>
+                </div>
+              </div>
+              <span className="self-start rounded-full border border-current/20 bg-white/70 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em]">
+                {actionRequiredLabel}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* JOB SUMMARY */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -250,10 +290,35 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
           </div>
 
           <div className={`rounded-xl border px-4 py-3 ${portalState.className}`}>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em]">{portalState.label}</p>
-            <p className="mt-1 text-sm">{portalState.description}</p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em]">{portalState.label}</p>
+                <p className="mt-1 text-sm">{portalState.description}</p>
+              </div>
+              <span className="self-start rounded-full border border-current/20 bg-white/70 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em]">
+                Next up: {actionRequiredLabel}
+              </span>
+            </div>
           </div>
         </div>
+
+        {needsCustomerArtwork && (
+          <div className="bg-white rounded-xl border border-orange-200 shadow-sm p-6">
+            <div className="flex items-center gap-2 text-orange-800">
+              <Palette size={18} />
+              <h3 className="text-sm font-bold uppercase tracking-[0.18em]">Artwork still needed</h3>
+            </div>
+            <p className="mt-3 text-sm text-gray-600">These line items are still waiting on artwork, copy, or final instructions from you.</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {awaitingArtworkItems.map((item: any) => (
+                <span key={item.id} className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-bold text-orange-800">
+                  {item.description || 'Untitled item'}
+                </span>
+              ))}
+            </div>
+            <p className="mt-4 text-sm text-gray-500">Reply in the conversation below with the missing files, copy, or exact edits. Keep everything on this job thread so proofing and production stay tied to the right order.</p>
+          </div>
+        )}
 
         {/* PRODUCTION STEPS (Customer-visible only) */}
         {steps.length > 0 && (
@@ -327,14 +392,45 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
 
         {/* ACTION BUTTONS */}
         {pendingProof && !isApproved && !isChangesRequested && !successMsg && (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-            <h3 className="font-semibold text-gray-900 mb-1">Ready to proceed?</h3>
-            <p className="text-sm text-gray-500 mb-5">
-              Please review the proof carefully before approving. Once approved, we will proceed to print.
-            </p>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
+            <div>
+              <h3 className="font-semibold text-gray-900 mb-1">Ready to proceed?</h3>
+              <p className="text-sm text-gray-500">
+                Check spelling, layout, quantity, and any variable data. If anything is off, leave one clean revision request here so the next proof stays attached to this order.
+              </p>
+            </div>
+
+            {showChangeForm ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+                <label className="block text-[11px] font-bold uppercase tracking-[0.18em] text-amber-800">What needs to change?</label>
+                <textarea
+                  value={requestChangesNote}
+                  onChange={(e) => setRequestChangesNote(e.target.value)}
+                  placeholder="Example: Update John’s phone number to 925-555-1212, tighten the logo margin on the back, and use the revised postcard copy from my last email."
+                  className="min-h-[120px] w-full rounded-xl border border-amber-200 bg-white px-4 py-3 text-sm text-gray-700 focus:border-amber-400 focus:outline-none"
+                />
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <button
+                    onClick={handleRequestChanges}
+                    disabled={actionLoading || !requestChangesNote.trim()}
+                    className="flex-1 py-3 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 disabled:opacity-40"
+                  >
+                    Send Change Request
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowChangeForm(false); setRequestChangesNote(''); }}
+                    className="flex-1 py-3 rounded-xl border border-gray-200 bg-white font-bold text-gray-700 hover:border-black"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             <div className="flex flex-col sm:flex-row gap-3">
               <button
-                onClick={handleRequestChanges}
+                onClick={() => setShowChangeForm(true)}
                 disabled={actionLoading}
                 className="flex-1 py-4 border-2 border-amber-200 text-amber-700 rounded-xl font-bold hover:bg-amber-50 transition-colors flex justify-center items-center gap-2 text-sm"
               >
