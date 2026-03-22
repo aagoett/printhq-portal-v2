@@ -59,10 +59,14 @@ export default function CustomerPortalShell({
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const activeItem = useMemo(() => {
-    return NAV_ITEMS.find((item) => {
+    const matches = NAV_ITEMS.flatMap((item) => {
       const paths = [item.href, ...(item.match || [])];
-      return paths.some((path) => resolvedActive.startsWith(path));
+      return paths
+        .filter((path) => resolvedActive === path || resolvedActive.startsWith(`${path}/`))
+        .map((path) => ({ item, pathLength: path.length }));
     });
+
+    return matches.sort((a, b) => b.pathLength - a.pathLength)[0]?.item;
   }, [resolvedActive]);
 
   return (
