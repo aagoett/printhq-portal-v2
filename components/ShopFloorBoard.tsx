@@ -20,12 +20,23 @@ import {
 
 type BoardJob = any;
 type BoardColumn = { queueName: string; jobs: BoardJob[] };
-type BoardStats = { total: number; blocked: number; waiting: number; ready: number; unassigned: number };
+type BoardStats = {
+  total: number;
+  blocked: number;
+  waiting: number;
+  ready: number;
+  unassigned: number;
+  orphaned: number;
+  agingWaits: number;
+  splitOwner: number;
+};
 type StaffOption = { id: string; first_name?: string; email?: string };
+type OwnerLoadRow = { id: string; name: string; jobs: number; activeItems: number; blockedJobs: number; dueTodayJobs: number };
 
 type Props = {
   columns: BoardColumn[];
   boardStats: BoardStats;
+  ownerLoadRows: OwnerLoadRow[];
   staffLookup: Record<string, string>;
   staffOptions: StaffOption[];
   currentUserId?: string | null;
@@ -228,6 +239,21 @@ const JobCard = ({
                 {queueItems.length} in this queue now
               </span>
             ) : null}
+            {job?.isOrphaned ? (
+              <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 font-semibold text-red-700">
+                Orphaned work
+              </span>
+            ) : null}
+            {job?.isAgingWait ? (
+              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 font-semibold text-amber-700">
+                Waiting {job?.ageDays}+d
+              </span>
+            ) : null}
+            {job?.isSplitOwner ? (
+              <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-1 font-semibold text-violet-700">
+                Split owner
+              </span>
+            ) : null}
           </div>
         </div>
         <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${bucketMeta[bucket].badge}`}>
@@ -352,13 +378,13 @@ const JobCard = ({
   );
 };
 
-export default function ShopFloorBoard({ columns, boardStats, staffLookup, staffOptions, currentUserId, onAssignJob, onAssignItem, onOpenItemDrawer, formatDate }: Props) {
+export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, staffLookup, staffOptions, currentUserId, onAssignJob, onAssignItem, onOpenItemDrawer, formatDate }: Props) {
   const safeColumns = columns && columns.length ? columns : [{ queueName: 'All Work', jobs: [] }];
   const bucketOrder: BucketKey[] = ['blocked', 'waiting', 'ready', 'progress'];
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-8">
         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Total</p>
           <p className="mt-2 text-3xl font-black text-gray-900">{boardStats.total}</p>
@@ -384,6 +410,69 @@ export default function ShopFloorBoard({ columns, boardStats, staffLookup, staff
           <p className="mt-2 text-3xl font-black text-gray-900">{boardStats.unassigned}</p>
           <p className="text-sm text-gray-500">Needs owner</p>
         </div>
+        <div className="rounded-2xl border border-red-200 bg-red-50/70 p-4 shadow-sm">
+          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-red-700">Orphaned work</p>
+          <p className="mt-2 text-3xl font-black text-red-800">{boardStats.orphaned}</p>
+          <p className="text-sm text-red-700">Active work with no owner chain</p>
+        </div>
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 shadow-sm">
+          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-700">Aging waits</p>
+          <p className="mt-2 text-3xl font-black text-amber-800">{boardStats.agingWaits}</p>
+          <p className="text-sm text-amber-700">Waiting 2+ days</p>
+        </div>
+        <div className="rounded-2xl border border-violet-200 bg-violet-50/70 p-4 shadow-sm">
+          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-violet-700">Split owners</p>
+          <p className="mt-2 text-3xl font-black text-violet-800">{boardStats.splitOwner}</p>
+          <p className="text-sm text-violet-700">Job owner and item owners disagree</p>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Manager load scan</p>
+            <h3 className="text-lg font-black text-gray-900">Owner load at a glance</h3>
+            <p className="text-sm text-gray-500">Use this to spot overload before it turns into missed handoffs.</p>
+          </div>
+          <div className="text-xs font-semibold text-gray-500">Sorted by active item load, then blocked jobs.</div>
+        </div>
+        {ownerLoadRows.length === 0 ? (
+          <div className="mt-4 rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-400">No owner load to show yet.</div>
+        ) : (
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {ownerLoadRows.map((owner) => (
+              <div key={owner.id} className="rounded-2xl border border-gray-200 bg-gray-50/70 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black text-gray-900">{owner.name}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Owner load</p>
+                  </div>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${owner.activeItems >= 8 || owner.blockedJobs >= 3 ? 'bg-red-100 text-red-700' : owner.activeItems >= 5 || owner.blockedJobs >= 1 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                    {owner.activeItems >= 8 || owner.blockedJobs >= 3 ? 'Overloaded' : owner.activeItems >= 5 || owner.blockedJobs >= 1 ? 'Watch' : 'Stable'}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Items</p>
+                    <p className="mt-1 text-2xl font-black text-gray-900">{owner.activeItems}</p>
+                  </div>
+                  <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Jobs</p>
+                    <p className="mt-1 text-2xl font-black text-gray-900">{owner.jobs}</p>
+                  </div>
+                  <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
+                    <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">At risk</p>
+                    <p className="mt-1 text-2xl font-black text-gray-900">{owner.blockedJobs + owner.dueTodayJobs}</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-gray-600">
+                  <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-red-700">{owner.blockedJobs} blocked</span>
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">{owner.dueTodayJobs} due now</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex gap-4 overflow-x-auto pb-4">

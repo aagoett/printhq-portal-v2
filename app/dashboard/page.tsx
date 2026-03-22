@@ -165,7 +165,7 @@ export default function Dashboard() {
     if (typeof window === 'undefined') return 'board';
     return (localStorage.getItem('phq-shop-floor-view') as 'board' | 'table') || 'board';
   });
-  const [opsFilter, setOpsFilter] = useState<'all' | 'blocked' | 'ready' | 'waiting' | 'unassigned'>('all');
+  const [opsFilter, setOpsFilter] = useState<'all' | 'blocked' | 'ready' | 'waiting' | 'unassigned' | 'orphaned' | 'aging_waits' | 'split_owner'>('all');
 
 
   const supabase = createBrowserClient(
@@ -1000,6 +1000,46 @@ export default function Dashboard() {
     return value;
   };
 
+
+  const enrichJobs = (jobsList: Job[]) =>
+    jobsList.map((job) => {
+      const items = Array.isArray(job.job_items) ? job.job_items : [];
+      const waitingItems = items.filter(
+        (item: any) => item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art'
+      );
+      const completedItems = items.filter((item: any) => item.status === 'Completed');
+      const activeItems = items.filter((item: any) => item.status !== 'Completed');
+      const dueStatus = getDueStatus(job.due_date);
+      const isLate = dueStatus.label === 'Overdue';
+      const isDueToday = dueStatus.label === 'Today';
+      const isUnassigned = !job.assigned_to;
+      const isWaiting = waitingItems.length > 0;
+      const isBlocked = isLate || isWaiting || String(job.status || '').toLowerCase().includes('hold');
+      const isReady = !isBlocked && !isUnassigned && activeItems.length > 0;
+      const queueName = normalizeQueueName(job.current_step || activeItems[0]?.status);
+      const distinctItemOwners = new Set(items.map((i: any) => i?.assigned_to).filter(Boolean)).size;
+      const readyItems = activeItems.filter((item: any) => !item.waitingOnArt && item.status !== 'Hold');
+      const updatedAt = (job as any).updated_at || job.created_at;
+
+      return {
+        ...job,
+        queueName,
+        dueStatus,
+        isLate,
+        isDueToday,
+        isUnassigned,
+        isWaiting,
+        isBlocked,
+        isReady,
+        waitingItems,
+        completedItems,
+        activeItems,
+        distinctItemOwners,
+        readyItems,
+        updatedAt,
+      } as Job & any;
+    });
+
   const enrichedFilteredJobs = filteredJobs.map((job) => {
     const items = Array.isArray(job.job_items) ? job.job_items : [];
     const waitingItems = items.filter((item: any) => item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art');
@@ -1013,6 +1053,18 @@ export default function Dashboard() {
     const isBlocked = isLate || isWaiting;
     const isReady = !isBlocked && !isUnassigned && activeItems.length > 0;
     const queueName = normalizeQueueName(job.current_step || activeItems[0]?.status);
+    const activeOwnerIds = Array.from(new Set(activeItems.map((item: any) => item?.assigned_to).filter(Boolean)));
+    const hasAssignedItems = activeOwnerIds.length > 0;
+    const hasUnassignedActiveItems = activeItems.some((item: any) => !item?.assigned_to);
+    const splitOwnerCount = new Set([
+      ...(job.assigned_to ? [job.assigned_to] : []),
+      ...activeOwnerIds,
+    ]).size;
+    const isSplitOwner = splitOwnerCount > 1 || (hasAssignedItems && hasUnassignedActiveItems);
+    const isOrphaned = activeItems.length > 0 && !job.assigned_to && activeItems.some((item: any) => !item?.assigned_to);
+    const createdAtMs = new Date(job.created_at || 0).getTime();
+    const ageDays = Number.isFinite(createdAtMs) ? Math.floor((Date.now() - createdAtMs) / (1000 * 60 * 60 * 24)) : 0;
+    const isAgingWait = isWaiting && ageDays >= 2;
     return {
       ...job,
       queueName,
@@ -1026,6 +1078,12 @@ export default function Dashboard() {
       waitingItems,
       completedItems,
       activeItems,
+      activeOwnerIds,
+      hasUnassignedActiveItems,
+      isSplitOwner,
+      isOrphaned,
+      ageDays,
+      isAgingWait,
     };
   }).filter((job: any) => {
     if (opsFilter === 'all') return true;
@@ -1033,6 +1091,9 @@ export default function Dashboard() {
     if (opsFilter === 'ready') return job.isReady;
     if (opsFilter === 'waiting') return job.isWaiting;
     if (opsFilter === 'unassigned') return job.isUnassigned;
+    if (opsFilter === 'orphaned') return job.isOrphaned;
+    if (opsFilter === 'aging_waits') return job.isAgingWait;
+    if (opsFilter === 'split_owner') return job.isSplitOwner;
     return true;
   });
 
@@ -1057,7 +1118,36 @@ export default function Dashboard() {
     ready: enrichedFilteredJobs.filter((job: any) => job.isReady).length,
     waiting: enrichedFilteredJobs.filter((job: any) => job.isWaiting).length,
     unassigned: enrichedFilteredJobs.filter((job: any) => job.isUnassigned).length,
+    orphaned: enrichedFilteredJobs.filter((job: any) => job.isOrphaned).length,
+    agingWaits: enrichedFilteredJobs.filter((job: any) => job.isAgingWait).length,
+    splitOwner: enrichedFilteredJobs.filter((job: any) => job.isSplitOwner).length,
   };
+
+  const ownerLoadRows = useMemo(() => {
+    const rows = staff.map((member) => {
+      const ownerJobs = enrichedFilteredJobs.filter((job: any) => job.assigned_to === member.id || job.activeOwnerIds?.includes(member.id));
+      const activeItems = ownerJobs.reduce((sum: number, job: any) => {
+        const ownedItems = (job.activeItems || []).filter((item: any) => (item.assigned_to || job.assigned_to) === member.id).length;
+        return sum + ownedItems;
+      }, 0);
+      const blockedJobs = ownerJobs.filter((job: any) => job.isBlocked).length;
+      const dueTodayJobs = ownerJobs.filter((job: any) => job.isDueToday || job.isLate).length;
+      return {
+        id: member.id,
+        name: member.first_name || member.email || 'Staff',
+        activeItems,
+        jobs: ownerJobs.length,
+        blockedJobs,
+        dueTodayJobs,
+      };
+    }).filter((row) => row.jobs > 0 || row.activeItems > 0);
+
+    return rows.sort((a, b) => {
+      if (b.activeItems !== a.activeItems) return b.activeItems - a.activeItems;
+      if (b.blockedJobs !== a.blockedJobs) return b.blockedJobs - a.blockedJobs;
+      return a.name.localeCompare(b.name);
+    }).slice(0, 6);
+  }, [staff, enrichedFilteredJobs]);
 
   const staffLookup = useMemo(() => {
     const map: Record<string, string> = {};
@@ -1845,12 +1935,15 @@ export default function Dashboard() {
                     <button onClick={() => setShopFloorView('table')} className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold ${shopFloorView === 'table' ? 'bg-black text-white' : 'border border-gray-200 bg-white text-gray-600'}`}><Rows3 size={15}/> Table</button>
                   </div>
                 </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-8">
                   <OpsStatCard label="Jobs in scope" value={boardStats.total} tone="neutral" helper="Current tab + filter set" icon={<Layers size={16} />} active={opsFilter === 'all'} onClick={() => setOpsFilter('all')} />
                   <OpsStatCard label="Blocked" value={boardStats.blocked} tone="danger" helper="Late or waiting on art" icon={<AlertTriangle size={16} />} active={opsFilter === 'blocked'} onClick={() => setOpsFilter('blocked')} />
                   <OpsStatCard label="Ready" value={boardStats.ready} tone="success" helper="Assigned and clear to move" icon={<CheckCircle2 size={16} />} active={opsFilter === 'ready'} onClick={() => setOpsFilter('ready')} />
                   <OpsStatCard label="Waiting" value={boardStats.waiting} tone="warning" helper="Customer/art dependency" icon={<PauseCircle size={16} />} active={opsFilter === 'waiting'} onClick={() => setOpsFilter('waiting')} />
                   <OpsStatCard label="Unassigned" value={boardStats.unassigned} tone="muted" helper="No owner on the job" icon={<User size={16} />} active={opsFilter === 'unassigned'} onClick={() => setOpsFilter('unassigned')} />
+                  <OpsStatCard label="Orphaned work" value={boardStats.orphaned} tone="danger" helper="Active work with no job/item owner" icon={<Briefcase size={16} />} active={opsFilter === 'orphaned'} onClick={() => setOpsFilter('orphaned')} />
+                  <OpsStatCard label="Aging waits" value={boardStats.agingWaits} tone="warning" helper="Waiting 2+ days" icon={<Clock size={16} />} active={opsFilter === 'aging_waits'} onClick={() => setOpsFilter('aging_waits')} />
+                  <OpsStatCard label="Split owners" value={boardStats.splitOwner} tone="muted" helper="Queue + item owners disagree" icon={<ArrowRightCircle size={16} />} active={opsFilter === 'split_owner'} onClick={() => setOpsFilter('split_owner')} />
                 </div>
               </div>
 
@@ -1863,6 +1956,7 @@ export default function Dashboard() {
                 <ShopFloorBoard
                   columns={boardViewColumns}
                   boardStats={boardStats}
+                  ownerLoadRows={ownerLoadRows}
                   staffLookup={staffLookup}
                   staffOptions={staff}
                   currentUserId={user?.id}
