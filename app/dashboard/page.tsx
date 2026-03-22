@@ -171,6 +171,10 @@ export default function Dashboard() {
   const sizeOptions = useMemo(() => selectedTemplate?.sizes || [], [selectedTemplate]);
   const recentJobs = useMemo(() => (jobs || []).slice(0, 6), [jobs]);
   const favoriteTemplates = useMemo(() => PRODUCT_TEMPLATES.slice(0, 4), []);
+  const templateQuickPicks = useMemo(() => {
+    const combo = [...recentTemplates, ...favoriteTemplates.map((t) => t.key as ProductTemplateKey)];
+    return combo.filter((key, idx) => combo.indexOf(key) === idx).slice(0, 8);
+  }, [recentTemplates, favoriteTemplates]);
 
   useEffect(() => {
     try {
@@ -529,6 +533,9 @@ export default function Dashboard() {
     setIsNewCustomer(false);
     setNewCustomerEmail('');
     setSelectedProductKey('postcard');
+    setStartMode('new');
+    setSelectedRepeatJobId('');
+    setShowAdvanced(false);
     setShowModal(true);
   };
 
@@ -1124,6 +1131,63 @@ export default function Dashboard() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {startModes.map((mode) => {
+                  const active = startMode === mode.key;
+                  return (
+                    <button
+                      key={mode.key}
+                      onClick={() => setStartMode(mode.key as any)}
+                      className={`text-left rounded-2xl border p-4 transition ${active ? 'border-black bg-black text-white shadow-md' : 'border-gray-200 bg-white hover:border-black'}`}
+                    >
+                      <div className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-400 flex items-center justify-between">
+                        <span>{mode.label}</span>
+                        {active && <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-bold text-white">Active</span>}
+                      </div>
+                      <p className={active ? 'mt-2 text-sm text-gray-100' : 'mt-2 text-sm text-gray-600'}>{mode.helper}</p>
+                      {active && selectedRepeatJobId && (mode.key === 'repeat-exact' || mode.key === 'repeat-edit' || mode.key === 'template') && (
+                        <p className="mt-2 text-[11px] font-semibold text-emerald-200">Linked to #{selectedRepeatJobId.substring(0,6).toUpperCase()}</p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {(startMode === 'repeat-exact' || startMode === 'repeat-edit' || startMode === 'template') && (
+                <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">Repeat / Template</p>
+                      <p className="text-sm text-gray-700">Pick a recent job to repeat exactly or prefill as a template.</p>
+                    </div>
+                    <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold text-gray-600 border border-gray-200">Recent {recentJobs.length}</span>
+                  </div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    {recentJobs.length === 0 && <p className="text-sm text-gray-500">No recent jobs yet.</p>}
+                    {recentJobs.map((job) => {
+                      const itemCount = (job.job_items || []).length;
+                      const qtySum = (job.job_items || []).reduce((acc: number, itm: any) => acc + (itm.quantity || 0), 0);
+                      return (
+                        <div key={job.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-bold text-gray-900">{job.title || 'Untitled job'}</p>
+                              <p className="text-[11px] text-gray-500 font-semibold">#{job.id.substring(0,6).toUpperCase()} • {formatDate(job.created_at)}</p>
+                              <p className="text-[11px] text-gray-500 font-semibold">{itemCount} item(s) • {qtySum.toLocaleString()} qty</p>
+                            </div>
+                            <span className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-bold uppercase text-gray-600">{normalizeJobStatus(job.status)}</span>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button onClick={() => repeatExactJobToCart(job.id)} className="text-[11px] px-3 py-2 rounded-lg bg-black text-white font-bold hover:bg-gray-800">Repeat exact</button>
+                            <button onClick={() => prefillFromJob(job.id)} className="text-[11px] px-3 py-2 rounded-lg bg-white text-gray-700 font-bold border border-gray-200 hover:border-black">Prefill + edit</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {isInternal && (
                   <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
@@ -1154,6 +1218,27 @@ export default function Dashboard() {
                         <option>No Brands Found</option>
                     )}
                   </select>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">Favorites & Recent Templates</p>
+                  <span className="text-[11px] text-gray-500">Product-first intake</span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {templateQuickPicks.map((key) => {
+                    const template = getTemplate(key as ProductTemplateKey, PRODUCT_TEMPLATES);
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => { setSelectedProductKey(key); setStartMode('new'); rememberTemplate(key); }}
+                        className={`px-3 py-2 rounded-full border text-[12px] font-bold ${selectedProductKey === key ? 'bg-black text-white border-black' : 'bg-white text-gray-700 border-gray-200 hover:border-black'}`}
+                      >
+                        {template?.name || key}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1277,6 +1362,14 @@ export default function Dashboard() {
                       )}
                     </div>
 
+                    <div className="flex items-center justify-between pt-2">
+                      <p className="text-[11px] font-bold uppercase text-gray-500">Specs, stock, routing</p>
+                      <button type="button" onClick={() => setShowAdvanced(!showAdvanced)} className="text-[11px] font-bold px-3 py-2 rounded-full border border-gray-300 bg-white hover:border-black">
+                        {showAdvanced ? 'Hide optional specs' : 'Show stock/finishing/mailing'}
+                      </button>
+                    </div>
+
+                    {showAdvanced && (
                     <div className="space-y-3">
                       {selectedTemplate?.fields?.map((field) => {
                         if (field.type === 'paper') {
@@ -1370,6 +1463,7 @@ export default function Dashboard() {
                         );
                       })}
                     </div>
+                    )}
 
                     <div className="space-y-2">
                       <label className="text-[11px] font-bold uppercase text-gray-500">Artwork</label>
@@ -1405,6 +1499,8 @@ export default function Dashboard() {
                       ))}
                     </div>
 
+                    {showAdvanced && (
+                    <>
                     <div className="space-y-2">
                       <label className="text-[11px] font-bold uppercase text-gray-500">Internal Notes</label>
                       <textarea value={jobNotes} onChange={(e) => setJobNotes(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" rows={2} />
@@ -1448,6 +1544,8 @@ export default function Dashboard() {
                         </div>
                       </div>
                     </div>
+                    </>
+                    )}
                     
                     <button type="button" onClick={handleAddToCart} disabled={!jobQty} className={`w-full py-3 rounded-lg font-bold text-sm transition-all flex items-center justify-center ${!jobQty ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800 shadow-md'}`}>
                       {!jobQty ? 'Enter Quantity...' : '+ Add Item to List'}

@@ -119,6 +119,7 @@ export async function POST(req: NextRequest) {
       const item = items[idx];
       const file = files[idx];
       const waitingOnArt = Boolean((item as any)?.waitingOnArt);
+      const sourceJobId = (item as any)?.source_job_id;
 
       const workflowSteps = (item.route_steps && item.route_steps.length ? item.route_steps : defaultWorkflowSteps) as string[];
       const initialStatus = workflowSteps[0] || 'Pending';
@@ -138,6 +139,7 @@ export async function POST(req: NextRequest) {
         item.substrate ? `Substrate: ${item.substrate}` : null,
         item.finishing?.length ? `Finishing: ${item.finishing.join(', ')}` : null,
         item.mailing ? `Mailing: Yes${item.mailing_notes ? ` (${item.mailing_notes})` : ''}` : null,
+        sourceJobId ? `Source job: ${sourceJobId}` : null,
       ].filter(Boolean).join(' • ');
 
       const combinedNotes = [specParts, item.notes].filter(Boolean).join('\n');
