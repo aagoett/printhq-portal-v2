@@ -30,6 +30,7 @@ type Props = {
   staffOptions: StaffOption[];
   currentUserId?: string | null;
   onAssignJob: (jobId: string, staffId: string) => void;
+  onAssignItem?: (itemId: string, staffId: string | null) => void;
   onOpenItemDrawer: (itemId: string) => void;
   formatDate: (value?: string | null) => string;
 };
@@ -93,12 +94,14 @@ const QueueOwnershipBar = ({
   staffOptions,
   currentUserId,
   onAssignJob,
+  onAssignItem,
 }: {
   job: any;
   staffLookup: Record<string, string>;
   staffOptions: StaffOption[];
   currentUserId?: string | null;
   onAssignJob: (jobId: string, staffId: string) => void;
+  onAssignItem?: (itemId: string, staffId: string | null) => void;
 }) => {
   const assignedTo = job?.assigned_to || '';
   const ownerName = getOwnerLabel(assignedTo, staffLookup);
@@ -176,6 +179,7 @@ const JobCard = ({
   staffOptions,
   currentUserId,
   onAssignJob,
+  onAssignItem,
   onOpenItemDrawer,
   formatDate,
 }: {
@@ -184,6 +188,7 @@ const JobCard = ({
   staffOptions: StaffOption[];
   currentUserId?: string | null;
   onAssignJob: (jobId: string, staffId: string) => void;
+  onAssignItem?: (itemId: string, staffId: string | null) => void;
   onOpenItemDrawer: (itemId: string) => void;
   formatDate: (value?: string | null) => string;
 }) => {
@@ -237,6 +242,7 @@ const JobCard = ({
           staffOptions={staffOptions}
           currentUserId={currentUserId}
           onAssignJob={onAssignJob}
+          onAssignItem={onAssignItem}
         />
 
         {inheritedItemCount > 0 ? (
@@ -291,6 +297,33 @@ const JobCard = ({
                     {completed}/{total} steps
                   </span>
                 )}
+                {onAssignItem ? (
+                  <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-2 py-1">
+                    <Users size={11} className="text-gray-400" />
+                    <select
+                      value={item?.assigned_to || ''}
+                      onChange={(e) => onAssignItem(item.id, e.target.value || null)}
+                      className="bg-transparent text-[11px] font-black uppercase tracking-wide text-gray-700 focus:ring-0 border-none pr-6"
+                    >
+                      <option value="">Unassigned</option>
+                      {staffOptions.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.first_name || s.email?.split('@')[0] || 'Staff'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+                {currentUserId ? (
+                  <button
+                    type="button"
+                    onClick={() => onAssignItem?.(item.id, item?.assigned_to === currentUserId ? null : currentUserId)}
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide border ${item?.assigned_to === currentUserId ? 'bg-white text-gray-700 border-gray-200' : 'bg-gray-900 text-white border-gray-900 hover:bg-gray-800'}`}
+                  >
+                    {item?.assigned_to === currentUserId ? <PauseCircle size={12} /> : <User size={12} />}
+                    {item?.assigned_to === currentUserId ? 'Unclaim' : 'Claim'}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => onOpenItemDrawer(item.id)}
@@ -319,7 +352,7 @@ const JobCard = ({
   );
 };
 
-export default function ShopFloorBoard({ columns, boardStats, staffLookup, staffOptions, currentUserId, onAssignJob, onOpenItemDrawer, formatDate }: Props) {
+export default function ShopFloorBoard({ columns, boardStats, staffLookup, staffOptions, currentUserId, onAssignJob, onAssignItem, onOpenItemDrawer, formatDate }: Props) {
   const safeColumns = columns && columns.length ? columns : [{ queueName: 'All Work', jobs: [] }];
   const bucketOrder: BucketKey[] = ['blocked', 'waiting', 'ready', 'progress'];
 
@@ -407,6 +440,7 @@ export default function ShopFloorBoard({ columns, boardStats, staffLookup, staff
                             staffOptions={staffOptions}
                             currentUserId={currentUserId}
                             onAssignJob={onAssignJob}
+                            onAssignItem={onAssignItem}
                             onOpenItemDrawer={onOpenItemDrawer}
                             formatDate={formatDate}
                           />
