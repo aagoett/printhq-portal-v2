@@ -999,6 +999,91 @@ export default function JobInteractiveView({
         : portalVisibility === 'shell'
           ? 'Customer can see the shell, thread, and shared updates, but no proof yet.'
           : 'No portal handoff is active yet.';
+  const dueRisk = countdown.text.includes('LATE') ? 'late' : countdown.text === 'DUE TODAY' ? 'today' : 'safe';
+  const jobBlockers = [
+    awaitingArtworkItems.length > 0 ? {
+      key: 'artwork',
+      tone: 'orange',
+      label: 'Waiting on artwork',
+      detail: `${awaitingArtworkItems.length} item${awaitingArtworkItems.length === 1 ? '' : 's'} still need customer files or copy.`,
+      nextStep: 'Get final art uploaded before pushing proofing or release.',
+    } : null,
+    customerAction.required ? {
+      key: 'customer-action',
+      tone: customerAction.tone === 'orange' ? 'orange' : customerAction.tone === 'blue' ? 'purple' : 'amber',
+      label: customerAction.label,
+      detail: customerAction.description,
+      nextStep: customerActionType === 'approve_proof' ? 'Wait for customer approval or collect one clean revision request.' : 'Customer must respond inside the job thread before work can move.',
+    } : null,
+    items.length === 0 ? {
+      key: 'no-items',
+      tone: 'gray',
+      label: 'No production items built',
+      detail: 'This job has no line items yet, so the floor has nothing concrete to run.',
+      nextStep: 'Add at least one production item with qty and workflow steps.',
+    } : null,
+    portalVisibility === 'proof_live' && !!latestPortalProof && latestPortalProof.status !== 'approved' ? {
+      key: 'proof-pending',
+      tone: 'purple',
+      label: 'Proof live but not approved',
+      detail: 'Customer can see the proof, but production release is still waiting on an approval or revision note.',
+      nextStep: 'Hold release until the live proof is approved or replaced.',
+    } : null,
+    portalVisibility === 'shell' && sharedPortalCount === 0 ? {
+      key: 'shell-only',
+      tone: 'blue',
+      label: 'Portal shell only',
+      detail: 'Customer can see the job shell, but no proof or release-ready file has been shared yet.',
+      nextStep: 'Share a proof when the shop is ready for customer review.',
+    } : null,
+    dueRisk === 'late' ? {
+      key: 'late',
+      tone: 'red',
+      label: 'Past due',
+      detail: 'The due date has already passed, so this job needs operator attention even if nothing else is blocked.',
+      nextStep: 'Re-sequence the work or reset expectations now.',
+    } : dueRisk === 'today' ? {
+      key: 'due-today',
+      tone: 'amber',
+      label: 'Due today',
+      detail: 'This job ships today, so any missing customer action is now a same-day release risk.',
+      nextStep: 'Resolve open dependencies before the floor burns time on it.',
+    } : null,
+  ].filter(Boolean) as Array<{ key: string; tone: string; label: string; detail: string; nextStep: string }>;
+  const releaseChecklist = [
+    {
+      key: 'items',
+      label: 'Production items defined',
+      done: items.length > 0,
+      note: items.length > 0 ? `${items.length} line item${items.length === 1 ? '' : 's'} ready.` : 'No line items yet.',
+    },
+    {
+      key: 'art',
+      label: 'Artwork dependency cleared',
+      done: awaitingArtworkItems.length === 0,
+      note: awaitingArtworkItems.length === 0 ? 'No items are flagged waiting on art.' : `${awaitingArtworkItems.length} item${awaitingArtworkItems.length === 1 ? '' : 's'} still waiting on art.`,
+    },
+    {
+      key: 'approval',
+      label: 'Customer approval cleared',
+      done: !customerAction.required && !(portalVisibility === 'proof_live' && latestPortalProof?.status !== 'approved'),
+      note: !customerAction.required && !(portalVisibility === 'proof_live' && latestPortalProof?.status !== 'approved') ? 'No open customer approval gate.' : 'Customer action is still open.',
+    },
+  ];
+  const releaseBlocked = releaseChecklist.some((item) => !item.done);
+  const releaseGate = releaseBlocked
+    ? {
+        label: 'Production release blocked',
+        tone: 'red',
+        detail: jobBlockers[0]?.detail || 'There is still an unresolved dependency before this should be released to production.',
+        nextStep: jobBlockers[0]?.nextStep || 'Clear the open dependency first.',
+      }
+    : {
+        label: 'Production release clear',
+        tone: 'green',
+        detail: 'No open art or customer-approval gate is visible on this job.',
+        nextStep: 'Safe to move the job forward on the shop side.',
+      };
   const customerMessages = messages.filter((m: any) => m.is_customer_visible !== false);
   const visibleMessages = isStaff ? messages : customerMessages;
   const customerTimeline = useMemo(() => {
@@ -1394,9 +1479,63 @@ export default function JobInteractiveView({
                 <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-gray-500">
                   {item.size && <span className="px-2 py-0.5 rounded-full bg-white border border-gray-200">{item.size}</span>}
                   {item.paper_stock && <span className="px-2 py-0.5 rounded-full bg-white border border-gray-200 truncate">{item.paper_stock}</span>}
+                  {(item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art') && (
+                    <span className="px-2 py-0.5 rounded-full bg-orange-50 border border-orange-200 text-orange-800 font-black uppercase tracking-wider">Waiting on art</span>
+                  )}
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <div className={`rounded-2xl border p-4 shadow-sm ${releaseGate.tone === 'red' ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Production release gate</p>
+                <h2 className={`mt-1 text-xl font-black ${releaseGate.tone === 'red' ? 'text-red-900' : 'text-green-900'}`}>{releaseGate.label}</h2>
+                <p className={`mt-2 text-sm ${releaseGate.tone === 'red' ? 'text-red-800' : 'text-green-800'}`}>{releaseGate.detail}</p>
+                <p className={`mt-2 text-xs font-semibold uppercase tracking-[0.18em] ${releaseGate.tone === 'red' ? 'text-red-700' : 'text-green-700'}`}>Next move: {releaseGate.nextStep}</p>
+              </div>
+              <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${releaseGate.tone === 'red' ? 'border-red-200 bg-white text-red-700' : 'border-green-200 bg-white text-green-700'}`}>{releaseBlocked ? 'Blocked' : 'Clear'}</span>
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              {releaseChecklist.map((item) => (
+                <div key={item.key} className={`rounded-2xl border px-3 py-3 ${item.done ? 'border-green-200 bg-white text-green-800' : 'border-red-200 bg-white text-red-800'}`}>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em]">{item.done ? 'Clear' : 'Open gate'}</p>
+                  <p className="mt-1 text-sm font-bold">{item.label}</p>
+                  <p className="mt-1 text-xs opacity-80">{item.note}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Explicit blockers</p>
+                <h2 className="mt-1 text-xl font-black text-gray-900">Why this job is waiting</h2>
+              </div>
+              <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700">{jobBlockers.length} blocker{jobBlockers.length === 1 ? '' : 's'}</span>
+            </div>
+            <div className="mt-4 space-y-3">
+              {jobBlockers.length === 0 ? (
+                <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-4 text-sm text-green-800">
+                  No active blocker detected from art, approval, portal handoff, or missing line-item setup.
+                </div>
+              ) : jobBlockers.map((blocker) => (
+                <div key={blocker.key} className={`rounded-2xl border px-4 py-4 ${blocker.tone === 'red' ? 'border-red-200 bg-red-50 text-red-900' : blocker.tone === 'orange' ? 'border-orange-200 bg-orange-50 text-orange-900' : blocker.tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-900' : blocker.tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-900' : blocker.tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-gray-200 bg-gray-50 text-gray-900'}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em]">Blocker reason</p>
+                      <p className="mt-1 text-sm font-bold">{blocker.label}</p>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm opacity-90">{blocker.detail}</p>
+                  <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] opacity-80">What must happen: {blocker.nextStep}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
