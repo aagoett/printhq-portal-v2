@@ -6,7 +6,7 @@ import {
   Loader2, X, Scissors, User, Trash2, Filter, ArrowRightCircle, 
   Briefcase, Building2, Plus, ShoppingCart, Clock, ChevronRight, Layers, Ruler,
   ArrowUpDown, ArrowUp, ArrowDown, ExternalLink, Calculator, MessageSquare, Send, Sparkles, Paperclip, Bot, Rocket,
-  RotateCcw, Star, PlusCircle
+  RotateCcw, Star, PlusCircle, LayoutGrid, Rows3, AlertTriangle, PauseCircle, CheckCircle2
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect, useMemo } from 'react';
@@ -160,6 +160,11 @@ export default function Dashboard() {
   const [jobLogs, setJobLogs] = useState<any[]>([]);
     
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>({ key: 'timeline', direction: 'desc' });
+  const [shopFloorView, setShopFloorView] = useState<'board' | 'table'>(() => {
+    if (typeof window === 'undefined') return 'board';
+    return (localStorage.getItem('phq-shop-floor-view') as 'board' | 'table') || 'board';
+  });
+  const [opsFilter, setOpsFilter] = useState<'all' | 'blocked' | 'ready' | 'waiting' | 'unassigned'>('all');
 
 
   const supabase = createBrowserClient(
@@ -216,6 +221,12 @@ export default function Dashboard() {
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('phq-shop-floor-view', shopFloorView);
+    }
+  }, [shopFloorView]);
 
   useEffect(() => {
     if (selectedSizeLabel && selectedSizeLabel !== 'custom') {
@@ -887,7 +898,63 @@ export default function Dashboard() {
     return job.current_step === activeTab || hasMatchingItem;
   });
 
-  const sortedFilteredJobs = getSortedJobs(filteredJobs);
+  const queueColumns = (departmentTabs || []).filter((tab) => tab !== 'My Queue' && tab !== 'All');
+  const normalizeQueueName = (value?: string) => {
+    if (!value) return 'Unassigned / Other';
+    const exact = queueColumns.find((queue) => queue.toLowerCase() === value.toLowerCase());
+    if (exact) return exact;
+    return value;
+  };
+
+  const enrichedFilteredJobs = filteredJobs.map((job) => {
+    const items = Array.isArray(job.job_items) ? job.job_items : [];
+    const waitingItems = items.filter((item: any) => item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art');
+    const completedItems = items.filter((item: any) => item.status === 'Completed');
+    const activeItems = items.filter((item: any) => item.status !== 'Completed');
+    const dueStatus = getDueStatus(job.due_date);
+    const isLate = dueStatus.label === 'Overdue';
+    const isDueToday = dueStatus.label === 'Today';
+    const isUnassigned = !job.assigned_to;
+    const isWaiting = waitingItems.length > 0;
+    const isBlocked = isLate || isWaiting;
+    const isReady = !isBlocked && !isUnassigned && activeItems.length > 0;
+    const queueName = normalizeQueueName(job.current_step || activeItems[0]?.status);
+    return {
+      ...job,
+      queueName,
+      dueStatus,
+      isLate,
+      isDueToday,
+      isUnassigned,
+      isWaiting,
+      isBlocked,
+      isReady,
+      waitingItems,
+      completedItems,
+      activeItems,
+    };
+  }).filter((job: any) => {
+    if (opsFilter === 'all') return true;
+    if (opsFilter === 'blocked') return job.isBlocked;
+    if (opsFilter === 'ready') return job.isReady;
+    if (opsFilter === 'waiting') return job.isWaiting;
+    if (opsFilter === 'unassigned') return job.isUnassigned;
+    return true;
+  });
+
+  const sortedFilteredJobs = getSortedJobs(enrichedFilteredJobs as Job[]);
+  const boardQueueOrder = queueColumns.length ? queueColumns : Array.from(new Set(enrichedFilteredJobs.map((job: any) => job.queueName).filter(Boolean)));
+  const boardColumns = [...boardQueueOrder, 'Unassigned / Other'].filter((queue, index, arr) => arr.indexOf(queue) === index).map((queueName) => ({
+    queueName,
+    jobs: enrichedFilteredJobs.filter((job: any) => (job.queueName || 'Unassigned / Other') === queueName),
+  }));
+  const boardStats = {
+    total: enrichedFilteredJobs.length,
+    blocked: enrichedFilteredJobs.filter((job: any) => job.isBlocked).length,
+    ready: enrichedFilteredJobs.filter((job: any) => job.isReady).length,
+    waiting: enrichedFilteredJobs.filter((job: any) => job.isWaiting).length,
+    unassigned: enrichedFilteredJobs.filter((job: any) => job.isUnassigned).length,
+  };
 
   if (!isInternal) {
     const customerJobs = filterCustomerVisibleJobs(jobs);
@@ -1650,206 +1717,187 @@ export default function Dashboard() {
           )}
 
           {isInternal ? (
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-[400px]">
-              <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-                <h3 className="font-semibold text-gray-900 flex items-center">
-                  <Filter size={16} className="mr-2 text-gray-400" /> 
-                  {activeTab}
-                </h3>
-                <div className="text-xs font-bold bg-gray-200 px-2 py-1 rounded text-gray-600">{sortedFilteredJobs.length} Jobs</div>
+            <div className="space-y-5">
+              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Shop Floor Command Center</p>
+                    <h3 className="mt-1 text-xl font-bold text-gray-900">{activeTab}</h3>
+                    <p className="mt-1 text-sm text-gray-500">Run the floor by queue, not by hunting through rows.</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button onClick={() => setShopFloorView('board')} className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold ${shopFloorView === 'board' ? 'bg-black text-white' : 'border border-gray-200 bg-white text-gray-600'}`}><LayoutGrid size={15}/> Board</button>
+                    <button onClick={() => setShopFloorView('table')} className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold ${shopFloorView === 'table' ? 'bg-black text-white' : 'border border-gray-200 bg-white text-gray-600'}`}><Rows3 size={15}/> Table</button>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                  <OpsStatCard label="Jobs in scope" value={boardStats.total} tone="neutral" helper="Current tab + filter set" icon={<Layers size={16} />} active={opsFilter === 'all'} onClick={() => setOpsFilter('all')} />
+                  <OpsStatCard label="Blocked" value={boardStats.blocked} tone="danger" helper="Late or waiting on art" icon={<AlertTriangle size={16} />} active={opsFilter === 'blocked'} onClick={() => setOpsFilter('blocked')} />
+                  <OpsStatCard label="Ready" value={boardStats.ready} tone="success" helper="Assigned and clear to move" icon={<CheckCircle2 size={16} />} active={opsFilter === 'ready'} onClick={() => setOpsFilter('ready')} />
+                  <OpsStatCard label="Waiting" value={boardStats.waiting} tone="warning" helper="Customer/art dependency" icon={<PauseCircle size={16} />} active={opsFilter === 'waiting'} onClick={() => setOpsFilter('waiting')} />
+                  <OpsStatCard label="Unassigned" value={boardStats.unassigned} tone="muted" helper="No owner on the job" icon={<User size={16} />} active={opsFilter === 'unassigned'} onClick={() => setOpsFilter('unassigned')} />
+                </div>
               </div>
 
               {sortedFilteredJobs.length === 0 ? (
-                <div className="p-12 text-center text-gray-400 flex flex-col items-center">
+                <div className="rounded-xl border border-gray-200 bg-white p-12 text-center text-gray-400 flex flex-col items-center shadow-sm">
                    <Scissors size={48} className="mb-4 opacity-20" />
                    <p>No jobs found in {activeTab}.</p>
                 </div>
-              ) : (
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-gray-50 text-gray-500 uppercase font-medium">
-                    <tr>
-                      <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('timeline')}>
-                        <div className="flex items-center gap-1">
-                          Timeline {sortConfig?.key === 'timeline' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
+              ) : shopFloorView === 'board' ? (
+                <div className="grid gap-4 xl:grid-cols-4">
+                  {boardColumns.map((column) => (
+                    <section key={column.queueName} className="rounded-2xl border border-gray-200 bg-white shadow-sm min-h-[280px]">
+                      <div className="flex items-center justify-between border-b border-gray-100 px-4 py-4 bg-gray-50 rounded-t-2xl">
+                        <div>
+                          <h4 className="text-sm font-black uppercase tracking-[0.14em] text-gray-700">{column.queueName}</h4>
+                          <p className="text-xs text-gray-500">{column.jobs.length} jobs</p>
                         </div>
-                      </th>
-                      <th className="px-6 py-3 w-48 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('customer')}>
-                        <div className="flex items-center gap-1">
-                          Customer {sortConfig?.key === 'customer' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th> 
-                      <th className="px-6 py-3 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('details')}>
-                        <div className="flex items-center gap-1">
-                          Job Details {sortConfig?.key === 'details' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 w-24 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('size')}>
-                        <div className="flex items-center gap-1">
-                          Size {sortConfig?.key === 'size' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('stock')}>
-                        <div className="flex items-center gap-1">
-                          Stock {sortConfig?.key === 'stock' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('station')}>
-                        <div className="flex items-center gap-1">
-                          Station {sortConfig?.key === 'station' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 w-40 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('team')}>
-                        <div className="flex items-center gap-1">
-                          Team {sortConfig?.key === 'team' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}
-                        </div>
-                      </th>
-                      <th className="px-6 py-3 w-20 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {sortedFilteredJobs.map((job: any) => {
-                      const dueStatus = getDueStatus(job.due_date);
-                      
-                      const customerProfile = customers.find(c => c.id === job.user_id);
-                      const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
-                                            const brandName = job.orders?.brands?.name || 'PrintHQ';
-                       
-                       return (
-                       <React.Fragment key={job.id}>
-                       <tr className="hover:bg-gray-50 transition-colors group">
-                        
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex flex-col gap-1">
-                             <div className="text-[10px] text-gray-400 font-bold uppercase">In: {formatDate(job.created_at)}</div>
-                             <div className={`text-xs ${dueStatus.color}`}>Due: {dueStatus.label}</div>
-                          </div>
-                        </td>
-
-                        <td className="px-6 py-4">
-                            <div className="flex items-center gap-3">
-                                <div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">
-                                    {typeof customerName === 'string' ? customerName.charAt(0).toUpperCase() : '?'}
+                        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-gray-600 border border-gray-200">{column.jobs.filter((job: any) => job.isBlocked).length} blocked</span>
+                      </div>
+                      <div className="space-y-3 p-4">
+                        {column.jobs.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">No work in this queue.</div>
+                        ) : column.jobs.map((job: any) => {
+                          const customerProfile = customers.find(c => c.id === job.user_id);
+                          const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
+                          const owner = staff.find((s) => s.id === job.assigned_to);
+                          const visibleItems = (job.job_items || []).filter((item: any) => activeTab === 'All' || activeTab === 'My Queue' || item.status === activeTab).slice(0, 3);
+                          return (
+                            <div key={job.id} className={`rounded-2xl border p-4 ${job.isBlocked ? 'border-red-200 bg-red-50/40' : job.isWaiting ? 'border-amber-200 bg-amber-50/40' : 'border-gray-200 bg-white'}`}>
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <Link href={`/dashboard/jobs/${job.id}`} className="text-base font-bold text-gray-900 hover:text-blue-600">{job.title}</Link>
+                                  <p className="mt-1 text-xs text-gray-500">{customerName} · #{job.id.substring(0,6).toUpperCase()}</p>
                                 </div>
-                                <div className="overflow-hidden">
-                                    <p className="text-sm font-bold text-gray-900 truncate max-w-[120px]">{customerName}</p>
-                                    <p className="text-[10px] text-gray-400 uppercase tracking-wider truncate max-w-[120px]">{brandName}</p>
+                                <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-wide ${job.isLate ? 'bg-red-100 text-red-700' : job.isDueToday ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-700'}`}>{job.dueStatus.label === '--' ? 'No due date' : `Due ${job.dueStatus.label}`}</span>
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {job.isBlocked && <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-red-700">Blocked</span>}
+                                {job.isWaiting && <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700">Waiting on art</span>}
+                                {job.isReady && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-700">Ready to run</span>}
+                                {job.isUnassigned && <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-gray-700">Unassigned</span>}
+                              </div>
+                              <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                                <div className="rounded-xl bg-gray-50 px-2 py-2">
+                                  <div className="text-lg font-black text-gray-900">{job.activeItems.length}</div>
+                                  <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Active items</div>
                                 </div>
-                            </div>
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <Link href={`/dashboard/jobs/${job.id}`} className="block group-hover:text-blue-600 transition-colors">
-                              <div className="font-bold text-gray-900 text-base">{job.title}</div>
-                          </Link>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="font-mono text-[10px] text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span>
-                          </div>
-                        </td>
-
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-xs font-medium text-gray-700">{job.size || 'N/A'}</div>
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <div className="text-xs text-gray-500 truncate max-w-[120px]" title={job.paper_stock}>{job.paper_stock || 'N/A'}</div>
-                        </td>
-
-                        <td className="px-6 py-4">
-                           <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide ${job.current_step === 'Complete' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>
-                             {job.current_step || 'Processing'}
-                           </span>
-                        </td>
-
-                        <td className="px-6 py-4">
-                           <select 
-                             value={job.assigned_to || ''} 
-                             onChange={(e) => handleAssignJob(job.id, e.target.value)} 
-                             className="bg-transparent border-none text-xs font-bold text-gray-500 focus:ring-0 cursor-pointer hover:text-black w-full truncate"
-                           >
-                             <option value="">-- Unassigned --</option>
-                             {staff.map(s => (
-                               <option key={s.id} value={s.id}>
-                                 {s.first_name || s.email?.split('@')[0]}
-                                </option>
-                              ))}
-                            </select>
-                         </td>
- 
-                         <td className="px-6 py-4 text-right">
-                           <div className="flex items-center justify-end gap-2">
-                             <Link href={`/dashboard/jobs/${job.id}`} className="text-gray-400 hover:text-black transition-colors p-2 hover:bg-gray-100 rounded-full">
-                                <ChevronRight size={20} />
-                             </Link>
-                           </div>
-                         </td>
- 
-                       </tr>
- 
-                       {/* ITEM SUB-ROWS (PHASE 3.12/3.14) */}
-                       {job.job_items && job.job_items.length > 0 && job.job_items
-                         .filter((item: any) => {
-                           if (activeTab === 'All' || activeTab === 'My Queue') return true;
-                           return item.status === activeTab;
-                         })
-                         .map((item: any) => {
-                           const isDeptMatch = activeTab !== 'All' && activeTab !== 'My Queue' && item.status === activeTab;
-                           return (
-                          <tr key={item.id} className={`border-b border-gray-100/50 transition-colors ${isDeptMatch ? 'bg-yellow-400/10' : 'bg-gray-50/30'}`}>
-                            <td className="px-6 py-2"></td>
-                            <td className="px-6 py-2"></td>
-                            <td className="px-6 py-2">
-                              <div className={`flex items-center gap-3 pl-4 border-l-2 ${isDeptMatch ? 'border-yellow-400' : 'border-blue-100'}`}>
-                                <button 
-                                  onClick={() => handleOpenItemDrawer(item.id)}
-                                  className="flex flex-col text-left hover:opacity-75 transition-opacity"
+                                <div className="rounded-xl bg-gray-50 px-2 py-2">
+                                  <div className="text-lg font-black text-red-600">{job.waitingItems.length}</div>
+                                  <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Waiting</div>
+                                </div>
+                                <div className="rounded-xl bg-gray-50 px-2 py-2">
+                                  <div className="text-lg font-black text-emerald-600">{job.completedItems.length}</div>
+                                  <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Done</div>
+                                </div>
+                              </div>
+                              <div className="mt-4 space-y-2">
+                                <div className="flex items-center justify-between text-xs text-gray-500">
+                                  <span className="font-bold uppercase tracking-wide">Owner</span>
+                                  <span>{owner ? (owner.first_name || owner.email?.split('@')[0]) : 'Unassigned'}</span>
+                                </div>
+                                <select 
+                                  value={job.assigned_to || ''}
+                                  onChange={(e) => handleAssignJob(job.id, e.target.value)}
+                                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700"
                                 >
-                                  <span className={`text-[11px] font-black uppercase tracking-tight ${isDeptMatch ? 'text-yellow-900' : 'text-gray-700'}`}>{item.description}</span>
-                                  <span className="text-[9px] text-gray-400 font-bold uppercase">{item.quantity?.toLocaleString()} units</span>
-                                </button>
+                                  <option value="">-- Unassigned --</option>
+                                  {staff.map(s => <option key={s.id} value={s.id}>{s.first_name || s.email?.split('@')[0]}</option>)}
+                                </select>
                               </div>
-                            </td>
-                            <td className="px-6 py-2">
-                              <span className="text-xs text-gray-500">{item.size || 'N/A'}</span>
-                            </td>
-                            <td className="px-6 py-2">
-                              <div className="text-[10px] text-gray-400 truncate max-w-[120px]" title={item.paper_stock}>{item.paper_stock || 'N/A'}</div>
-                            </td>
-                            <td className="px-6 py-2">
-                              <div className="flex items-center gap-2">
-                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
-                                    item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' 
-                                    : isDeptMatch ? 'bg-yellow-400 text-yellow-900 border-yellow-500 shadow-sm'
-                                    : 'bg-blue-50 text-blue-700 border-blue-200'
-                                }`}>
-                                    {item.status || 'Pending'}
-                                </span>
-                                
-                                {isDeptMatch && (
-                                    <button 
-                                        onClick={() => handleCompleteItemStep(item, activeTab)}
-                                        className="bg-green-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-sm hover:bg-green-700 transition-colors uppercase"
-                                    >
-                                        Mark Done
-                                    </button>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-6 py-2"></td>
-                            <td className="px-6 py-2">
-                                <div className="flex justify-end">
-                                    <button onClick={() => handleOpenItemDrawer(item.id)} className="text-gray-300 hover:text-black">
-                                        <ExternalLink size={14} />
-                                    </button>
+                              <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50 p-3">
+                                <div className="mb-2 flex items-center justify-between">
+                                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-gray-500">Item visibility</p>
+                                  <Link href={`/dashboard/jobs/${job.id}`} className="text-[11px] font-bold text-black">Open job →</Link>
                                 </div>
-                            </td>
-                          </tr>
-                        );
+                                <div className="space-y-2">
+                                  {visibleItems.length === 0 ? <p className="text-xs text-gray-400">No matching items in this queue.</p> : visibleItems.map((item: any) => {
+                                    const actionable = activeTab !== 'All' && activeTab !== 'My Queue' && item.status === activeTab;
+                                    return (
+                                      <div key={item.id} className="rounded-lg border border-white bg-white px-3 py-2">
+                                        <div className="flex items-start justify-between gap-2">
+                                          <div>
+                                            <p className="text-xs font-bold text-gray-900">{item.description}</p>
+                                            <p className="text-[10px] text-gray-500">{item.quantity?.toLocaleString()} units · {item.size || 'N/A'}</p>
+                                          </div>
+                                          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-blue-700 border border-blue-100">{item.status || 'Pending'}</span>
+                                        </div>
+                                        {actionable && (
+                                          <button onClick={() => handleCompleteItemStep(item, activeTab)} className="mt-2 rounded-full bg-green-600 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-white hover:bg-green-700">Mark done</button>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          );
                         })}
-                       </React.Fragment>
-                       );
-                     })}
-                  </tbody>
-                </table>
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-[400px]">
+                  <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+                    <h3 className="font-semibold text-gray-900 flex items-center">
+                      <Filter size={16} className="mr-2 text-gray-400" /> 
+                      {activeTab}
+                    </h3>
+                    <div className="text-xs font-bold bg-gray-200 px-2 py-1 rounded text-gray-600">{sortedFilteredJobs.length} Jobs</div>
+                  </div>
+
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-gray-50 text-gray-500 uppercase font-medium">
+                      <tr>
+                        <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('timeline')}><div className="flex items-center gap-1">Timeline {sortConfig?.key === 'timeline' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                        <th className="px-6 py-3 w-48 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('customer')}><div className="flex items-center gap-1">Customer {sortConfig?.key === 'customer' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                        <th className="px-6 py-3 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('details')}><div className="flex items-center gap-1">Job Details {sortConfig?.key === 'details' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                        <th className="px-6 py-3 w-24 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('size')}><div className="flex items-center gap-1">Size {sortConfig?.key === 'size' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                        <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('stock')}><div className="flex items-center gap-1">Stock {sortConfig?.key === 'stock' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                        <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('station')}><div className="flex items-center gap-1">Station {sortConfig?.key === 'station' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                        <th className="px-6 py-3 w-40 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('team')}><div className="flex items-center gap-1">Team {sortConfig?.key === 'team' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                        <th className="px-6 py-3 w-20 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {sortedFilteredJobs.map((job: any) => {
+                        const dueStatus = getDueStatus(job.due_date);
+                        const customerProfile = customers.find(c => c.id === job.user_id);
+                        const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
+                        const brandName = job.orders?.brands?.name || 'PrintHQ';
+                        return (
+                        <React.Fragment key={job.id}>
+                        <tr className="hover:bg-gray-50 transition-colors group">
+                          <td className="px-6 py-4 whitespace-nowrap"><div className="flex flex-col gap-1"><div className="text-[10px] text-gray-400 font-bold uppercase">In: {formatDate(job.created_at)}</div><div className={`text-xs ${dueStatus.color}`}>Due: {dueStatus.label}</div></div></td>
+                          <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">{typeof customerName === 'string' ? customerName.charAt(0).toUpperCase() : '?'}</div><div className="overflow-hidden"><p className="text-sm font-bold text-gray-900 truncate max-w-[120px]">{customerName}</p><p className="text-[10px] text-gray-400 uppercase tracking-wider truncate max-w-[120px]">{brandName}</p></div></div></td>
+                          <td className="px-6 py-4"><Link href={`/dashboard/jobs/${job.id}`} className="block group-hover:text-blue-600 transition-colors"><div className="font-bold text-gray-900 text-base">{job.title}</div></Link><div className="flex items-center gap-2 mt-1"><span className="font-mono text-[10px] text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span></div></td>
+                          <td className="px-6 py-4 whitespace-nowrap"><div className="text-xs font-medium text-gray-700">{job.size || 'N/A'}</div></td>
+                          <td className="px-6 py-4"><div className="text-xs text-gray-500 truncate max-w-[120px]" title={job.paper_stock}>{job.paper_stock || 'N/A'}</div></td>
+                          <td className="px-6 py-4"><span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide ${job.current_step === 'Complete' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{job.current_step || 'Processing'}</span></td>
+                          <td className="px-6 py-4"><select value={job.assigned_to || ''} onChange={(e) => handleAssignJob(job.id, e.target.value)} className="bg-transparent border-none text-xs font-bold text-gray-500 focus:ring-0 cursor-pointer hover:text-black w-full truncate"><option value="">-- Unassigned --</option>{staff.map(s => (<option key={s.id} value={s.id}>{s.first_name || s.email?.split('@')[0]}</option>))}</select></td>
+                          <td className="px-6 py-4 text-right"><div className="flex items-center justify-end gap-2"><Link href={`/dashboard/jobs/${job.id}`} className="text-gray-400 hover:text-black transition-colors p-2 hover:bg-gray-100 rounded-full"><ChevronRight size={20} /></Link></div></td>
+                        </tr>
+                        {job.job_items && job.job_items.length > 0 && job.job_items.filter((item: any) => { if (activeTab === 'All' || activeTab === 'My Queue') return true; return item.status === activeTab; }).map((item: any) => {
+                          const isDeptMatch = activeTab !== 'All' && activeTab !== 'My Queue' && item.status === activeTab;
+                          return (
+                          <tr key={item.id} className={`border-b border-gray-100/50 transition-colors ${isDeptMatch ? 'bg-yellow-400/10' : 'bg-gray-50/30'}`}>
+                            <td className="px-6 py-2"></td><td className="px-6 py-2"></td>
+                            <td className="px-6 py-2"><div className={`flex items-center gap-3 pl-4 border-l-2 ${isDeptMatch ? 'border-yellow-400' : 'border-blue-100'}`}><button onClick={() => handleOpenItemDrawer(item.id)} className="flex flex-col text-left hover:opacity-75 transition-opacity"><span className={`text-[11px] font-black uppercase tracking-tight ${isDeptMatch ? 'text-yellow-900' : 'text-gray-700'}`}>{item.description}</span><span className="text-[9px] text-gray-400 font-bold uppercase">{item.quantity?.toLocaleString()} units</span></button></div></td>
+                            <td className="px-6 py-2"><span className="text-xs text-gray-500">{item.size || 'N/A'}</span></td>
+                            <td className="px-6 py-2"><div className="text-[10px] text-gray-400 truncate max-w-[120px]" title={item.paper_stock}>{item.paper_stock || 'N/A'}</div></td>
+                            <td className="px-6 py-2"><div className="flex items-center gap-2"><span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' : isDeptMatch ? 'bg-yellow-400 text-yellow-900 border-yellow-500 shadow-sm' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>{item.status || 'Pending'}</span>{isDeptMatch && (<button onClick={() => handleCompleteItemStep(item, activeTab)} className="bg-green-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-sm hover:bg-green-700 transition-colors uppercase">Mark Done</button>)}</div></td>
+                            <td className="px-6 py-2"></td>
+                            <td className="px-6 py-2"><div className="flex justify-end"><button onClick={() => handleOpenItemDrawer(item.id)} className="text-gray-300 hover:text-black"><ExternalLink size={14} /></button></div></td>
+                          </tr>
+                        );})}
+                        </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           ) : (
@@ -1886,6 +1934,27 @@ function DashboardLaunchCard({ href, icon, eyebrow, title, body }: { href: strin
       <p className="text-sm text-gray-600 leading-6">{body}</p>
       <div className="mt-4 text-sm font-bold text-black">Open Intake →</div>
     </Link>
+  );
+}
+
+function OpsStatCard({ label, value, helper, icon, tone, active, onClick }: { label: string; value: number; helper: string; icon: React.ReactNode; tone: 'neutral' | 'danger' | 'success' | 'warning' | 'muted'; active?: boolean; onClick?: () => void }) {
+  const toneClasses = {
+    neutral: 'bg-gray-50 text-gray-900 border-gray-200',
+    danger: 'bg-red-50 text-red-700 border-red-200',
+    success: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    warning: 'bg-amber-50 text-amber-700 border-amber-200',
+    muted: 'bg-slate-50 text-slate-700 border-slate-200',
+  } as const;
+
+  return (
+    <button onClick={onClick} className={`rounded-2xl border p-4 text-left transition hover:border-black ${toneClasses[tone]} ${active ? 'ring-2 ring-black/10' : ''}`}>
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] font-black uppercase tracking-[0.16em] opacity-70">{label}</div>
+        <div>{icon}</div>
+      </div>
+      <div className="mt-3 text-3xl font-black tracking-tight">{value}</div>
+      <div className="mt-1 text-xs opacity-80">{helper}</div>
+    </button>
   );
 }
 
