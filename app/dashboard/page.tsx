@@ -32,6 +32,122 @@ const DEFAULT_ROUTE_LIBRARY: { group: string; steps: string[] }[] = [
   { group: 'QC & Ship', steps: ['QC', 'Ready for Pickup/Ship'] },
 ];
 
+type OpsFilterKey = 'all' | 'blocked' | 'ready' | 'waiting' | 'unassigned' | 'orphaned' | 'aging_waits' | 'split_owner' | 'ready_unclaimed';
+type ShopFloorViewMode = 'board' | 'table';
+type ShopFloorLensId = 'auto' | 'csr' | 'prepress' | 'press' | 'digital' | 'bindery' | 'mailing' | 'qc_ship' | 'manager';
+
+type ShopFloorLensPreset = {
+  id: Exclude<ShopFloorLensId, 'auto'>;
+  label: string;
+  shortLabel: string;
+  description: string;
+  defaultTab: string;
+  defaultFilter: OpsFilterKey;
+  defaultView: ShopFloorViewMode;
+  audience: string[];
+};
+
+const SHOP_FLOOR_LENS_PRESETS: ShopFloorLensPreset[] = [
+  {
+    id: 'csr',
+    label: 'CSR Lens',
+    shortLabel: 'CSR',
+    description: 'Catch customer blockers, art waits, and ready work before it hits the floor blind.',
+    defaultTab: 'All',
+    defaultFilter: 'waiting',
+    defaultView: 'table',
+    audience: ['csr', 'customer service', 'sales', 'account manager'],
+  },
+  {
+    id: 'prepress',
+    label: 'Prepress Lens',
+    shortLabel: 'Prepress',
+    description: 'Land on proofing and prep work first so files move clean into production.',
+    defaultTab: 'Prepress',
+    defaultFilter: 'all',
+    defaultView: 'board',
+    audience: ['prepress', 'art'],
+  },
+  {
+    id: 'press',
+    label: 'Press Lens',
+    shortLabel: 'Press',
+    description: 'See the press lane only: active press work, blocked jobs, and ready-to-run load.',
+    defaultTab: 'Press',
+    defaultFilter: 'all',
+    defaultView: 'board',
+    audience: ['press', 'offset'],
+  },
+  {
+    id: 'digital',
+    label: 'Digital Lens',
+    shortLabel: 'Digital',
+    description: 'Bias the board toward ready work in the digital press lane.',
+    defaultTab: 'Press',
+    defaultFilter: 'ready',
+    defaultView: 'board',
+    audience: ['digital', 'digital press'],
+  },
+  {
+    id: 'bindery',
+    label: 'Bindery Lens',
+    shortLabel: 'Bindery',
+    description: 'Focus on finishing throughput, handoffs, and queue ownership in bindery.',
+    defaultTab: 'Bindery',
+    defaultFilter: 'all',
+    defaultView: 'board',
+    audience: ['bindery', 'finishing'],
+  },
+  {
+    id: 'mailing',
+    label: 'Mailing Lens',
+    shortLabel: 'Mailing',
+    description: 'Filter to mailing work so address, tab, and prep issues surface immediately.',
+    defaultTab: 'Mailing',
+    defaultFilter: 'all',
+    defaultView: 'board',
+    audience: ['mailing', 'mail'],
+  },
+  {
+    id: 'qc_ship',
+    label: 'QC / Ship Lens',
+    shortLabel: 'QC / Ship',
+    description: 'Land on QC and release pressure, with ready and blocked work easy to triage.',
+    defaultTab: 'QC & Ship',
+    defaultFilter: 'all',
+    defaultView: 'board',
+    audience: ['qc', 'quality', 'shipping', 'ship'],
+  },
+  {
+    id: 'manager',
+    label: 'Manager Lens',
+    shortLabel: 'Manager',
+    description: 'Start broad: all queues, all exception signals, and the board as the control surface.',
+    defaultTab: 'All',
+    defaultFilter: 'all',
+    defaultView: 'board',
+    audience: ['manager', 'admin', 'owner', 'lead'],
+  },
+];
+
+const normalizeLensSeed = (value?: string | null) => String(value || '').trim().toLowerCase();
+
+const resolveLensPreset = (profile?: { role?: string | null; department?: string | null }) => {
+  const roleSeed = normalizeLensSeed(profile?.role);
+  const departmentSeed = normalizeLensSeed(profile?.department);
+  const combined = [departmentSeed, roleSeed].filter(Boolean).join(' ');
+
+  if (departmentSeed.includes('digital') || combined.includes('digital')) return SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === 'digital')!;
+  if (departmentSeed.includes('csr') || departmentSeed.includes('customer service') || roleSeed.includes('csr') || combined.includes('sales')) return SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === 'csr')!;
+  if (departmentSeed.includes('prepress') || departmentSeed.includes('art')) return SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === 'prepress')!;
+  if (departmentSeed.includes('press') || departmentSeed.includes('offset')) return SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === 'press')!;
+  if (departmentSeed.includes('bindery') || departmentSeed.includes('finish')) return SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === 'bindery')!;
+  if (departmentSeed.includes('mail')) return SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === 'mailing')!;
+  if (departmentSeed.includes('qc') || departmentSeed.includes('quality') || departmentSeed.includes('ship')) return SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === 'qc_ship')!;
+  if (roleSeed.includes('admin') || roleSeed.includes('manager') || roleSeed.includes('owner') || departmentSeed.includes('manager')) return SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === 'manager')!;
+  return SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === 'manager')!;
+};
+
 // --- TYPES ---
 type Job = {
   id: string;
@@ -179,11 +295,13 @@ export default function Dashboard() {
   const [jobLogs, setJobLogs] = useState<any[]>([]);
     
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>({ key: 'timeline', direction: 'desc' });
-  const [shopFloorView, setShopFloorView] = useState<'board' | 'table'>(() => {
+  const [shopFloorView, setShopFloorView] = useState<ShopFloorViewMode>(() => {
     if (typeof window === 'undefined') return 'board';
-    return (localStorage.getItem('phq-shop-floor-view') as 'board' | 'table') || 'board';
+    return (localStorage.getItem('phq-shop-floor-view') as ShopFloorViewMode) || 'board';
   });
-  const [opsFilter, setOpsFilter] = useState<'all' | 'blocked' | 'ready' | 'waiting' | 'unassigned' | 'orphaned' | 'aging_waits' | 'split_owner' | 'ready_unclaimed'>('all');
+  const [opsFilter, setOpsFilter] = useState<OpsFilterKey>('all');
+  const [activeLensId, setActiveLensId] = useState<ShopFloorLensId>('auto');
+  const [resolvedLensId, setResolvedLensId] = useState<Exclude<ShopFloorLensId, 'auto'>>('manager');
   const [bulkTargetOwner, setBulkTargetOwner] = useState('');
   const [bulkSourceOwner, setBulkSourceOwner] = useState('');
 
@@ -284,6 +402,14 @@ export default function Dashboard() {
     if (preset && preset.length) return preset;
     return buildRoutePreview(selectedTemplate, fieldValues.finishing || [], fieldValues.mailing);
   }, [selectedTemplate, fieldValues?.finishing, fieldValues?.mailing, routePresets]);
+
+  const staffLookup = useMemo(() => {
+    const map: Record<string, string> = {};
+    staff.forEach((s) => {
+      map[s.id] = s.first_name || s.email || 'Staff';
+    });
+    return map;
+  }, [staff]);
 
   useEffect(() => {
     if (!routeDraftLocked) {
@@ -438,11 +564,22 @@ export default function Dashboard() {
       }
       setSelectedCustomerId(user.id);
       
-      if (profile?.department && dynamicTabs.includes(profile.department)) {
-        setActiveTab(profile.department);
-      } else {
-        setActiveTab('My Queue'); 
-      }
+      const matchedLens = resolveLensPreset(profile);
+      const nextLensTab = matchedLens.defaultTab === 'My Queue'
+        ? 'My Queue'
+        : dynamicTabs.includes(matchedLens.defaultTab)
+          ? matchedLens.defaultTab
+          : matchedLens.defaultTab === 'All'
+            ? 'All'
+            : profile?.department && dynamicTabs.includes(profile.department)
+              ? profile.department
+              : 'All';
+
+      setResolvedLensId(matchedLens.id);
+      setActiveLensId('auto');
+      setActiveTab(nextLensTab);
+      setOpsFilter(matchedLens.defaultFilter);
+      setShopFloorView(matchedLens.defaultView);
 
       // Fetch additional production data
       const { data: qData } = await supabase.from('workflow_queues').select('*').order('rank');
@@ -1100,6 +1237,24 @@ export default function Dashboard() {
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
 
   const isInternal = role === 'admin' || role === 'staff';
+  const activeLensPreset = SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === (activeLensId === 'auto' ? resolvedLensId : activeLensId)) || SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === 'manager')!;
+  const applyLensPreset = (lensId: ShopFloorLensId) => {
+    if (lensId === 'auto') {
+      const autoLens = SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === resolvedLensId) || SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === 'manager')!;
+      setActiveLensId('auto');
+      setActiveTab(departmentTabs.includes(autoLens.defaultTab) ? autoLens.defaultTab : autoLens.defaultTab === 'All' ? 'All' : 'My Queue');
+      setOpsFilter(autoLens.defaultFilter);
+      setShopFloorView(autoLens.defaultView);
+      return;
+    }
+
+    const preset = SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === lensId);
+    if (!preset) return;
+    setActiveLensId(lensId);
+    setActiveTab(departmentTabs.includes(preset.defaultTab) ? preset.defaultTab : preset.defaultTab === 'All' ? 'All' : 'My Queue');
+    setOpsFilter(preset.defaultFilter);
+    setShopFloorView(preset.defaultView);
+  };
 
   const filteredJobs = jobs.filter(job => {
     if (activeTab === 'All') return true;
@@ -1246,14 +1401,6 @@ export default function Dashboard() {
     agingWaits: scopedJobs.filter((job: any) => job.isAgingWait).length,
     splitOwner: scopedJobs.filter((job: any) => job.isSplitOwner).length,
   };
-
-  const staffLookup = useMemo(() => {
-    const map: Record<string, string> = {};
-    staff.forEach((s) => {
-      map[s.id] = s.first_name || s.email || 'Staff';
-    });
-    return map;
-  }, [staff]);
 
   const loadQueues = [...baseQueueOrder, 'Unassigned / Other'];
   const queueLoad = loadQueues.map((queueName) => {
@@ -2150,18 +2297,52 @@ export default function Dashboard() {
           )}
 
           {isInternal && (
-            <div className="mb-6 flex gap-2 overflow-x-auto pb-2">
-              {departmentTabs.map((dept) => (
-                <button 
-                  key={dept}
-                  onClick={() => setActiveTab(dept)}
-                  className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors flex items-center
-                    ${activeTab === dept ? 'bg-black text-white' : 'bg-white text-gray-500 border border-gray-200 hover:border-black hover:text-black'}`}
+            <div className="mb-6 space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => applyLensPreset('auto')}
+                  className={`rounded-full px-4 py-2 text-sm font-bold transition-colors ${activeLensId === 'auto' ? 'bg-black text-white' : 'border border-gray-200 bg-white text-gray-600 hover:border-black hover:text-black'}`}
                 >
-                  {dept === 'My Queue' && <Briefcase size={14} className="mr-2" />}
-                  {dept}
+                  Auto lens · {resolvedLensId === 'qc_ship' ? 'QC / Ship' : (SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === resolvedLensId)?.shortLabel || 'Manager')}
                 </button>
-              ))}
+                {SHOP_FLOOR_LENS_PRESETS.map((lens) => (
+                  <button
+                    key={lens.id}
+                    onClick={() => applyLensPreset(lens.id)}
+                    className={`rounded-full px-4 py-2 text-sm font-bold transition-colors ${activeLensId === lens.id ? 'bg-black text-white' : 'border border-gray-200 bg-white text-gray-600 hover:border-black hover:text-black'}`}
+                    title={lens.description}
+                  >
+                    {lens.shortLabel}
+                  </button>
+                ))}
+              </div>
+              <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-gray-400">Active lens</p>
+                <div className="mt-1 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-sm font-bold text-gray-900">{activeLensId === 'auto' ? `Auto-routing to ${activeLensPreset.label}` : activeLensPreset.label}</p>
+                    <p className="text-sm text-gray-500">{activeLensPreset.description}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-gray-600">
+                    <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1">Queue: {activeTab}</span>
+                    <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1">Filter: {opsFilter.replace('_', ' ')}</span>
+                    <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1">View: {shopFloorView}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-2">
+                {departmentTabs.map((dept) => (
+                  <button 
+                    key={dept}
+                    onClick={() => setActiveTab(dept)}
+                    className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-colors flex items-center
+                      ${activeTab === dept ? 'bg-black text-white' : 'bg-white text-gray-500 border border-gray-200 hover:border-black hover:text-black'}`}
+                  >
+                    {dept === 'My Queue' && <Briefcase size={14} className="mr-2" />}
+                    {dept}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -2172,7 +2353,7 @@ export default function Dashboard() {
                   <div>
                     <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Shop Floor Command Center</p>
                     <h3 className="mt-1 text-xl font-bold text-gray-900">{activeTab}</h3>
-                    <p className="mt-1 text-sm text-gray-500">Run the floor by queue, not by hunting through rows.</p>
+                    <p className="mt-1 text-sm text-gray-500">{activeLensPreset.description}</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button onClick={() => setShopFloorView('board')} className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold ${shopFloorView === 'board' ? 'bg-black text-white' : 'border border-gray-200 bg-white text-gray-600'}`}><LayoutGrid size={15}/> Board</button>
