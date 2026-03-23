@@ -79,6 +79,7 @@ type Props = {
   readOnly?: boolean;
   showOwnerLoad?: boolean;
   enableReassignmentPanel?: boolean;
+  lensId?: string;
 };
 
 type BucketKey = 'blocked' | 'waiting' | 'ready' | 'progress';
@@ -163,6 +164,7 @@ const QueueOwnershipBar = ({
   currentUserId,
   onAssignJob,
   readOnly = false,
+  lensId,
 }: {
   job: any;
   staffLookup: Record<string, string>;
@@ -170,6 +172,7 @@ const QueueOwnershipBar = ({
   currentUserId?: string | null;
   onAssignJob: (jobId: string, staffId: string) => void;
   readOnly?: boolean;
+  lensId?: string;
 }) => {
   const allowActions = !readOnly;
   const assignedTo = job?.assigned_to || '';
@@ -269,6 +272,7 @@ const JobCard = ({
   onToggleJob,
   onToggleItem,
   readOnly = false,
+  lensId,
 }: {
   job: any;
   staffLookup: Record<string, string>;
@@ -283,12 +287,22 @@ const JobCard = ({
   onToggleJob: (jobId: string) => void;
   onToggleItem: (itemId: string) => void;
   readOnly?: boolean;
+  lensId?: string;
 }) => {
   const allowOwnershipActions = !readOnly;
   const allowItemActions = !readOnly;
   const allowBulkSelection = !readOnly;
   const items = Array.isArray(job?.job_items) ? job.job_items : job?.activeItems || [];
   const visibleItems = items.slice(0, 3);
+  const isCsrLens = lensId === 'csr';
+  const csrActionState = job?.csrActionState || { label: 'No customer action', tone: 'slate', group: 'clear' };
+  const csrToneClasses = {
+    amber: 'border-amber-200 bg-amber-50 text-amber-800',
+    blue: 'border-blue-200 bg-blue-50 text-blue-800',
+    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    violet: 'border-violet-200 bg-violet-50 text-violet-800',
+    slate: 'border-slate-200 bg-slate-50 text-slate-700',
+  } as const;
   const bucket = getBucketForJob(job);
   const dueLabel = job?.dueStatus?.label || '--';
   const dueColor = job?.dueStatus?.color || 'text-gray-500';
@@ -318,6 +332,7 @@ const JobCard = ({
             <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
               <span className={`font-bold ${dueColor}`}>Due: {dueLabel}</span>
               <span className="rounded-full bg-gray-100 px-2 py-1 font-semibold text-gray-700">#{String(job?.id || '').substring(0, 6).toUpperCase()}</span>
+              <span className="rounded-full bg-white px-2 py-1 font-semibold text-gray-700 border border-gray-200">{job?.customerName || 'Customer'}</span>
               <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-1 font-semibold text-gray-600">
                 <User size={12} /> {owner}
               </span>
@@ -358,6 +373,27 @@ const JobCard = ({
       </div>
 
       <div className="space-y-3 px-4 py-3">
+        {isCsrLens ? (
+          <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-blue-700">CSR view</p>
+                <div className="mt-1 flex flex-wrap gap-2 text-[11px] font-semibold">
+                  <span className={`rounded-full border px-2.5 py-1 ${csrToneClasses[(csrActionState.tone || 'slate') as keyof typeof csrToneClasses] || csrToneClasses.slate}`}>{csrActionState.label}</span>
+                  <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-gray-700">Customer: {job?.customerName || 'Customer'}</span>
+                  <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-gray-700">Brand: {job?.brandName || 'PrintHQ'}</span>
+                  <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-gray-700">Owner: {owner}</span>
+                  {String(job?.status || '').toLowerCase().includes('proof approved') ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-800">Proof approved</span> : null}
+                  {String(job?.status || '').toLowerCase().includes('changes requested') ? <span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-violet-800">Changes requested</span> : null}
+                </div>
+              </div>
+              <Link href={`/dashboard/jobs/${job?.id || ''}`} className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-[11px] font-black uppercase tracking-wide text-gray-700 border border-gray-200 hover:border-black">
+                Open CSR detail <ChevronRight size={14} />
+              </Link>
+            </div>
+          </div>
+        ) : null}
+
         <QueueOwnershipBar
           job={job}
           staffLookup={staffLookup}
@@ -482,7 +518,7 @@ const JobCard = ({
   );
 };
 
-export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, staffLookup, staffOptions, currentUserId, onAssignJob, onAssignItem, onOpenItemDrawer, formatDate, readOnly = false, showOwnerLoad = true, enableReassignmentPanel = true }: Props) {
+export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, staffLookup, staffOptions, currentUserId, onAssignJob, onAssignItem, onOpenItemDrawer, formatDate, readOnly = false, showOwnerLoad = true, enableReassignmentPanel = true, lensId }: Props) {
   const safeColumns = columns && columns.length ? columns : [{ queueName: 'All Work', jobs: [] }];
   const bucketOrder: BucketKey[] = ['blocked', 'waiting', 'ready', 'progress'];
   const safeReadOnly = Boolean(readOnly);
@@ -1042,6 +1078,7 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
                             onToggleJob={toggleJobSelection}
                             onToggleItem={toggleItemSelection}
                             readOnly={safeReadOnly}
+                            lensId={lensId}
                           />
                         ))}
                       </div>

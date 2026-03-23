@@ -382,6 +382,7 @@ export default function Dashboard() {
   const [resolvedLensId, setResolvedLensId] = useState<Exclude<ShopFloorLensId, 'auto'>>('manager');
   const [bulkTargetOwner, setBulkTargetOwner] = useState('');
   const [bulkSourceOwner, setBulkSourceOwner] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
 
 
   const supabase = createBrowserClient(
@@ -1332,6 +1333,27 @@ export default function Dashboard() {
   const isProductionRole = ['admin', 'manager', 'staff-production'].includes(roleTier);
   const isCSRRole = roleTier === 'csr';
   const normalizedActiveLens = normalizeLensLabel(activeTab);
+  const normalizedCustomerSearch = customerSearch.trim().toLowerCase();
+
+  const getCustomerDisplayName = (job: Job) => {
+    const customerProfile = customers.find((c) => c.id === job.user_id);
+    return customerProfile ? (customerProfile.first_name || customerProfile.company || customerProfile.email || 'Customer') : (job.guest_email || 'Guest');
+  };
+
+  const getCsrActionState = (job: any) => {
+    const status = String(job?.status || '').toLowerCase();
+    const actionType = String(job?.customer_action_type || '').toLowerCase();
+    const actionRequired = Boolean(job?.customer_action_required);
+    const waitingOnArt = Boolean(job?.job_items?.some((item: any) => item?.waitingOnArt || item?.artwork_status === 'Waiting on Art' || item?.artworkStatus === 'Waiting on Art'));
+
+    if (waitingOnArt || actionType === 'upload_artwork') return { label: 'Customer owes art', tone: 'amber', group: 'customer' as const };
+    if (actionRequired && actionType === 'approve_proof') return { label: 'Customer must approve proof', tone: 'blue', group: 'proof' as const };
+    if (status.includes('proof approved')) return { label: 'Proof approved · release pending', tone: 'emerald', group: 'proof' as const };
+    if (status.includes('changes requested')) return { label: 'Revision requested', tone: 'violet', group: 'proof' as const };
+    if (status.includes('pending review')) return { label: 'CSR review needed', tone: 'slate', group: 'csr' as const };
+    if (actionRequired) return { label: 'Customer response needed', tone: 'amber', group: 'customer' as const };
+    return { label: 'No customer action', tone: 'slate', group: 'clear' as const };
+  };
 
   const filteredJobs = jobs.filter(job => {
     if (activeTab === 'All') return true;
@@ -1443,9 +1465,25 @@ export default function Dashboard() {
       } as Job & any;
     });
 
-  const enrichedAllJobs = enrichJobs(jobs);
-  const enrichedFilteredJobs = enrichJobs(filteredJobs);
-  const scopedJobs = enrichedFilteredJobs.filter((job: any) => {
+  const enrichedAllJobs = enrichJobs(jobs).map((job: any) => ({
+    ...job,
+    customerName: getCustomerDisplayName(job),
+    brandName: job.orders?.brands?.name || job.brand || 'PrintHQ',
+    csrActionState: getCsrActionState(job),
+  }));
+  const enrichedFilteredJobs = enrichJobs(filteredJobs).map((job: any) => ({
+    ...job,
+    customerName: getCustomerDisplayName(job),
+    brandName: job.orders?.brands?.name || job.brand || 'PrintHQ',
+    csrActionState: getCsrActionState(job),
+  }));
+  const customerScopedJobs = enrichedFilteredJobs.filter((job: any) => {
+    if (!normalizedCustomerSearch) return true;
+    const haystack = [job.customerName, job.brandName, job.title, job.guest_email].filter(Boolean).join(' ').toLowerCase();
+    return haystack.includes(normalizedCustomerSearch);
+  });
+
+  const scopedJobs = customerScopedJobs.filter((job: any) => {
     if (opsFilter === 'all') return true;
     if (opsFilter === 'blocked') return job.isBlocked;
     if (opsFilter === 'ready') return job.isReady;
@@ -1599,6 +1637,15 @@ export default function Dashboard() {
   }));
 
   const boardViewColumns = boardColumns.length ? boardColumns : [{ queueName: 'All Work', jobs: scopedJobs }];
+  const csrBoardColumns = (isCSRRole || activeLensPreset.id === 'csr')
+    ? boardViewColumns.filter((column) => ['Prepress', 'Press', 'QC & Ship', 'Unassigned / Other'].includes(column.queueName) || column.jobs.length > 0)
+    : boardViewColumns;
+  const csrFocusStats = {
+    awaitingCustomer: scopedJobs.filter((job: any) => job.csrActionState?.group === 'customer').length,
+    proofsLive: scopedJobs.filter((job: any) => job.csrActionState?.group === 'proof').length,
+    proofApprovedWaitingRelease: scopedJobs.filter((job: any) => String(job.status || '').toLowerCase().includes('proof approved')).length,
+    csrReviewNeeded: scopedJobs.filter((job: any) => job.csrActionState?.group === 'csr').length,
+  };
 
   const handleBulkClaimReady = async () => {
     if (!readyUnclaimedJobs.length) {
@@ -2413,6 +2460,27 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
+              {(isCSRRole || activeLensPreset.id === 'csr') && (
+                <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3 shadow-sm">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.16em] text-blue-700">CSR controls</p>
+                      <p className="text-sm text-blue-900 font-semibold">Filter this board by customer, not just queue.</p>
+                    </div>
+                    <div className="flex w-full max-w-xl items-center gap-2">
+                      <input
+                        value={customerSearch}
+                        onChange={(e) => setCustomerSearch(e.target.value)}
+                        placeholder="Find customer, brand, guest email, or job title"
+                        className="w-full rounded-full border border-blue-200 bg-white px-4 py-2 text-sm text-gray-700 outline-none focus:border-black"
+                      />
+                      {customerSearch && (
+                        <button onClick={() => setCustomerSearch('')} className="rounded-full border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-800 hover:border-black">Clear</button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="flex gap-2 overflow-x-auto pb-2">
                 {departmentTabs.map((dept) => (
                   <button 
@@ -2431,6 +2499,15 @@ export default function Dashboard() {
 
           {isInternal ? (
             <div className="space-y-5">
+              {(isCSRRole || activeLensPreset.id === 'csr') && (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <OpsStatCard label="Awaiting customer" value={csrFocusStats.awaitingCustomer} tone="warning" helper="Art or customer response needed" icon={<MessageSquare size={16} />} />
+                  <OpsStatCard label="Proof touches" value={csrFocusStats.proofsLive} tone="neutral" helper="Proof live, revision, or release state" icon={<FileText size={16} />} />
+                  <OpsStatCard label="Approved, waiting release" value={csrFocusStats.proofApprovedWaitingRelease} tone="success" helper="Signed off but not fully released" icon={<CheckCircle2 size={16} />} />
+                  <OpsStatCard label="CSR review needed" value={csrFocusStats.csrReviewNeeded} tone="muted" helper="Still needs internal quote/CSR follow-up" icon={<User size={16} />} />
+                </div>
+              )}
+
               <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                   <div>
@@ -2598,7 +2675,7 @@ export default function Dashboard() {
                 </div>
               ) : shopFloorView === 'board' ? (
                 <ShopFloorBoard
-                  columns={boardViewColumns}
+                  columns={csrBoardColumns}
                   boardStats={boardStats}
                   ownerLoadRows={ownerLoadRows}
                   staffLookup={staffLookup}
@@ -2611,6 +2688,7 @@ export default function Dashboard() {
                   readOnly={!isProductionRole}
                   showOwnerLoad={isProductionRole}
                   enableReassignmentPanel={isProductionRole}
+                  lensId={activeLensPreset.id}
                 />
               ) : (
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-[400px]">
