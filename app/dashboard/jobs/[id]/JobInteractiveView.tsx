@@ -13,6 +13,7 @@ import CustomerPortalShell from '@/components/CustomerPortalShell';
 import { sendProofNotification } from '../../../server-actions'; 
 import { normalizePortalVisibility } from '@/lib/customerJobs';
 import { getJobFollowUpState } from '@/lib/jobFollowUp';
+import { getProofApprovalRollup } from '@/lib/proofApproval';
 
 // --- HELPER COMPONENT: ADD ITEM FORM ---
 function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel: () => void }) {
@@ -1352,6 +1353,7 @@ export default function JobInteractiveView({
   const latestInternalProof = hiddenDraftProofs[0];
   const latestPortalProofScope = latestPortalProof?.job_item_id ? items.find((item: any) => item.id === latestPortalProof.job_item_id)?.description : null;
   const latestPortalProofLabel = latestPortalProofScope || 'Job-wide proof';
+  const proofRollup = getProofApprovalRollup({ items, assets, jobStatus: job.status });
   const followUpState = getJobFollowUpState({
     ...job,
     follow_up_note: followUpNote || job.follow_up_note,
@@ -1389,14 +1391,20 @@ export default function JobInteractiveView({
   const proofWorkflowCards = [
     {
       key: 'proof-state',
-      label: 'Proof on file',
-      value: latestPortalProof ? (latestPortalProof.status === 'approved' ? 'Approved proof live' : 'Live proof waiting') : latestInternalProof ? 'Internal proof only' : 'No proof yet',
-      detail: latestPortalProof
-        ? `${latestPortalProof.file_name || 'Latest proof'} • ${latestPortalProofLabel}`
-        : latestInternalProof
-          ? `${latestInternalProof.file_name || 'Draft proof'} is still internal-only`
-          : 'CSR still needs a customer-safe proof before review can start.',
-      tone: latestPortalProof ? (latestPortalProof.status === 'approved' ? 'green' : 'purple') : latestInternalProof ? 'amber' : 'gray',
+      label: proofRollup.hasItemScopedProofs ? 'Approval rollup' : 'Proof on file',
+      value: proofRollup.hasItemScopedProofs
+        ? proofRollup.internalStatus.label
+        : latestPortalProof ? (latestPortalProof.status === 'approved' ? 'Approved proof live' : 'Live proof waiting') : latestInternalProof ? 'Internal proof only' : 'No proof yet',
+      detail: proofRollup.hasItemScopedProofs
+        ? proofRollup.internalStatus.detail
+        : latestPortalProof
+          ? `${latestPortalProof.file_name || 'Latest proof'} • ${latestPortalProofLabel}`
+          : latestInternalProof
+            ? `${latestInternalProof.file_name || 'Draft proof'} is still internal-only`
+            : 'CSR still needs a customer-safe proof before review can start.',
+      tone: proofRollup.hasItemScopedProofs
+        ? proofRollup.internalStatus.tone
+        : latestPortalProof ? (latestPortalProof.status === 'approved' ? 'green' : 'purple') : latestInternalProof ? 'amber' : 'gray',
     },
     {
       key: 'shareable',
@@ -1792,8 +1800,23 @@ export default function JobInteractiveView({
               </div>
               <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-black text-gray-600">{items.length} items</span>
             </div>
+            {proofRollup.hasItemScopedProofs ? (
+              <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+                <span className="font-semibold text-gray-900">Approval rollup:</span> {proofRollup.portalStatus.label}. {proofRollup.portalStatus.detail}
+              </div>
+            ) : null}
             <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {items.length === 0 ? <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-sm text-gray-400 md:col-span-2 xl:col-span-3">No line items added yet.</div> : items.map((item) => (
+              {items.length === 0 ? <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-sm text-gray-400 md:col-span-2 xl:col-span-3">No line items added yet.</div> : items.map((item) => {
+                const itemProofAssets = portalSharedAssets.filter((asset: any) => asset.job_item_id === item.id && asset.asset_type === 'proof');
+                const itemApprovedProof = itemProofAssets.find((asset: any) => asset.status === 'approved');
+                const itemPendingProof = itemProofAssets.find((asset: any) => asset.status === 'pending');
+                const itemProofChip = itemApprovedProof ? 'Approved proof' : itemPendingProof ? 'Proof waiting' : null;
+                const itemProofChipClass = itemApprovedProof
+                  ? 'border-green-200 bg-green-50 text-green-700'
+                  : itemPendingProof
+                    ? 'border-blue-200 bg-blue-50 text-blue-700'
+                    : '';
+                return (
                 <div key={item.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -1805,9 +1828,10 @@ export default function JobInteractiveView({
                   <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-gray-500">
                     {item.size ? <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1">{item.size}</span> : null}
                     {item.paper_stock ? <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1">{item.paper_stock}</span> : null}
+                    {itemProofChip ? <span className={`rounded-full border px-2.5 py-1 font-semibold ${itemProofChipClass}`}>{itemProofChip}</span> : null}
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
           </section>
 

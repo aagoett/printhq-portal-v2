@@ -4,6 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
 import { CheckCircle, XCircle, Download, FileImage, FileText, Clock, Printer, Mail, MessageSquare, Send, AlertTriangle, Palette, UploadCloud, Eye } from 'lucide-react';
 import { normalizePortalVisibility } from '@/lib/customerJobs';
+import { getProofApprovalRollup } from '@/lib/proofApproval';
 
 export default function PublicJobProofPage({ params }: { params: { id: string } }) {
   const [job, setJob] = useState<any>(null);
@@ -285,8 +286,8 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   const customerActionNote = job.customer_action_note;
   const pendingItemProofs = items.filter((item: any) => itemScopedAssets.some((a) => a.job_item_id === item.id && a.status === 'pending'));
   const approvedItemProofs = items.filter((item: any) => itemScopedAssets.some((a) => a.job_item_id === item.id && a.status === 'approved'));
-  const uniqueItemProofs = new Set(itemScopedAssets.map((a) => a.job_item_id)).size;
-  const hasItemScopedProofs = uniqueItemProofs > 0;
+  const proofRollup = getProofApprovalRollup({ items, assets, jobStatus: job.status });
+  const hasItemScopedProofs = proofRollup.hasItemScopedProofs;
 
   const customerAction = (() => {
     if (!customerActionType || !customerActionRequired) return { required: false };
@@ -319,12 +320,14 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     {
       label: 'Proof status',
       value: hasItemScopedProofs
-        ? `${approvedItemProofs.length} approved · ${pendingItemProofs.length} waiting`
+        ? proofRollup.portalStatus.label
         : approvedProof ? 'Approved proof on file' : pendingProof ? 'Proof ready for review' : assets.length > 0 ? 'Shared file posted' : 'No proof shared yet',
       detail: hasItemScopedProofs
-        ? `${uniqueItemProofs} item${uniqueItemProofs === 1 ? '' : 's'} have customer-safe proofs. Approve items independently.`
+        ? proofRollup.portalStatus.detail
         : currentProof?.file_name || 'We will post the first customer-safe file here when it is ready.',
-      tone: approvedProof || approvedItemProofs.length > 0 ? 'green' : pendingProof || pendingItemProofs.length > 0 ? 'blue' : assets.length > 0 ? 'gray' : 'gray',
+      tone: hasItemScopedProofs
+        ? proofRollup.portalStatus.tone
+        : approvedProof || approvedItemProofs.length > 0 ? 'green' : pendingProof || pendingItemProofs.length > 0 ? 'blue' : assets.length > 0 ? 'gray' : 'gray',
     },
     {
       label: 'What you can see',
@@ -361,9 +364,15 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
           }
         : pendingProof
           ? {
-              label: 'Customer action required',
-              description: hasItemScopedProofs ? 'Item proofs are live now. Approve each item or request targeted changes.' : 'A proof is live now. Review it carefully, then approve for print or request changes from this page.',
-              className: 'bg-blue-50 border-blue-200 text-blue-800',
+              label: hasItemScopedProofs ? proofRollup.portalStatus.label : 'Customer action required',
+              description: hasItemScopedProofs ? proofRollup.portalStatus.detail : 'A proof is live now. Review it carefully, then approve for print or request changes from this page.',
+              className: hasItemScopedProofs
+                ? proofRollup.portalStatus.tone === 'amber'
+                  ? 'bg-amber-50 border-amber-200 text-amber-800'
+                  : proofRollup.portalStatus.tone === 'green'
+                    ? 'bg-green-50 border-green-200 text-green-800'
+                    : 'bg-blue-50 border-blue-200 text-blue-800'
+                : 'bg-blue-50 border-blue-200 text-blue-800',
             }
           : {
               label: 'Portal shell ready',
@@ -470,6 +479,11 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
             </div>
             <span className="rounded-full bg-gray-100 px-3 py-1 text-[11px] font-black uppercase text-gray-600">{items.length} item{items.length === 1 ? '' : 's'}</span>
           </div>
+          {hasItemScopedProofs && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+              <span className="font-semibold text-gray-900">Order approval rollup:</span> {proofRollup.portalStatus.label}. {proofRollup.portalStatus.detail}
+            </div>
+          )}
           <div className="grid gap-3 md:grid-cols-2">
             {items.length === 0 && (
               <div className="col-span-2 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-8 text-center text-sm text-gray-400">
