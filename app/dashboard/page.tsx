@@ -169,6 +169,12 @@ type Job = {
   orders?: { brands?: { name: string } }; 
   order_id?: string; 
   job_items?: any[];
+  portal_visibility?: string;
+  portal_shared_at?: string | null;
+  customer_action_required?: boolean;
+  customer_action_type?: string | null;
+  customer_action_note?: string | null;
+  updated_at?: string;
 };
 
 type Profile = {
