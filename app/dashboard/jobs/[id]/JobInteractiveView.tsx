@@ -366,6 +366,7 @@ export default function JobInteractiveView({
   const [isSaving, setIsSaving] = useState(false);
 
   const [shareProofToPortal, setShareProofToPortal] = useState(true);
+  const [selectedDraftProofId, setSelectedDraftProofId] = useState<string>('');
   const [messageInternal, setMessageInternal] = useState(false);
   const [portalActionLoading, setPortalActionLoading] = useState(false);
   const [customerActionNote, setCustomerActionNote] = useState(initialJob.customer_action_note || '');
@@ -417,6 +418,7 @@ export default function JobInteractiveView({
         const approved = assets.find((a: any) => a.status === 'approved');
         const latestProof = assets.find((a: any) => a.asset_type === 'proof' && a.status !== 'archived');
         loadPreview(approved || latestProof || assets[0]);
+        syncPortalStateFromAssets(assets);
     }
     
     // NEW: Fetch Workflow Settings on Load
@@ -453,7 +455,10 @@ export default function JobInteractiveView({
 
   const refreshAssets = async () => {
     const { data } = await supabase.from('job_assets').select('*, profiles(email)').eq('job_id', jobId).order('created_at', { ascending: false });
-    if (data) setAssets(data);
+    if (data) {
+      setAssets(data);
+      await syncPortalStateFromAssets(data);
+    }
   };
 
   const refreshLogs = async () => {
@@ -601,9 +606,47 @@ export default function JobInteractiveView({
     if (!makeVisible) {
       const remainingShared = assets.some((a: any) => a.id !== assetId && a.asset_type === 'proof' && a.status !== 'archived' && a.portal_visible !== false);
       if (!remainingShared && normalizePortalVisibility(job.portal_visibility) === 'proof_live') {
-        setJob((prev: any) => ({ ...prev, portal_visibility: 'shell' }));
-        await supabase.from('jobs').update({ portal_visibility: 'shell' }).eq('id', jobId);
+        setJob((prev: any) => ({ ...prev, portal_visibility: 'shell', customer_action_required: false, customer_action_type: null }));
+        await supabase.from('jobs').update({ portal_visibility: 'shell', customer_action_required: false, customer_action_type: null, customer_action_note: null }).eq('id', jobId);
       }
+    }
+    await refreshAssets();
+  };
+
+  const syncPortalStateFromAssets = async (assetList?: any[]) => {
+    const list = assetList || assets;
+    const portalProofs = list.filter((asset: any) => asset.asset_type === 'proof' && asset.status !== 'archived' && asset.portal_visible !== false);
+    const pendingPortalProof = portalProofs.find((asset: any) => asset.status === 'pending');
+    const hasPortalProof = portalProofs.length > 0;
+
+    const updates: any = {};
+    const normalizedVisibility = normalizePortalVisibility(job.portal_visibility);
+
+    if (hasPortalProof && normalizedVisibility === 'internal') {
+      updates.portal_visibility = 'proof_live';
+      updates.portal_shared_at = new Date().toISOString();
+      updates.portal_shared_by = user.id;
+    }
+
+    if (!hasPortalProof && normalizedVisibility === 'proof_live') {
+      updates.portal_visibility = 'shell';
+    }
+
+    if (pendingPortalProof) {
+      if (!job.customer_action_required || job.customer_action_type !== 'approve_proof') {
+        updates.customer_action_required = true;
+        updates.customer_action_type = 'approve_proof';
+        updates.customer_action_note = job.customer_action_note || 'Review and approve the latest proof.';
+      }
+    } else if (job.customer_action_type === 'approve_proof' && job.customer_action_required) {
+      updates.customer_action_required = false;
+      updates.customer_action_type = null;
+      updates.customer_action_note = null;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      setJob((prev: any) => ({ ...prev, ...updates }));
+      await supabase.from('jobs').update(updates).eq('id', jobId);
     }
   };
 
@@ -920,6 +963,7 @@ export default function JobInteractiveView({
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setUploadFile(e.target.files[0]);
+      setSelectedDraftProofId('');
     }
   };
 
@@ -929,58 +973,123 @@ export default function JobInteractiveView({
     setShareProofToPortal(true);
     setUploadFile(null);
     setUploadMessage('');
+    setSelectedDraftProofId('');
     setShowUploadModal(true);
   };
 
   const handleSubmitProof = async () => {
-      if (!isStaff) return;
-      if (!uploadFile || !user) return;
+      if (!isStaff || !user) return;
+      if (!uploadFile && !selectedDraftProofId) {
+        alert('Upload a proof file or pick an existing draft to share.');
+        return;
+      }
+
       setIsUploading(true);
-      const fileName = `${jobId}-proof-${Math.random().toString(36).substring(7)}${proofItemId ? `-item-${proofItemId.substring(0,4)}` : ''}.${uploadFile.name.split('.').pop()}`;
-      const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
-      if (error) { alert(error.message); setIsUploading(false); return; }
+      try {
+        let sharedAsset: any = null;
 
-      const updateQuery = supabase.from('job_assets')
-        .update({ status: 'archived' })
-        .eq('job_id', jobId)
-        .eq('asset_type', 'proof')
-        .eq('status', 'pending');
-      if (proofItemId) {
-          updateQuery.eq('job_item_id', proofItemId);
-      } else {
-          updateQuery.is('job_item_id', null);
+        if (uploadFile) {
+          const fileName = `${jobId}-proof-${Math.random().toString(36).substring(7)}${proofItemId ? `-item-${proofItemId.substring(0,4)}` : ''}.${uploadFile.name.split('.').pop()}`;
+          const { data, error } = await supabase.storage.from('uploads').upload(fileName, uploadFile);
+          if (error) throw error;
+
+          const updateQuery = supabase.from('job_assets')
+            .update({ status: 'archived', portal_visible: false })
+            .eq('job_id', jobId)
+            .eq('asset_type', 'proof')
+            .eq('status', 'pending');
+          if (proofItemId) {
+              updateQuery.eq('job_item_id', proofItemId);
+          } else {
+              updateQuery.is('job_item_id', null);
+          }
+          await updateQuery;
+
+          const { data: newAsset, error: insertError } = await supabase.from('job_assets').insert({
+              job_id: jobId, 
+              job_item_id: proofItemId || null,
+              uploader_id: user.id, 
+              file_url: data?.path, 
+              file_name: uploadFile.name, 
+              asset_type: 'proof', 
+              status: 'pending',
+              portal_visible: shareProofToPortal,
+              portal_shared_at: shareProofToPortal ? new Date().toISOString() : null,
+          }).select().single();
+          if (insertError) throw insertError;
+          sharedAsset = newAsset;
+        } else if (selectedDraftProofId) {
+          const { data: draftAsset, error: draftError } = await supabase.from('job_assets').update({
+            portal_visible: shareProofToPortal,
+            portal_shared_at: shareProofToPortal ? new Date().toISOString() : null,
+            status: 'pending',
+          }).eq('id', selectedDraftProofId).select().single();
+          if (draftError) throw draftError;
+          sharedAsset = draftAsset;
+
+          const archiveQuery = supabase.from('job_assets')
+            .update({ status: 'archived', portal_visible: false })
+            .eq('job_id', jobId)
+            .eq('asset_type', 'proof')
+            .eq('status', 'pending')
+            .neq('id', selectedDraftProofId);
+          if (draftAsset?.job_item_id) {
+            archiveQuery.eq('job_item_id', draftAsset.job_item_id);
+          } else {
+            archiveQuery.is('job_item_id', null);
+          }
+          await archiveQuery;
+        }
+
+        if (!sharedAsset) throw new Error('No proof asset available after upload/share.');
+
+        const itemDesc = sharedAsset.job_item_id ? items.find(i => i.id === sharedAsset.job_item_id)?.description : 'Main Job';
+        const proofMessage = uploadMessage || 'Review and approve the latest proof.';
+
+        await supabase.from('messages').insert({
+          job_id: jobId,
+          user_id: user.id,
+          content: `[Proof Shared] ${proofMessage}${itemDesc ? ` • ${itemDesc}` : ''}`,
+          is_customer_visible: shareProofToPortal,
+        });
+
+        const jobUpdates: any = {};
+        if (shareProofToPortal) {
+          jobUpdates.portal_visibility = 'proof_live';
+          jobUpdates.portal_shared_at = new Date().toISOString();
+          jobUpdates.portal_shared_by = user.id;
+          jobUpdates.customer_action_required = true;
+          jobUpdates.customer_action_type = 'approve_proof';
+          jobUpdates.customer_action_note = proofMessage;
+          const statusString = (job.status || '').toLowerCase();
+          if (!job.status || job.status === 'Changes Requested' || !statusString.includes('proof')) {
+            jobUpdates.status = 'Proof Sent - Awaiting Approval';
+          }
+        }
+
+        if (Object.keys(jobUpdates).length > 0) {
+          await supabase.from('jobs').update(jobUpdates).eq('id', jobId);
+          setJob((prev: any) => ({ ...prev, ...jobUpdates }));
+        }
+
+        await logActivity('Proof shared', `${proofMessage}${shareProofToPortal ? ' (customer-visible)' : ' (internal only)'}`, sharedAsset.job_item_id || undefined);
+
+        if (shareProofToPortal) {
+          await sendProofNotification(jobId, sharedAsset.file_url || '', `${proofMessage}${itemDesc ? ` • ${itemDesc}` : ''}`);
+        }
+        if (sharedAsset) { await refreshAssets(); loadPreview(sharedAsset); }
+      } catch (err: any) {
+        console.error(err);
+        alert(err?.message || 'Unable to share proof.');
+      } finally {
+        setIsUploading(false);
+        setShowUploadModal(false);
+        setUploadFile(null);
+        setUploadMessage('');
+        setProofItemId(undefined);
+        setShareProofToPortal(true);
+        setSelectedDraftProofId('');
       }
-      await updateQuery;
-
-      const { data: newAsset } = await supabase.from('job_assets').insert({
-          job_id: jobId, 
-          job_item_id: proofItemId || null,
-          uploader_id: user.id, 
-          file_url: data?.path, 
-          file_name: uploadFile.name, 
-          asset_type: 'proof', 
-          status: 'pending',
-          portal_visible: shareProofToPortal,
-          portal_shared_at: shareProofToPortal ? new Date().toISOString() : null,
-      }).select().single();
-
-      const itemDesc = proofItemId ? items.find(i => i.id === proofItemId)?.description : 'Main Job';
-      const proofMessage = uploadMessage || 'New proof posted';
-      await supabase.from('messages').insert({
-        job_id: jobId,
-        user_id: user.id,
-        content: `[Proof Shared] ${proofMessage}${itemDesc ? ` • ${itemDesc}` : ''}`,
-        is_customer_visible: shareProofToPortal,
-      });
-      await logActivity('Proof shared', `${proofMessage}${shareProofToPortal ? ' (customer-visible)' : ' (internal only)'}`, proofItemId);
-
-      if (shareProofToPortal) {
-        await updatePortalVisibility('proof_live');
-        await setCustomerAction('approve_proof', uploadMessage || 'Review and approve the latest proof.');
-        await sendProofNotification(jobId, data?.path || '', `${uploadMessage || 'Review the latest proof'} (Item: ${itemDesc})`);
-      }
-      if (newAsset) { await refreshAssets(); loadPreview(newAsset); }
-      setIsUploading(false); setShowUploadModal(false); setUploadFile(null); setUploadMessage(''); setProofItemId(undefined); setShareProofToPortal(true);
   };
   const handleApproveProof = async (assetId: string) => {
       if (!confirm("Mark APPROVED?")) return;
@@ -1171,6 +1280,22 @@ export default function JobInteractiveView({
   const nextPromisedFollowUp = followUpMatch
     ? followUpMatch.replace(/^(follow[ -]?up|next move|next step|promise|promised)\s*:/i, '').trim()
     : handoffLines[0] || '';
+
+  const customerVisibleMessages = (messages || []).filter((m: any) => m.is_customer_visible !== false);
+  const customerTouchEvents = [
+    ...portalSharedAssets.map((asset: any) => ({
+      occurredAt: asset.portal_shared_at || asset.created_at,
+      label: asset.status === 'approved' ? 'Approved proof shared' : 'Proof shared',
+    })),
+    ...customerVisibleMessages.map((msg: any) => ({
+      occurredAt: msg.created_at,
+      label: msg.user_id === user?.id ? 'PrintHQ replied' : 'Customer replied',
+    })),
+  ].filter((e: any) => !!e.occurredAt);
+  const lastCustomerTouch = customerTouchEvents.sort((a: any, b: any) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())[0];
+  const lastTouchValue = lastCustomerTouch ? new Date(lastCustomerTouch.occurredAt).toLocaleString() : 'No customer touch yet';
+  const lastTouchDetail = lastCustomerTouch ? lastCustomerTouch.label : 'Share a proof or post a portal-visible reply to start the thread.';
+
   const proofWorkflowCards = [
     {
       key: 'proof-state',
@@ -1200,6 +1325,13 @@ export default function JobInteractiveView({
       value: customerAction.required ? customerAction.label : 'No action open',
       detail: customerAction.required ? customerAction.description : portalNextAction,
       tone: customerAction.required ? (customerAction.tone === 'orange' ? 'orange' : customerAction.tone === 'blue' ? 'purple' : 'amber') : 'green',
+    },
+    {
+      key: 'last-touch',
+      label: 'Last customer-visible touch',
+      value: lastTouchValue,
+      detail: lastTouchDetail,
+      tone: lastCustomerTouch ? 'blue' : 'red',
     },
     {
       key: 'follow-up',
@@ -1683,7 +1815,26 @@ export default function JobInteractiveView({
                         <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
                         <UploadCloud className={`mx-auto h-10 w-10 mb-2 ${uploadFile ? 'text-green-600' : 'text-gray-400'}`} />
                         {uploadFile ? <p className="font-bold text-green-700 text-sm truncate">{uploadFile.name}</p> : <p className="text-sm font-bold text-gray-600">Click to Select File</p>}
+                        <p className="mt-1 text-[11px] text-gray-500">Upload a new PDF/JPG here, or pick a stored draft below.</p>
                     </div>
+                    {hiddenDraftProofs.length > 0 && (
+                      <div>
+                        <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Or share an existing draft</label>
+                        <select
+                          value={selectedDraftProofId}
+                          onChange={(e) => setSelectedDraftProofId(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg p-2 text-sm bg-white"
+                        >
+                          <option value="">-- Keep using the uploaded file --</option>
+                          {hiddenDraftProofs.map((draft) => (
+                            <option key={draft.id} value={draft.id}>
+                              {draft.file_name} • {new Date(draft.created_at).toLocaleDateString()}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-[11px] text-gray-500">Selecting a draft flips it to portal-visible and archives other pending proofs for this scope.</p>
+                      </div>
+                    )}
                     <div>
                         <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Message to Customer</label>
                         <textarea value={uploadMessage} onChange={(e) => setUploadMessage(e.target.value)} placeholder="e.g. Please review version 2 for copy and phone number placement." className="w-full border border-gray-300 rounded-lg p-3 text-sm h-20 resize-none"/>
@@ -1699,7 +1850,7 @@ export default function JobInteractiveView({
                             {items.map(i => <option key={i.id} value={i.id}>{i.description} ({i.size})</option>)}
                         </select>
                     </div>
-                    <button onClick={handleSubmitProof} disabled={!uploadFile || isUploading} className={`w-full py-3 rounded-xl font-bold text-white transition-all ${!uploadFile || isUploading ? 'bg-gray-300' : 'bg-black hover:bg-gray-800'}`}>
+                    <button onClick={handleSubmitProof} disabled={(!uploadFile && !selectedDraftProofId) || isUploading} className={`w-full py-3 rounded-xl font-bold text-white transition-all ${(!uploadFile && !selectedDraftProofId) || isUploading ? 'bg-gray-300' : 'bg-black hover:bg-gray-800'}`}>
                         {isUploading ? 'Sharing...' : 'Share Proof to Portal'}
                     </button>
                 </div>
@@ -1816,7 +1967,7 @@ export default function JobInteractiveView({
               </div>
               <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700">Portal {portalState.label}</span>
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               {proofWorkflowCards.map((card) => (
                 <div
                   key={card.key}

@@ -58,6 +58,7 @@ export async function sendProofNotification(jobId: string, fileUrl: string, cust
   }
 
   try {
+    const portalLink = `${process.env.NEXT_PUBLIC_SITE_URL}/portal/jobs/${jobId}`;
     const data = await getResend().emails.send({
       from: 'PrintHQ Proofs <proofs@gocmyk.com>',
       to: targetEmail,
@@ -77,7 +78,7 @@ export async function sendProofNotification(jobId: string, fileUrl: string, cust
 
           <p><strong>Job:</strong> ${job.title}</p>
           <br/>
-          <a href="${process.env.NEXT_PUBLIC_SITE_URL}/jobs/${jobId}" style="background: #000; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Review & Approve</a>
+          <a href="${portalLink}" style="background: #000; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Review & Approve</a>
         </div>
       `
     });
