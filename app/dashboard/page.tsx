@@ -3006,7 +3006,8 @@ export default function Dashboard() {
                             const nextMove = getCsrNextMove(job);
                             const itemCount = Array.isArray(job.job_items) ? job.job_items.length : 0;
                             return (
-                              <tr key={job.id} className="align-top transition-colors hover:bg-gray-50/80">
+                              <React.Fragment key={job.id}>
+                              <tr className="align-top transition-colors hover:bg-gray-50/80">
                                 <td className="px-6 py-4 whitespace-nowrap">
                                   <div className="space-y-1">
                                     <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400">In {formatDate(job.created_at)}</div>
@@ -3059,6 +3060,35 @@ export default function Dashboard() {
                                   </div>
                                 </td>
                               </tr>
+                              {job.job_items && job.job_items.length > 0 && job.job_items.map((item: any) => {
+                                const matchesLens = normalizeLensLabel(item.status) === normalizedActiveLens;
+                                return (
+                                  <tr key={item.id} className={`border-b border-gray-100/50 transition-colors ${matchesLens ? 'bg-yellow-400/10' : 'bg-gray-50/40'}`}>
+                                    <td className="px-6 py-2"></td>
+                                    <td className="px-6 py-2"></td>
+                                    <td className="px-6 py-2">
+                                      <div className={`flex items-center gap-3 pl-4 border-l-2 ${matchesLens ? 'border-yellow-400' : 'border-blue-100'}`}>
+                                        <button onClick={() => handleOpenItemDrawer(item.id)} className="flex flex-col text-left hover:opacity-75 transition-opacity">
+                                          <span className={`text-[11px] font-black uppercase tracking-tight ${matchesLens ? 'text-yellow-900' : 'text-gray-700'}`}>{item.description}</span>
+                                          <span className="text-[9px] text-gray-400 font-bold uppercase">{item.quantity?.toLocaleString()} units</span>
+                                        </button>
+                                      </div>
+                                    </td>
+                                    <td className="px-6 py-2">
+                                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' : matchesLens ? 'bg-yellow-400 text-yellow-900 border-yellow-500 shadow-sm' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>{item.status || 'Pending'}</span>
+                                    </td>
+                                    <td className="px-6 py-2">
+                                      <div className="text-xs text-gray-500 truncate max-w-[160px]" title={item.paper_stock || ''}>{item.paper_stock || 'No stock set'}</div>
+                                    </td>
+                                    <td className="px-6 py-2 text-right">
+                                      <button onClick={() => handleOpenItemDrawer(item.id)} className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] font-bold text-gray-700 hover:border-black">
+                                        <ExternalLink size={12} /> Open
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                              </React.Fragment>
                             );
                           })}
                         </tbody>
@@ -3122,19 +3152,28 @@ export default function Dashboard() {
                               </div>
                             </td>
                           </tr>
-                          {job.job_items && job.job_items.length > 0 && job.job_items.filter((item: any) => { if (activeTab === 'All' || activeTab === 'My Queue') return true; return item.status === activeTab; }).map((item: any) => {
-                            const isDeptMatch = activeTab !== 'All' && activeTab !== 'My Queue' && item.status === activeTab;
-                            return (
-                            <tr key={item.id} className={`border-b border-gray-100/50 transition-colors ${isDeptMatch ? 'bg-yellow-400/10' : 'bg-gray-50/30'}`}>
-                              <td className="px-6 py-2"></td><td className="px-6 py-2"></td>
-                              <td className="px-6 py-2"><div className={`flex items-center gap-3 pl-4 border-l-2 ${isDeptMatch ? 'border-yellow-400' : 'border-blue-100'}`}><button onClick={() => handleOpenItemDrawer(item.id)} className="flex flex-col text-left hover:opacity-75 transition-opacity"><span className={`text-[11px] font-black uppercase tracking-tight ${isDeptMatch ? 'text-yellow-900' : 'text-gray-700'}`}>{item.description}</span><span className="text-[9px] text-gray-400 font-bold uppercase">{item.quantity?.toLocaleString()} units</span></button></div></td>
-                              <td className="px-6 py-2"><span className="text-xs text-gray-500">{item.size || 'N/A'}</span></td>
-                              <td className="px-6 py-2"><div className="text-[10px] text-gray-400 truncate max-w-[120px]" title={item.paper_stock}>{item.paper_stock || 'N/A'}</div></td>
-                              <td className="px-6 py-2"><div className="flex items-center gap-2"><span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' : isDeptMatch ? 'bg-yellow-400 text-yellow-900 border-yellow-500 shadow-sm' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>{item.status || 'Pending'}</span>{isDeptMatch && (<button onClick={() => handleCompleteItemStep(item, activeTab)} className="bg-green-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-sm hover:bg-green-700 transition-colors uppercase">Mark Done</button>)}</div></td>
-                              <td className="px-6 py-2"></td>
-                              <td className="px-6 py-2"><div className="flex justify-end"><button onClick={() => handleOpenItemDrawer(item.id)} className="text-gray-300 hover:text-black"><ExternalLink size={14} /></button></div></td>
-                            </tr>
-                          );})}
+                          {job.job_items && job.job_items.length > 0 && (() => {
+                            const visibleItems = (job.job_items || []).filter((item: any) => {
+                              if (activeTab === 'All' || activeTab === 'My Queue') return true;
+                              if (isCSRDesk) return true; // Keep items visible in CSR lens regardless of item status
+                              return normalizeLensLabel(item.status) === normalizedActiveLens;
+                            });
+
+                            return visibleItems.map((item: any) => {
+                              const isDeptMatch = activeTab !== 'All' && activeTab !== 'My Queue' && normalizeLensLabel(item.status) === normalizedActiveLens;
+                              return (
+                              <tr key={item.id} className={`border-b border-gray-100/50 transition-colors ${isDeptMatch ? 'bg-yellow-400/10' : 'bg-gray-50/30'}`}>
+                                <td className="px-6 py-2"></td><td className="px-6 py-2"></td>
+                                <td className="px-6 py-2"><div className={`flex items-center gap-3 pl-4 border-l-2 ${isDeptMatch ? 'border-yellow-400' : 'border-blue-100'}`}><button onClick={() => handleOpenItemDrawer(item.id)} className="flex flex-col text-left hover:opacity-75 transition-opacity"><span className={`text-[11px] font-black uppercase tracking-tight ${isDeptMatch ? 'text-yellow-900' : 'text-gray-700'}`}>{item.description}</span><span className="text-[9px] text-gray-400 font-bold uppercase">{item.quantity?.toLocaleString()} units</span></button></div></td>
+                                <td className="px-6 py-2"><span className="text-xs text-gray-500">{item.size || 'N/A'}</span></td>
+                                <td className="px-6 py-2"><div className="text-[10px] text-gray-400 truncate max-w-[120px]" title={item.paper_stock}>{item.paper_stock || 'N/A'}</div></td>
+                                <td className="px-6 py-2"><div className="flex items-center gap-2"><span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' : isDeptMatch ? 'bg-yellow-400 text-yellow-900 border-yellow-500 shadow-sm' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>{item.status || 'Pending'}</span>{isDeptMatch && (<button onClick={() => handleCompleteItemStep(item, activeTab)} className="bg-green-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-sm hover:bg-green-700 transition-colors uppercase">Mark Done</button>)}</div></td>
+                                <td className="px-6 py-2"></td>
+                                <td className="px-6 py-2"><div className="flex justify-end"><button onClick={() => handleOpenItemDrawer(item.id)} className="text-gray-300 hover:text-black"><ExternalLink size={14} /></button></div></td>
+                              </tr>
+                            );
+                            });
+                          })()}
                           </React.Fragment>
                           );
                         })}
