@@ -56,6 +56,26 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
+  const internalPaths = ['/dashboard/settings', '/dashboard/pricing', '/dashboard/customers', '/dashboard/intake', '/dashboard/invoices', '/dashboard/mission-control']
+  const isInternalPath = internalPaths.some((path) => request.nextUrl.pathname.startsWith(path))
+
+  if (user && isInternalPath) {
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+      const role = profile?.role || 'customer'
+      if (role !== 'admin' && role !== 'staff') {
+        return NextResponse.redirect(new URL('/dashboard', request.url))
+      }
+    } catch (err) {
+      return NextResponse.redirect(new URL('/dashboard', request.url))
+    }
+  }
+
   // 1. If user is NOT logged in and tries to access dashboard, kick them to Login
   if (!user && request.nextUrl.pathname.startsWith('/dashboard')) {
     return NextResponse.redirect(new URL('/login', request.url))

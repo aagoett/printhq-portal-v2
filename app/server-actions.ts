@@ -4,7 +4,11 @@ import { createClient } from '../utils/supabase/server';
 import { Resend } from 'resend';
 
 // 1. Initialize Clients
-const resend = new Resend(process.env.RESEND_API_KEY);
+const getResend = () => {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) throw new Error('Missing RESEND_API_KEY');
+  return new Resend(key);
+};
 const supabase = createClient();
 
 // --- TOOL 1: SEND ORDER CONFIRMATION ---
@@ -15,7 +19,7 @@ export async function sendOrderConfirmation(email: string, orderId: string, summ
     // For now, let's point them to the general tracking page if they have a job ID, or just the homepage.
     const link = `${process.env.NEXT_PUBLIC_SITE_URL}`;
 
-    await resend.emails.send({
+    await getResend().emails.send({
       from: 'PrintHQ Orders <orders@gocmyk.com>',
       to: email,
       subject: `Order Confirmation #${orderId.substring(0,8).toUpperCase()}`,
@@ -54,7 +58,8 @@ export async function sendProofNotification(jobId: string, fileUrl: string, cust
   }
 
   try {
-    const data = await resend.emails.send({
+    const portalLink = `${process.env.NEXT_PUBLIC_SITE_URL}/portal/jobs/${jobId}`;
+    const data = await getResend().emails.send({
       from: 'PrintHQ Proofs <proofs@gocmyk.com>',
       to: targetEmail,
       subject: `Action Required: Proof Ready for ${job.title}`,
@@ -73,7 +78,7 @@ export async function sendProofNotification(jobId: string, fileUrl: string, cust
 
           <p><strong>Job:</strong> ${job.title}</p>
           <br/>
-          <a href="${process.env.NEXT_PUBLIC_SITE_URL}/jobs/${jobId}" style="background: #000; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Review & Approve</a>
+          <a href="${portalLink}" style="background: #000; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Review & Approve</a>
         </div>
       `
     });

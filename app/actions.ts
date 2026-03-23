@@ -4,7 +4,11 @@ import { createClient } from '../utils/supabase/server';
 import { Resend } from 'resend';
 
 // 1. Initialize Clients
-const resend = new Resend(process.env.RESEND_API_KEY);
+const getResend = () => {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) throw new Error('Missing RESEND_API_KEY');
+  return new Resend(key);
+};
 const supabase = createClient();
 
 // --- TOOL 1: SEND ORDER CONFIRMATION ---
@@ -12,7 +16,7 @@ export async function sendOrderConfirmation(email: string, orderId: string, summ
   try {
     const link = `${process.env.NEXT_PUBLIC_SITE_URL}`;
 
-    await resend.emails.send({
+    await getResend().emails.send({
       from: 'PrintHQ Orders <orders@gocmyk.com>',
       to: email,
       subject: `Order Confirmation #${orderId.substring(0,8).toUpperCase()}`,
@@ -49,7 +53,7 @@ export async function sendProofNotification(jobId: string, fileUrl: string, cust
   }
 
   try {
-    const data = await resend.emails.send({
+    const data = await getResend().emails.send({
       from: 'PrintHQ Proofs <proofs@gocmyk.com>',
       to: targetEmail,
       subject: `Action Required: Proof Ready for ${job.title}`,
@@ -120,7 +124,8 @@ export async function convertQuoteToJob(quoteId: string) {
           `Production Method: ${quote.production_method}`,
           `Estimated Cost: $${quote.total_cost?.toFixed(2)}`,
           `Client Price: $${quote.total_price?.toFixed(2)}`,
-        ].join('\n'),
+          quote.cost_breakdown?.product ? `Product: ${(quote.cost_breakdown?.product?.customLabel || quote.cost_breakdown?.product?.label || 'Product')} ${quote.cost_breakdown?.product?.sizeLabel || ''}${quote.cost_breakdown?.product?.pageCount ? ` • ${quote.cost_breakdown?.product?.pageCount} pages` : ''}` : null,
+        ].filter(Boolean).join('\n'),
       })
       .select()
       .single();
@@ -259,6 +264,97 @@ export async function getInvoice(id: string) {
     return { success: true, invoice };
   } catch (error: any) {
     console.error('Fetch invoice failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+// --- TOOL 5: CREATE JOB FROM CSR CHAT SPEC ---
+export async function createJobFromSpec(payload: {
+  spec: any;
+  customerId?: string | null;
+  brandId?: string | null;
+  transcript?: string;
+  proposal?: any;
+  selectedQuantity?: number;
+  createdBy?: string | null;
+}) {
+  try {
+    const { spec, customerId, brandId, transcript, proposal, selectedQuantity, createdBy } = payload;
+    if (!spec) throw new Error('Spec missing');
+
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .insert({ user_id: customerId || null, status: 'New', brand_id: brandId || null })
+      .select()
+      .single();
+    if (orderError) throw orderError;
+
+    const qty = selectedQuantity || (Array.isArray(spec.quantities) ? spec.quantities[0] : spec.quantity) || 0;
+    const sizeLabel = spec.width && spec.height ? `${spec.width}x${spec.height}${spec.unit ? spec.unit : ''}` : spec.size || '';
+
+    const product = spec.product;
+    const productLabel = product?.customLabel || product?.label;
+    const paperStockLabel = product?.coverStock || product?.insideStock
+      ? `Cover: ${product?.coverStock || product?.insideStock || 'TBD'} / Inside: ${product?.insideStock || product?.coverStock || 'TBD'}`
+      : spec.stock || null;
+    const productNote = product
+      ? `Product: ${productLabel || product?.key || ''} ${product?.sizeLabel || ''}${product?.pageCount ? ` • ${product.pageCount} pages` : ''}${product?.coverStock ? ` • Cover ${product.coverStock}` : ''}${product?.insideStock ? ` • Inside ${product.insideStock}` : ''}`
+      : '';
+
+    const { data: job, error: jobError } = await supabase
+      .from('jobs')
+      .insert({
+        order_id: order.id,
+        user_id: customerId || null,
+        title: spec.title || productLabel || 'CSR Chat Job',
+        quantity: qty,
+        status: 'Pending Review',
+        created_by: createdBy || null,
+        notes: [transcript || spec.notes, productNote].filter(Boolean).join('\n') || null,
+        paper_stock: paperStockLabel,
+        size: sizeLabel,
+      })
+      .select()
+      .single();
+    if (jobError) throw jobError;
+
+    // Create job item
+    const { data: jobItem, error: itemError } = await supabase
+      .from('job_items')
+      .insert({
+        job_id: job.id,
+        description: spec.title || productLabel || 'Print Item',
+        quantity: qty,
+        paper_stock: paperStockLabel,
+        size: sizeLabel,
+        internal_notes: [transcript || spec.notes, productNote].filter(Boolean).join('\n') || null,
+        status: 'Pending',
+      })
+      .select()
+      .single();
+    if (itemError) throw itemError;
+
+    // Add steps if any workflow queues defined
+    const { data: workflow } = await supabase.from('workflow_queues').select('*').order('rank');
+    const steps = (workflow || []).map((w: any) => w.name || w.step_name).filter(Boolean);
+    for (const stepName of steps.length ? steps : ['Prepress']) {
+      await supabase.from('job_item_steps').insert({ job_item_id: jobItem.id, step_name: stepName, status: 'Pending', is_internal: true });
+    }
+
+    // Store message transcript
+    try {
+      await supabase.from('messages').insert({
+        job_id: job.id,
+        user_id: customerId || null,
+        content: JSON.stringify({ transcript, spec, proposal }),
+      });
+    } catch (err) {
+      console.error('Failed to log transcript', err);
+    }
+
+    return { success: true, jobId: job.id };
+  } catch (error: any) {
+    console.error('createJobFromSpec failed', error);
     return { success: false, error: error.message };
   }
 }

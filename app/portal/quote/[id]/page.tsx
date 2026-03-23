@@ -38,6 +38,15 @@ export default function PublicQuotePage({ params }: { params: { id: string } }) 
 
   const isApproved = quote.status === 'Approved' || quote.status === 'Converted';
   const isRejected = quote.status === 'Rejected';
+  const product = quote.cost_breakdown?.product;
+  const productLabel = product?.customLabel || product?.label;
+  const breakdown = quote.cost_breakdown?.breakdown || [];
+  const routes = quote.cost_breakdown?.routes || [];
+  const bestRoute: any = quote.cost_breakdown || {};
+  const worksheet = quote.cost_breakdown?.worksheet;
+  const worksheetLines = worksheet?.lines || breakdown;
+  const worksheetTotals = worksheet?.totals;
+  const routeComparison = routes.slice(0, 3);
 
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4">
@@ -79,8 +88,13 @@ export default function PublicQuotePage({ params }: { params: { id: string } }) 
                         <p className="text-xs text-gray-400 uppercase font-bold mb-1">Project Specs</p>
                         <ul className="text-sm text-gray-700 space-y-1">
                             <li><span className="font-bold">Quantity:</span> {quote.quantity.toLocaleString()}</li>
-                            <li><span className="font-bold">Size:</span> {quote.width} x {quote.height}"</li>
+                            {productLabel && (
+                              <li><span className="font-bold">Product:</span> {productLabel} {product?.sizeLabel ? `(${product.sizeLabel})` : ''}</li>
+                            )}
+                            <li><span className="font-bold">Size:</span> {quote.width} x {quote.height}" {product?.pageCount ? `• ${product.pageCount} pages` : ''}</li>
                             <li><span className="font-bold">Stock:</span> {quote.paper_stock}</li>
+                            {product?.coverStock && <li><span className="font-bold">Cover:</span> {product.coverStock}</li>}
+                            {product?.insideStock && <li><span className="font-bold">Inside:</span> {product.insideStock}</li>}
                             {quote.cost_breakdown?.breakdown?.find((b: any) => b.name === 'Finishing')?.detail !== 'None' && (
                                 <li><span className="font-bold">Finishing:</span> {quote.cost_breakdown?.breakdown?.find((b: any) => b.name === 'Finishing')?.detail}</li>
                             )}
@@ -105,6 +119,64 @@ export default function PublicQuotePage({ params }: { params: { id: string } }) 
                             ${(quote.total_price / quote.quantity).toFixed(3)} per unit
                         </p>
                     </div>
+                </div>
+
+                {/* BREAKDOWN */}
+                <div className="bg-gray-50 border border-gray-100 rounded-lg p-5 space-y-5">
+                  <div>
+                    <p className="text-xs font-bold uppercase text-gray-500 mb-3">How this quote is built</p>
+                    <div className="grid sm:grid-cols-3 gap-3 text-sm">
+                      <div className="p-3 bg-white border rounded-lg">
+                        <p className="text-[11px] font-bold uppercase text-gray-500">Chosen Route</p>
+                        <p className="font-bold text-gray-900">{quote.production_method}</p>
+                        <p className="text-xs text-gray-500 mt-1">Best value for this quantity/spec combo</p>
+                      </div>
+                      <div className="p-3 bg-white border rounded-lg">
+                        <p className="text-[11px] font-bold uppercase text-gray-500">Layout</p>
+                        <p className="font-bold text-gray-900">{bestRoute.nUp || '--'}-up on {bestRoute.usableSheet || bestRoute.sheet || '—'}</p>
+                        <p className="text-xs text-gray-500">Raw sheet: {bestRoute.sheet || '—'}</p>
+                      </div>
+                      <div className="p-3 bg-white border rounded-lg">
+                        <p className="text-[11px] font-bold uppercase text-gray-500">Sheets & Waste</p>
+                        <p className="font-bold text-gray-900">{bestRoute.sheetsNeeded ?? '—'} + {bestRoute.overs ?? '—'} overs = {bestRoute.totalSheets ?? '—'}</p>
+                        <p className="text-xs text-gray-500">Waste allowance already included</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {worksheetLines.length > 0 && (
+                    <div>
+                      <p className="text-[11px] font-bold uppercase text-gray-500 mb-2">Worksheet summary</p>
+                      <div className="grid sm:grid-cols-2 gap-2">
+                        {worksheetLines.map((item: any, idx: number) => (
+                          <div key={idx} className="bg-white border rounded-lg p-3 flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-[11px] font-bold uppercase text-gray-500">{item.label || item.name}</p>
+                              <p className="text-sm text-gray-900">{item.detail || 'Included in route'}</p>
+                            </div>
+                            <div className="text-right text-sm font-mono font-bold text-gray-900">${Number(item.price || 0).toFixed(2)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {routeComparison.length > 1 && (
+                    <div>
+                      <p className="text-[11px] font-bold uppercase text-gray-500 mb-2">Alternative routes considered</p>
+                      <div className="space-y-2">
+                        {routeComparison.map((r: any, idx: number) => (
+                          <div key={idx} className={`flex flex-col sm:flex-row sm:items-center justify-between px-3 py-3 text-sm gap-2 rounded-lg border ${idx === 0 ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
+                            <div>
+                              <div className="font-bold text-gray-900">{r.method} {idx === 0 && <span className="ml-2 text-[10px] font-bold text-green-700">SELECTED</span>}</div>
+                              <div className="text-xs text-gray-600">{r.nUp}-up • {r.usableSheet || r.sheet} • {r.sheetsNeeded}+{r.overs} overs</div>
+                            </div>
+                            <div className="text-right font-mono font-bold text-gray-900">${Number(r.totalPrice || 0).toFixed(2)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* ACTION BUTTONS */}

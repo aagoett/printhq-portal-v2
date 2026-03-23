@@ -2,8 +2,10 @@
 
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
-import { Trash2, DollarSign, Settings, ArrowLeft, Clock, Zap, Maximize, LayoutGrid, Calculator } from 'lucide-react';
+import { Trash2, DollarSign, LayoutGrid, Calculator } from 'lucide-react';
 import Link from 'next/link';
+import InternalPageHeader from '@/components/InternalPageHeader';
+import { coerceDecimal, parseDecimalInput } from '@/utils/number';
 
 export default function PricingBuilderPage() {
   const [categories, setCategories] = useState<any[]>([]);
@@ -24,6 +26,12 @@ export default function PricingBuilderPage() {
   const [sheetW, setSheetW] = useState('');
   const [sheetH, setSheetH] = useState('');
 
+  const asPerSheet = (value: number, unit?: string) => {
+    const val = Number(value || 0);
+    return unit === 'per_1000' ? val / 1000 : val;
+  };
+  const fmtMoney = (value: number) => `$${Number(value || 0).toFixed(value >= 1 ? 2 : 4)}`;
+
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -41,6 +49,16 @@ export default function PricingBuilderPage() {
       else setSelectedType('other');
   }, [activeCatId, categories]);
 
+  const normalizeComponent = (comp: any) => ({
+    ...comp,
+    cost_amount: coerceDecimal(comp.cost_amount) ?? 0,
+    price_amount: coerceDecimal(comp.price_amount) ?? 0,
+    setup_minutes: coerceDecimal((comp as any).setup_minutes),
+    run_speed_per_hour: coerceDecimal((comp as any).run_speed_per_hour),
+    parent_sheet_width: coerceDecimal((comp as any).parent_sheet_width),
+    parent_sheet_height: coerceDecimal((comp as any).parent_sheet_height),
+  });
+
   const fetchData = async () => {
     const { data: cats } = await supabase.from('pricing_categories').select('*').order('sort_order');
     const { data: comps } = await supabase.from('pricing_components').select('*').order('name');
@@ -49,29 +67,50 @@ export default function PricingBuilderPage() {
         setCategories(cats);
         if (!activeCatId && cats.length > 0) setActiveCatId(cats[0].id);
     }
-    if (comps) setComponents(comps);
+    if (comps) setComponents(comps.map(normalizeComponent));
     setLoading(false);
   };
 
   const handleAddComponent = async () => {
       if (!newName.trim() || !newCost || !activeCatId) return;
 
+      let costValue: number;
+      let priceValue: number;
+      let setupValue: number | null;
+      let runSpeedValue: number | null;
+      let widthValue: number | null;
+      let heightValue: number | null;
+
+      try {
+        costValue = parseDecimalInput(newCost, { defaultValue: 0, fieldName: 'Internal cost' }) ?? 0;
+        priceValue = parseDecimalInput(newPrice || newCost, { defaultValue: costValue, fieldName: 'Client price' }) ?? costValue;
+        setupValue = parseDecimalInput(setupMins, { allowNull: true, fieldName: 'Setup minutes' });
+        runSpeedValue = parseDecimalInput(runSpeed, { allowNull: true, fieldName: 'Run speed per hour' });
+        widthValue = parseDecimalInput(sheetW, { allowNull: true, fieldName: 'Parent width' });
+        heightValue = parseDecimalInput(sheetH, { allowNull: true, fieldName: 'Parent height' });
+      } catch (err: any) {
+        alert(err?.message || 'Please enter valid numeric values.');
+        return;
+      }
+
       const { error } = await supabase.from('pricing_components').insert({
           category_id: activeCatId,
           name: newName,
           type: selectedType, // CRITICAL FIX: SAVING THE TYPE
-          cost_amount: parseFloat(newCost),
-          price_amount: parseFloat(newPrice) || parseFloat(newCost),
+          cost_amount: costValue,
+          price_amount: priceValue,
+          price_unit: newUnit,
           cost_unit: newUnit,
-          setup_minutes: parseInt(setupMins) || 0,
-          run_speed_per_hour: parseInt(runSpeed) || 0,
-          parent_sheet_width: parseFloat(sheetW) || 0,
-          parent_sheet_height: parseFloat(sheetH) || 0
+          setup_minutes: setupValue ?? null,
+          run_speed_per_hour: runSpeedValue ?? null,
+          parent_sheet_width: widthValue ?? null,
+          parent_sheet_height: heightValue ?? null
       });
 
       if (error) alert(error.message);
       else {
           setNewName(''); setNewCost(''); setNewPrice('');
+          setNewUnit('per_sheet');
           setSetupMins(''); setRunSpeed(''); setSheetW(''); setSheetH('');
           fetchData();
       }
@@ -86,24 +125,31 @@ export default function PricingBuilderPage() {
   const activeCategoryName = categories.find(c => c.id === activeCatId)?.name || '';
   const isPaper = activeCategoryName.toLowerCase().includes('paper');
   const isPress = activeCategoryName.toLowerCase().includes('press');
+  const isFinishing = activeCategoryName.toLowerCase().includes('finish');
+  const isMailing = activeCategoryName.toLowerCase().includes('mail');
 
   if (loading) return <div className="p-12 text-center text-gray-400">Loading Pricing Engine...</div>;
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
-        
-        {/* NAV */}
-        <div className="max-w-6xl mx-auto flex items-center justify-between mb-8 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-            <div className="flex items-center gap-4">
-                <Link href="/dashboard" className="p-2 bg-gray-50 border rounded-full hover:bg-gray-100 text-gray-500"><ArrowLeft size={20}/></Link>
-                <h1 className="text-xl font-bold text-gray-900">Cost Engine</h1>
-            </div>
-            <div className="flex gap-2">
+        <InternalPageHeader
+          title="Cost Engine"
+          description="Maintain raw costs and components that power estimating."
+          icon={DollarSign}
+          breadcrumbs={[{ label: 'Pricing' }]}
+          actions={
+            <div className="flex flex-wrap gap-2">
                 <Link href="/dashboard/pricing" className="px-4 py-2 bg-black text-white rounded-lg text-sm font-bold flex items-center gap-2"><DollarSign size={16}/> Costs</Link>
+                <Link href="/dashboard/pricing/paper-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Paper Catalog</Link>
+                <Link href="/dashboard/pricing/finishing-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Finishing Catalog</Link>
+                <Link href="/dashboard/pricing/mailing-catalog" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Mailing Catalog</Link>
                 <Link href="/dashboard/pricing/products" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><LayoutGrid size={16}/> Recipes</Link>
                 <Link href="/dashboard/pricing/estimator" className="px-4 py-2 bg-white text-gray-600 hover:bg-gray-50 border rounded-lg text-sm font-bold flex items-center gap-2"><Calculator size={16}/> Estimator</Link>
             </div>
-        </div>
+          }
+          maxWidthClassName="max-w-6xl"
+          sticky
+        />
 
         <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-6">
             {/* SIDEBAR */}
@@ -121,6 +167,11 @@ export default function PricingBuilderPage() {
                 {/* ADD ITEM CARD */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                     <h3 className="text-sm font-bold uppercase text-gray-400 mb-4">Add {activeCategoryName} Item</h3>
+                    <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className={`rounded-lg border p-3 ${isPress ? 'border-blue-400 bg-blue-50' : 'border-gray-200 bg-gray-50'}`}><p className="text-[11px] uppercase font-bold text-gray-500">Press catalog</p><p className="text-sm font-semibold text-gray-900">Setup, speed, click or hourly logic</p></div>
+                      <div className={`rounded-lg border p-3 ${isFinishing ? 'border-purple-400 bg-purple-50' : 'border-gray-200 bg-gray-50'}`}><p className="text-[11px] uppercase font-bold text-gray-500">Finishing catalog</p><p className="text-sm font-semibold text-gray-900">Cuts, folds, scoring, bindery, coating</p></div>
+                      <div className={`rounded-lg border p-3 ${isMailing ? 'border-green-400 bg-green-50' : 'border-gray-200 bg-gray-50'}`}><p className="text-[11px] uppercase font-bold text-gray-500">Mailing model</p><p className="text-sm font-semibold text-gray-900">Per-piece, per-M, or flat job charges</p></div>
+                    </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                         <div className="lg:col-span-1">
@@ -132,41 +183,52 @@ export default function PricingBuilderPage() {
                         <div>
                             <label className="block text-xs font-bold text-red-600 mb-1">Internal Cost</label>
                             <div className="relative"><span className="absolute left-3 top-2 text-gray-400 text-xs">$</span>
-                                <input type="number" placeholder="0.04" value={newCost} onChange={(e) => setNewCost(e.target.value)} className="w-full border border-red-100 bg-red-50 rounded-lg pl-6 pr-3 py-2 text-sm outline-none focus:border-red-500"/>
+                                <input type="number" inputMode="decimal" step="0.001" placeholder="0.04" value={newCost} onChange={(e) => setNewCost(e.target.value)} className="w-full border border-red-100 bg-red-50 rounded-lg pl-6 pr-3 py-2 text-sm outline-none focus:border-red-500"/>
                             </div>
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-green-700 mb-1">Client Price</label>
                             <div className="relative"><span className="absolute left-3 top-2 text-gray-400 text-xs">$</span>
-                                <input type="number" placeholder="0.10" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} className="w-full border border-green-100 bg-green-50 rounded-lg pl-6 pr-3 py-2 text-sm outline-none focus:border-green-500"/>
+                                <input type="number" inputMode="decimal" step="0.001" placeholder="0.10" value={newPrice} onChange={(e) => setNewPrice(e.target.value)} className="w-full border border-green-100 bg-green-50 rounded-lg pl-6 pr-3 py-2 text-sm outline-none focus:border-green-500"/>
                             </div>
                         </div>
 
+                        {isPaper && (
+                          <div>
+                            <label className="block text-xs font-bold text-purple-700 mb-1">Price Basis</label>
+                            <select value={newUnit} onChange={(e) => setNewUnit(e.target.value)} className="w-full border border-purple-200 bg-purple-50 rounded-lg px-3 py-2 text-sm font-bold text-purple-800">
+                              <option value="per_sheet">Per Sheet</option>
+                              <option value="per_1000">Per 1,000</option>
+                            </select>
+                          </div>
+                        )}
+
                         {/* TYPE SELECTOR (Crucial Fix) */}
-                        {isPress && (
+                        {(isPress || isFinishing || isMailing) && (
                             <div>
-                                <label className="block text-xs font-bold text-blue-600 mb-1">Machine Type</label>
+                                <label className="block text-xs font-bold text-blue-600 mb-1">Component Type</label>
                                 <select value={selectedType} onChange={(e) => setSelectedType(e.target.value)} className="w-full border border-blue-200 bg-blue-50 rounded-lg px-3 py-2 text-sm font-bold text-blue-800">
-                                    <option value="press_digital">Digital (Click)</option>
-                                    <option value="press_offset">Offset (Plates)</option>
+                                    {isPress && <><option value="press_digital">Digital (Click)</option><option value="press_offset">Offset (Plates)</option></>}
+                                    {isFinishing && <option value="finishing">Finishing</option>}
+                                    {isMailing && <><option value="mailing">Mailing</option></>}
                                 </select>
                             </div>
                         )}
-                        {!isPress && <div className="hidden"></div>} 
+                        {!(isPress || isFinishing || isMailing) && <div className="hidden"></div>} 
                     </div>
 
                     {/* DYNAMIC SPECS */}
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
                         {isPaper && (
                             <>
-                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Width (in)</label><input type="number" placeholder="12" value={sheetW} onChange={(e) => setSheetW(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
-                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Height (in)</label><input type="number" placeholder="18" value={sheetH} onChange={(e) => setSheetH(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
+                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Width (in)</label><input type="number" inputMode="decimal" step="0.001" placeholder="12" value={sheetW} onChange={(e) => setSheetW(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
+                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Height (in)</label><input type="number" inputMode="decimal" step="0.001" placeholder="18" value={sheetH} onChange={(e) => setSheetH(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
                             </>
                         )}
                         {isPress && (
                             <>
-                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Speed (/hr)</label><input type="number" placeholder="5000" value={runSpeed} onChange={(e) => setRunSpeed(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
-                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Setup (min)</label><input type="number" placeholder="15" value={setupMins} onChange={(e) => setSetupMins(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
+                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Speed (/hr)</label><input type="number" inputMode="decimal" step="0.01" placeholder="5000" value={runSpeed} onChange={(e) => setRunSpeed(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
+                                <div><label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Setup (min)</label><input type="number" inputMode="decimal" step="0.01" placeholder="15" value={setupMins} onChange={(e) => setSetupMins(e.target.value)} className="w-full border rounded px-2 py-1.5 text-sm"/></div>
                             </>
                         )}
                         <div className="col-span-2 flex items-end">
@@ -187,12 +249,30 @@ export default function PricingBuilderPage() {
                                     <td className="px-6 py-4 font-medium text-gray-900">
                                         {comp.name}
                                         {comp.type !== 'other' && <span className="ml-2 text-[10px] uppercase bg-gray-100 px-1.5 py-0.5 rounded text-gray-500 font-bold">{comp.type.replace('press_', '')}</span>}
+                                        {comp.type === 'finishing' && <span className="ml-2 text-[10px] uppercase bg-purple-100 px-1.5 py-0.5 rounded text-purple-700 font-bold">bindery</span>}
+                                        {comp.type === 'mailing' && <span className="ml-2 text-[10px] uppercase bg-green-100 px-1.5 py-0.5 rounded text-green-700 font-bold">mail</span>}
                                     </td>
-                                    <td className="px-6 py-4 text-red-600 font-mono text-xs">${comp.cost_amount}</td>
-                                    <td className="px-6 py-4"><span className="bg-green-50 text-green-700 px-2 py-1 rounded border border-green-200 font-mono font-bold">${comp.price_amount}</span></td>
+                                    <td className="px-6 py-4 text-red-600 font-mono text-xs">
+                                      {isPaper ? (
+                                        <>
+                                          {fmtMoney(asPerSheet(comp.cost_amount, comp.cost_unit))} /sht
+                                          <span className="text-gray-400"> ({fmtMoney(asPerSheet(comp.cost_amount, comp.cost_unit) * 1000)} /M)</span>
+                                        </>
+                                      ) : `$${comp.cost_amount}`}
+                                    </td>
+                                    <td className="px-6 py-4">
+                                      {isPaper ? (
+                                        <span className="bg-green-50 text-green-700 px-2 py-1 rounded border border-green-200 font-mono font-bold">
+                                          {fmtMoney(asPerSheet(comp.price_amount, comp.cost_unit))} /sht
+                                        </span>
+                                      ) : (
+                                        <span className="bg-green-50 text-green-700 px-2 py-1 rounded border border-green-200 font-mono font-bold">${comp.price_amount}</span>
+                                      )}
+                                    </td>
                                     <td className="px-6 py-4 text-xs text-gray-500">
                                         {comp.parent_sheet_width > 0 && <span>{comp.parent_sheet_width}x{comp.parent_sheet_height}"</span>}
-                                        {comp.run_speed_per_hour > 0 && <span>{comp.run_speed_per_hour}/hr</span>}
+                                        {comp.run_speed_per_hour > 0 && <span className="ml-2">{comp.run_speed_per_hour}/hr</span>}
+                                        {comp.cost_unit && <span className="ml-2 uppercase text-[10px] text-gray-400">{comp.cost_unit}</span>}
                                     </td>
                                     <td className="px-6 py-4 text-right"><button onClick={() => handleDelete(comp.id)} className="text-gray-300 hover:text-red-600"><Trash2 size={16} /></button></td>
                                 </tr>

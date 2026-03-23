@@ -43,13 +43,14 @@ export default async function DashboardJobPage({ params }: { params: { id: strin
   // -----------------------
 
   // 3. Fetch Extras (Parallel)
-  const [servicesRes, assetsRes, messagesRes, logsRes, itemsRes] = await Promise.all([
+  const [servicesRes, assetsRes, messagesRes, logsRes, itemsRes, blockersRes] = await Promise.all([
     supabase.from('finishing_services').select('*').order('name'),
     supabase.from('job_assets').select('*, profiles(email)').eq('job_id', params.id).order('created_at', { ascending: false }),
     supabase.from('messages').select('*, profiles(email)').eq('job_id', params.id).order('created_at', { ascending: true }),
     supabase.from('job_logs').select('*, profiles(email)').eq('job_id', params.id).order('created_at', { ascending: true }),
     // Attempt to fetch items safely
-    supabase.from('job_items').select('*, job_item_steps(*)').eq('job_id', params.id)
+    supabase.from('job_items').select('*, job_item_steps(*)').eq('job_id', params.id),
+    supabase.from('job_blockers').select('*').eq('job_id', params.id).order('created_at', { ascending: false })
   ]);
 
   return (
@@ -61,6 +62,7 @@ export default async function DashboardJobPage({ params }: { params: { id: strin
       initialAssets={assetsRes.data || []}
       initialMessages={messagesRes.data || []}
       initialLogs={logsRes.data || []}
+      initialBlockers={blockersRes.data || []}
       jobId={params.id}
     />
   );

@@ -1,10 +1,12 @@
 'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
-import { ArrowLeft, Mail, Building2, Calendar, Phone, CreditCard, MapPin, FileText, Edit2, X, Save, Loader2 } from 'lucide-react';
+import { ArrowLeft, Mail, Building2, Calendar, Phone, CreditCard, MapPin, FileText, Edit2, X, Save, Loader2, Tag, DollarSign, Trash2, Plus } from 'lucide-react';
 import { useRouter, useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { formatCurrency } from '@/utils/pricing';
+import { CUSTOMER_CLASS_DEFAULTS, normalizeCustomerClass } from '@/lib/customerClass';
 
 export default function CustomerProfilePage() {
   const params = useParams();
@@ -17,6 +19,18 @@ export default function CustomerProfilePage() {
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState<any>({});
+
+  // Pricing overrides
+  const [pricingOverrides, setPricingOverrides] = useState<any[]>([]);
+  const [savingOverride, setSavingOverride] = useState(false);
+  const [overrideForm, setOverrideForm] = useState({
+    template: '',
+    sku: '',
+    component_type: 'paper',
+    price_override: '',
+    cost_override: '',
+    notes: ''
+  });
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -53,7 +67,8 @@ export default function CustomerProfilePage() {
            role: 'guest',
            company: 'Guest Account',
            payment_terms: 'COD',
-           tax_status: 'Taxable'
+           tax_status: 'Taxable',
+           customer_class: 'standard'
          };
       }
     }
@@ -72,7 +87,22 @@ export default function CustomerProfilePage() {
     setProfile(userProfile);
     setJobs(jobData || []);
     setFormData(userProfile); // Init form
+    if (userProfile?.id) {
+      await loadOverrides(userProfile.id);
+    } else {
+      setPricingOverrides([]);
+    }
     setLoading(false);
+  };
+
+  const loadOverrides = async (customerId: string) => {
+    const { data, error } = await supabase.from('customer_pricing').select('*').eq('customer_id', customerId);
+    if (error) {
+      console.error('customer_pricing', error.message);
+      setPricingOverrides([]);
+      return;
+    }
+    setPricingOverrides(data || []);
   };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
@@ -82,12 +112,6 @@ export default function CustomerProfilePage() {
     try {
         let updateId = profile.id;
 
-        // If this is a GUEST (no ID), we need to CREATE a profile row for them manually
-        // We use a special function or just insert if RLS allows. 
-        // NOTE: Usually profiles are tied to Auth Users. 
-        // If you want to store CRM data for non-users, we might need a separate 'customers' table later.
-        // For now, we will assume we update the existing row OR we fail if they haven't signed up.
-        
         if (!profile.id) {
             alert("Note: This guest hasn't signed up yet. We can't save permanent details until they register.");
             setIsSaving(false);
@@ -103,6 +127,7 @@ export default function CustomerProfilePage() {
                 phone: formData.phone,
                 payment_terms: formData.payment_terms,
                 tax_status: formData.tax_status,
+                customer_class: formData.customer_class,
                 tax_id: formData.tax_id,
                 billing_address: formData.billing_address
             })
@@ -119,6 +144,44 @@ export default function CustomerProfilePage() {
     } finally {
         setIsSaving(false);
     }
+  };
+
+  const handleAddOverride = async () => {
+    if (!profile?.id) {
+      alert('Cannot add overrides for guests without an account.');
+      return;
+    }
+    if (!overrideForm.sku && !overrideForm.template) {
+      alert('Provide at least a SKU or Template to scope this override.');
+      return;
+    }
+    setSavingOverride(true);
+    try {
+      const payload: any = {
+        customer_id: profile.id,
+        template: overrideForm.template || null,
+        sku: overrideForm.sku || null,
+        component_type: overrideForm.component_type || null,
+        price_override: overrideForm.price_override ? parseFloat(overrideForm.price_override) : null,
+        cost_override: overrideForm.cost_override ? parseFloat(overrideForm.cost_override) : null,
+        notes: overrideForm.notes || null,
+      };
+      const { error } = await supabase.from('customer_pricing').insert(payload);
+      if (error) throw error;
+      setOverrideForm({ template: '', sku: '', component_type: overrideForm.component_type, price_override: '', cost_override: '', notes: '' });
+      await loadOverrides(profile.id);
+    } catch (err: any) {
+      console.error('override insert failed', err.message || err);
+      alert('Failed to save override.');
+    } finally {
+      setSavingOverride(false);
+    }
+  };
+
+  const handleDeleteOverride = async (id: string) => {
+    if (!confirm('Delete this override?')) return;
+    await supabase.from('customer_pricing').delete().eq('id', id);
+    if (profile?.id) loadOverrides(profile.id);
   };
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
@@ -168,6 +231,14 @@ export default function CustomerProfilePage() {
                                 <option>Taxable</option>
                                 <option>Resale / Wholesale</option>
                                 <option>Non-Profit Exempt</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold uppercase text-gray-500 mb-1">Customer Class</label>
+                            <select className="w-full border rounded p-2 bg-white" value={formData.customer_class || 'standard'} onChange={e => setFormData({...formData, customer_class: e.target.value})}>
+                                <option value="trade">Trade / Reseller</option>
+                                <option value="standard">Standard Account</option>
+                                <option value="retail">Retail / Walk-In</option>
                             </select>
                         </div>
                         <div>
@@ -235,6 +306,11 @@ export default function CustomerProfilePage() {
                     <p className="text-sm font-medium text-gray-900">{profile.payment_terms || 'COD'}</p>
                  </div>
                  <div>
+                    <p className="text-xs font-bold uppercase text-gray-400 mb-1 flex items-center"><Tag size={12} className="mr-1"/> Customer Class</p>
+                    <p className="text-sm font-medium text-gray-900">{CUSTOMER_CLASS_DEFAULTS[normalizeCustomerClass(profile.customer_class)].label}</p>
+                    <p className="text-xs text-gray-500 mt-1">Defaults estimator to <span className="font-bold capitalize">{CUSTOMER_CLASS_DEFAULTS[normalizeCustomerClass(profile.customer_class)].pricingProfile}</span>.</p>
+                 </div>
+                 <div>
                     <p className="text-xs font-bold uppercase text-gray-400 mb-1 flex items-center"><FileText size={12} className="mr-1"/> Tax ID</p>
                     <p className="text-sm font-medium text-gray-900">{profile.tax_id || '—'}</p>
                  </div>
@@ -244,6 +320,86 @@ export default function CustomerProfilePage() {
                  </div>
             </div>
         </div>
+
+        {/* PRICING OVERRIDES */}
+        {profile.id ? (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-8">
+            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2"><Tag size={16}/> Pricing Overrides</h3>
+                <p className="text-sm text-gray-500">customer_pricing overrides flow into the estimator automatically.</p>
+              </div>
+              <span className="text-xs font-bold bg-gray-200 text-gray-600 px-2 py-1 rounded">{pricingOverrides.length} entries</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 border-b border-gray-100">
+              <div className="md:col-span-1">
+                <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Template (optional)</label>
+                <input value={overrideForm.template} onChange={(e) => setOverrideForm({...overrideForm, template: e.target.value})} className="w-full border rounded px-3 py-2 text-sm" placeholder="e.g. bc-template" />
+              </div>
+              <div className="md:col-span-1">
+                <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">SKU / Component</label>
+                <input value={overrideForm.sku} onChange={(e) => setOverrideForm({...overrideForm, sku: e.target.value})} className="w-full border rounded px-3 py-2 text-sm" placeholder="Component name or ID" />
+              </div>
+              <div className="md:col-span-1">
+                <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Type</label>
+                <select value={overrideForm.component_type} onChange={(e) => setOverrideForm({...overrideForm, component_type: e.target.value})} className="w-full border rounded px-3 py-2 text-sm bg-white">
+                  <option value="paper">Paper</option>
+                  <option value="press">Press</option>
+                  <option value="finishing">Finishing</option>
+                  <option value="mailing">Mailing</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Cost Override</label>
+                <input value={overrideForm.cost_override} onChange={(e) => setOverrideForm({...overrideForm, cost_override: e.target.value})} className="w-full border rounded px-3 py-2 text-sm" placeholder="Optional" />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Price Override</label>
+                <input value={overrideForm.price_override} onChange={(e) => setOverrideForm({...overrideForm, price_override: e.target.value})} className="w-full border rounded px-3 py-2 text-sm" placeholder="Optional" />
+              </div>
+              <div className="md:col-span-1">
+                <label className="block text-[11px] font-bold uppercase text-gray-500 mb-1">Notes</label>
+                <input value={overrideForm.notes} onChange={(e) => setOverrideForm({...overrideForm, notes: e.target.value})} className="w-full border rounded px-3 py-2 text-sm" placeholder="Internal note" />
+              </div>
+              <div className="md:col-span-3 flex justify-end">
+                <button onClick={handleAddOverride} disabled={savingOverride} className="px-4 py-2 bg-black text-white rounded-lg font-bold flex items-center gap-2 hover:bg-gray-800">
+                  {savingOverride ? <Loader2 className="animate-spin" size={16}/> : <Plus size={16}/>} Save Override
+                </button>
+              </div>
+            </div>
+
+            <div className="divide-y divide-gray-100">
+              {pricingOverrides.map((ovr) => (
+                <div key={ovr.id} className="flex flex-col md:flex-row md:items-center justify-between px-6 py-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-sm font-bold text-gray-900">
+                      <Tag size={14}/> {ovr.template || 'Any Template'}
+                      {ovr.sku && <span className="px-2 py-0.5 bg-gray-100 rounded text-[11px] font-mono text-gray-700">{ovr.sku}</span>}
+                    </div>
+                    <div className="text-xs text-gray-500 flex flex-wrap gap-3">
+                      <span className="flex items-center gap-1"><DollarSign size={12}/> {formatCurrency(ovr.price_override ?? ovr.price_amount)}</span>
+                      <span className="flex items-center gap-1 text-gray-500">Cost: {formatCurrency(ovr.cost_override ?? ovr.cost_amount)}</span>
+                      {ovr.component_type && <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-[10px] font-black uppercase">{ovr.component_type}</span>}
+                      {ovr.notes && <span className="text-gray-500">{ovr.notes}</span>}
+                    </div>
+                  </div>
+                  <div className="mt-2 md:mt-0 flex gap-2">
+                    <button onClick={() => handleDeleteOverride(ovr.id)} className="text-gray-400 hover:text-red-600 flex items-center gap-1 text-sm font-bold"><Trash2 size={14}/> Delete</button>
+                  </div>
+                </div>
+              ))}
+              {pricingOverrides.length === 0 && (
+                <div className="p-6 text-sm text-gray-400">No overrides for this customer yet.</div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 p-6 mb-8 text-sm text-gray-500">
+            Add this guest as a registered user to enable customer-specific pricing.
+          </div>
+        )}
 
         {/* ORDER HISTORY */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
