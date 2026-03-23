@@ -511,17 +511,23 @@ export default function Dashboard() {
     const normalizedStaffId = staffId || null;
     const staffMember = normalizedStaffId ? staff.find((s) => s.id === normalizedStaffId) : null;
     const staffName = normalizedStaffId ? (staffMember?.first_name || staffMember?.email || 'Staff') : null;
+    const actor = ownerLabel(user?.id) || user?.email || 'User';
     const targetItemIds: string[] = [];
+    const affectedJobs = jobs.filter((job) => uniqueJobIds.includes(job.id));
+    const jobLogEntries: any[] = [];
 
     setJobs((current) =>
       current.map((job) => {
         if (!uniqueJobIds.includes(job.id)) return job;
 
+        const previousOwner = job.assigned_to || null;
+        let cascadedItemCount = 0;
         const updatedItems = options.cascadeItems
           ? (job.job_items || []).map((item: any) => {
               if (normalizedStaffId) {
                 if (!item.assigned_to) {
                   targetItemIds.push(item.id);
+                  cascadedItemCount += 1;
                   return { ...item, assigned_to: normalizedStaffId, claimed_at: new Date().toISOString() };
                 }
                 return item;
@@ -529,11 +535,23 @@ export default function Dashboard() {
 
               if (item.assigned_to === job.assigned_to || !item.assigned_to) {
                 targetItemIds.push(item.id);
+                cascadedItemCount += 1;
                 return { ...item, assigned_to: null, claimed_at: null };
               }
               return item;
             })
           : job.job_items;
+
+        if (previousOwner !== normalizedStaffId) {
+          const prevLabel = ownerLabel(previousOwner);
+          const nextLabel = ownerLabel(normalizedStaffId);
+          jobLogEntries.push({
+            job_id: job.id,
+            user_id: user?.id || null,
+            action: normalizedStaffId ? (previousOwner ? 'Bulk Owner Reassigned' : 'Bulk Owner Claimed') : 'Bulk Owner Cleared',
+            details: `${actor} bulk-set queue owner ${prevLabel} → ${nextLabel}${options.cascadeItems ? ` • cascaded ${cascadedItemCount} item(s)` : ''}`,
+          });
+        }
 
         return { ...job, assigned_to: normalizedStaffId || undefined, csr_name: staffName || undefined, job_items: updatedItems };
       })
@@ -545,6 +563,16 @@ export default function Dashboard() {
         .from('job_items')
         .update({ assigned_to: normalizedStaffId, claimed_at: normalizedStaffId ? new Date().toISOString() : null })
         .in('id', targetItemIds);
+    }
+    if (jobLogEntries.length) {
+      await supabase.from('job_logs').insert(jobLogEntries);
+    } else if (affectedJobs.length) {
+      await supabase.from('job_logs').insert({
+        job_id: affectedJobs[0].id,
+        user_id: user?.id || null,
+        action: normalizedStaffId ? 'Bulk Ownership Reviewed' : 'Bulk Ownership Cleared',
+        details: `${actor} ran a bulk ownership action on ${affectedJobs.length} job(s). No queue-owner delta was detected, but the action remains auditable.`,
+      });
     }
   };
 

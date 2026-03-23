@@ -1689,9 +1689,13 @@ export default function JobInteractiveView({
               <div className="p-8 md:w-1/3 bg-black/20 border-l border-white/10 backdrop-blur-sm flex flex-col justify-center">
                   <div className="flex items-start gap-3">
                       <Megaphone size={24} className="mt-1 opacity-80" />
-                      <div>
-                          <p className="text-xs font-bold uppercase opacity-75 tracking-widest mb-1">Important Note</p>
-                          <p className="text-lg font-bold leading-tight">{job.notes || "No general notes on this order."}</p>
+                      <div className="w-full">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-xs font-bold uppercase opacity-75 tracking-widest">Shift handoff note</p>
+                            <span className="rounded-full border border-white/20 bg-white/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.18em] text-gray-200">Internal only</span>
+                          </div>
+                          <p className="mt-2 text-lg font-bold leading-tight">{job.notes || "No handoff note yet. Add the risk, promise, or next move so the next operator is not guessing."}</p>
+                          <p className="mt-3 text-xs text-gray-300">Use this field for shift-critical context: what changed, what is waiting on customer/art, and what the next owner must not miss.</p>
                       </div>
                   </div>
               </div>
@@ -1965,11 +1969,14 @@ export default function JobInteractiveView({
         <div className="col-span-12 lg:col-span-7 flex flex-col gap-4">
              {isStaff && (
                <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-6">
-                  <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-xs font-bold uppercase text-yellow-700 flex items-center gap-2"><Lock size={16}/> Global Job Notes</h3>
-                      <button onClick={handleSaveNotes} disabled={isSaving} className="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-3 py-1.5 rounded hover:bg-yellow-500 flex items-center gap-2 shadow-sm uppercase tracking-wider"><Save size={12}/> Save Global Notes</button>
+                  <div className="flex justify-between items-center mb-4 gap-3">
+                      <div>
+                        <h3 className="text-xs font-bold uppercase text-yellow-700 flex items-center gap-2"><Lock size={16}/> Global Job Notes / Handoff</h3>
+                        <p className="mt-1 text-xs text-yellow-800">Internal only. Leave the next operator a clean handoff: current risk, last promise made, and the exact next move.</p>
+                      </div>
+                      <button onClick={handleSaveNotes} disabled={isSaving} className="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-3 py-1.5 rounded hover:bg-yellow-500 flex items-center gap-2 shadow-sm uppercase tracking-wider"><Save size={12}/> Save Handoff Note</button>
                   </div>
-                  <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private production notes for the whole job..." className="w-full h-24 bg-white border border-yellow-300 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 transition-all"/>
+                  <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private production handoff: what changed, what is blocked, and what the next owner needs to do..." className="w-full h-24 bg-white border border-yellow-300 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 transition-all"/>
                </div>
              )}
 

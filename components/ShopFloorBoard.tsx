@@ -496,6 +496,63 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
       .slice(0, 6);
   }, [jobsWithSignals]);
 
+  const selectedJobEntries = useMemo(() => {
+    const jobs = jobsWithSignals.flatMap((column) => column.jobs || []);
+    return jobs.filter((job: any) => selectedJobs.has(job.id));
+  }, [jobsWithSignals, selectedJobs]);
+
+  const selectedItemEntries = useMemo(() => {
+    const jobs = jobsWithSignals.flatMap((column) => column.jobs || []);
+    return jobs.flatMap((job: any) => {
+      const items = Array.isArray(job?.job_items) ? job.job_items : job?.activeItems || [];
+      return items
+        .filter((item: any) => selectedItems.has(item.id))
+        .map((item: any) => ({ item, job }));
+    });
+  }, [jobsWithSignals, selectedItems]);
+
+  const selectionRisk = useMemo(() => {
+    const sourceOwners = new Set<string>();
+    let readyJobs = 0;
+    let blockedJobs = 0;
+    let waitingJobs = 0;
+    let inheritedItems = 0;
+    let splitOwnerJobs = 0;
+
+    selectedJobEntries.forEach((job: any) => {
+      if (job?.assigned_to) sourceOwners.add(job.assigned_to);
+      if (job?.isReady) readyJobs += 1;
+      if (job?.isBlocked) blockedJobs += 1;
+      if (job?.isWaiting) waitingJobs += 1;
+      if (job?.isSplitOwner) splitOwnerJobs += 1;
+    });
+
+    selectedItemEntries.forEach(({ item, job }: any) => {
+      if (item?.assigned_to) sourceOwners.add(item.assigned_to);
+      else if (job?.assigned_to) {
+        sourceOwners.add(job.assigned_to);
+        inheritedItems += 1;
+      }
+      if (job?.isSplitOwner) splitOwnerJobs += 1;
+    });
+
+    return {
+      sourceOwnerCount: sourceOwners.size,
+      readyJobs,
+      blockedJobs,
+      waitingJobs,
+      inheritedItems,
+      splitOwnerJobs,
+      risky:
+        sourceOwners.size > 1 ||
+        readyJobs > 0 ||
+        blockedJobs > 0 ||
+        waitingJobs > 0 ||
+        inheritedItems > 0 ||
+        splitOwnerJobs > 0,
+    };
+  }, [selectedItemEntries, selectedJobEntries]);
+
   const selectedJobCount = selectedJobs.size;
   const selectedItemCount = selectedItems.size;
   const hasSelection = selectedJobCount + selectedItemCount > 0;
@@ -526,6 +583,24 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
 
   const applyBulkAssignment = async (staffId: string | null) => {
     if (!hasSelection || applyingBulk) return;
+
+    const actionLabel = staffId ? 'reassign' : 'clear ownership on';
+    if (selectionRisk.risky) {
+      const confirmationMessage = [
+        `You are about to ${actionLabel} ${selectedJobCount} job${selectedJobCount === 1 ? '' : 's'} and ${selectedItemCount} item${selectedItemCount === 1 ? '' : 's'}.`,
+        selectionRisk.sourceOwnerCount > 1 ? `• Selection spans ${selectionRisk.sourceOwnerCount} different current owners.` : null,
+        selectionRisk.readyJobs > 0 ? `• ${selectionRisk.readyJobs} ready job${selectionRisk.readyJobs === 1 ? '' : 's'} could be disrupted.` : null,
+        selectionRisk.blockedJobs > 0 ? `• ${selectionRisk.blockedJobs} blocked job${selectionRisk.blockedJobs === 1 ? '' : 's'} still need accountable ownership.` : null,
+        selectionRisk.waitingJobs > 0 ? `• ${selectionRisk.waitingJobs} waiting job${selectionRisk.waitingJobs === 1 ? '' : 's'} may lose follow-up accountability.` : null,
+        selectionRisk.inheritedItems > 0 ? `• ${selectionRisk.inheritedItems} item${selectionRisk.inheritedItems === 1 ? '' : 's'} currently inherit the queue owner and may create mixed ownership.` : null,
+        selectionRisk.splitOwnerJobs > 0 ? `• ${selectionRisk.splitOwnerJobs} selected record${selectionRisk.splitOwnerJobs === 1 ? '' : 's'} already show split ownership.` : null,
+        '',
+        'Continue only if a manager explicitly wants this audit trail.',
+      ].filter(Boolean).join('\n');
+
+      if (typeof window !== 'undefined' && !window.confirm(confirmationMessage)) return;
+    }
+
     setApplyingBulk(true);
     try {
       if ((bulkScope === 'jobs' || bulkScope === 'both') && selectedJobs.size > 0) {
@@ -607,6 +682,14 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
                 <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-300">Bulk reassignment</p>
                 <p className="mt-1 text-sm font-semibold text-white">{selectedJobCount} job{selectedJobCount === 1 ? '' : 's'} and {selectedItemCount} item{selectedItemCount === 1 ? '' : 's'} selected.</p>
                 <p className="text-xs text-gray-300">Use jobs for queue-owner shifts. Use items for partial offloads when the whole job should stay put.</p>
+                <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold">
+                  {selectionRisk.readyJobs > 0 ? <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-emerald-900">{selectionRisk.readyJobs} ready</span> : null}
+                  {selectionRisk.blockedJobs > 0 ? <span className="rounded-full border border-red-300 bg-red-50 px-2.5 py-1 text-red-900">{selectionRisk.blockedJobs} blocked</span> : null}
+                  {selectionRisk.waitingJobs > 0 ? <span className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-amber-900">{selectionRisk.waitingJobs} waiting</span> : null}
+                  {selectionRisk.sourceOwnerCount > 1 ? <span className="rounded-full border border-violet-300 bg-violet-50 px-2.5 py-1 text-violet-900">{selectionRisk.sourceOwnerCount} source owners</span> : null}
+                  {selectionRisk.inheritedItems > 0 ? <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-white">{selectionRisk.inheritedItems} inherited items</span> : null}
+                </div>
+                <p className="mt-2 text-[11px] text-gray-400">Audit trail should explain why ownership moved. Risky moves trigger a manager confirmation before anything changes.</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <select
