@@ -1644,6 +1644,14 @@ export default function JobInteractiveView({
   const jobBlockers = blockersForScope(undefined, true);
   const blockingReasonsForItem = (itemId?: string, includeWarnings = false) => blockersForScope(itemId, includeWarnings);
   const isReleaseBlockedForItem = (itemId?: string) => blockersForScope(itemId).length > 0;
+
+  // Single, action-first surface for the main view
+  const primaryAction = (() => {
+    if (releaseBlocked) return { label: releaseGate.label, detail: releaseGate.nextStep, tone: releaseGate.tone };
+    if (customerAction.required) return { label: customerAction.label, detail: customerAction.description, tone: customerAction.tone === 'orange' ? 'orange' : 'purple' };
+    if (followUpState.displayStatus != 'cleared') return { label: followUpState.badgeLabel, detail: followUpState.helperText || followUpState.disciplineHint, tone: 'blue' };
+    return { label: 'No immediate action', detail: portalNextAction || 'Monitor progress and keep customer updated.', tone: 'gray' };
+  })();
   const customerMessages = messages.filter((m: any) => m.is_customer_visible !== false);
   const visibleMessages = isStaff ? messages : customerMessages;
   const customerTimeline = useMemo(() => {
@@ -1973,57 +1981,62 @@ export default function JobInteractiveView({
 
       {/* HEADER */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
-        <div className="max-w-[1920px] mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-              <Link href={isStaff ? "/dashboard" : "/dashboard/messages"} className="p-2 hover:bg-gray-100 rounded-full text-gray-500"><ArrowLeft size={20} /></Link>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900 leading-none">{job.title}</h1>
+        <div className="max-w-[1920px] mx-auto px-4 py-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-4 min-w-0">
+              <Link href={isStaff ? "/dashboard" : "/dashboard/messages"} className="p-2 hover:bg-gray-100 rounded-full text-gray-500 shrink-0"><ArrowLeft size={20} /></Link>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2 mb-1">
+                  <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-[0.16em] border bg-gray-900 text-white border-gray-700`}>{job.status || 'Pending'}</div>
+                  <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-[0.16em] border ${countdown.color} text-white`}>{countdown.text}</div>
+                  <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-[0.16em] border ${releaseGate.tone === 'red' ? 'border-red-200 bg-red-50 text-red-700' : 'border-green-200 bg-green-50 text-green-700'}`}>{releaseBlocked ? 'Release blocked' : 'Release clear'}</div>
+                </div>
+                <h1 className="text-xl font-bold text-gray-900 leading-none truncate">{job.title}</h1>
                 <p className="text-xs font-mono text-gray-400 mt-1">#{jobId.substring(0,8).toUpperCase()} • {job.orders?.brand}</p>
               </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
             {isStaff ? (
-              <Link href={`/dashboard/invoices/new?jobId=${jobId}`} className="px-4 py-1.5 bg-emerald-600 text-white rounded-md font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm"><FilePlus size={14}/> Generate Invoice</Link>
+              <>
+                <button onClick={() => openUploadModal()} className="px-3 py-2 bg-black text-white rounded-full font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-gray-800 transition-colors shadow-sm"><UploadCloud size={14}/> New Proof</button>
+                <Link href={`/dashboard/invoices/new?jobId=${jobId}`} className="px-3 py-2 bg-emerald-600 text-white rounded-full font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm"><FilePlus size={14}/> Invoice</Link>
+                <a href={portalHref} target="_blank" className="px-3 py-2 rounded-full border border-gray-200 bg-white text-[10px] font-bold uppercase text-gray-600 hover:border-black hover:text-black flex items-center gap-2"><ExternalLink size={14}/> Portal</a>
+              </>
             ) : (
               <div className="hidden sm:flex gap-2">
                 <Link href="/dashboard" className="px-3 py-1.5 rounded-full border border-gray-200 text-xs font-bold text-gray-600 hover:border-gray-300 hover:text-black">Home</Link>
                 <Link href="/dashboard/messages" className="px-3 py-1.5 rounded-full border border-gray-200 text-xs font-bold text-gray-600 hover:border-gray-300 hover:text-black">Messages</Link>
               </div>
             )}
-            <div className={`px-4 py-1.5 rounded-md text-white font-bold uppercase text-[10px] flex items-center bg-gray-900 border border-gray-700`}>{job.status || 'Pending'}</div>
           </div>
         </div>
       </div>
 
-       {/* STAGE COMMANDER */}
-       {isStaff ? (
-       <div className="bg-gray-900 text-white shadow-xl">
-          <div className="max-w-[1920px] mx-auto px-4 py-4 lg:py-5">
-            <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr_1fr_1.1fr]">
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-300">Current status</p>
-                <p className="mt-2 text-2xl font-black uppercase tracking-tight">{job.status || 'PREPRESS'}</p>
+      {isStaff ? (
+        <div className="border-b border-gray-200 bg-gray-50">
+          <div className="max-w-[1920px] mx-auto px-4 py-3 grid gap-2 md:grid-cols-3 xl:grid-cols-4">
+            <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">Current status</p>
+              <p className="mt-1 text-sm font-black text-gray-900 uppercase">{job.status || 'Prepress'}</p>
+            </div>
+            <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">Due</p>
+              <p className="mt-1 text-sm font-black text-gray-900 uppercase">{countdown.text}</p>
+              <p className="mt-1 text-[11px] text-gray-500">{job.due_date ? new Date(job.due_date).toLocaleDateString() : 'No due date set'}</p>
+            </div>
+            <div className={`rounded-xl border px-4 py-3 ${releaseGate.tone === 'red' ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-500">Release gate</p>
+              <p className={`mt-1 text-sm font-black uppercase ${releaseGate.tone === 'red' ? 'text-red-900' : 'text-green-900'}`}>{releaseGate.label}</p>
+              <p className={`mt-1 text-[11px] ${releaseGate.tone === 'red' ? 'text-red-700' : 'text-green-700'}`}>{releaseGate.nextStep}</p>
+            </div>
+            <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 md:col-span-3 xl:col-span-1">
+              <div className="flex items-center gap-2">
+                <Megaphone size={14} className="text-gray-400" />
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-400">Shift handoff</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-300">Due</p>
-                <p className="mt-2 text-xl font-black uppercase tracking-tight">{countdown.text}</p>
-                <p className="mt-1 text-xs text-gray-300">{job.due_date ? new Date(job.due_date).toLocaleDateString() : 'No due date set'}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-300">Release gate</p>
-                <p className="mt-2 text-xl font-black uppercase tracking-tight">{releaseBlocked ? 'Blocked' : 'Clear'}</p>
-                <p className="mt-1 text-xs text-gray-300">{releaseGate.nextStep}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
-                <div className="flex items-center gap-2">
-                  <Megaphone size={14} className="text-gray-300" />
-                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-300">Shift handoff</p>
-                </div>
-                <p className="mt-2 line-clamp-3 text-sm font-semibold leading-snug text-white/95">{job.notes || 'No handoff note yet. Capture the risk, promise, or next move below.'}</p>
-              </div>
+              <p className="mt-1 line-clamp-2 text-sm font-semibold text-gray-800">{job.notes || 'No handoff note yet. Capture risk, promise, or next move below.'}</p>
             </div>
           </div>
-      </div>
+        </div>
       ) : (
         <div className="bg-gray-900 text-white shadow-xl">
           <div className="max-w-[1920px] mx-auto px-6 py-8 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -2037,47 +2050,51 @@ export default function JobInteractiveView({
       )}
 
       <div className="max-w-[1920px] mx-auto w-full px-4 mt-4 space-y-4">
-        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-4 space-y-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div>
-              <p className="text-[11px] font-black uppercase text-gray-400">Order & Items</p>
-              <p className="text-sm text-gray-700">Order #{job.order_id?.substring(0, 8) || jobId.substring(0, 8)} • {items.length} line items</p>
+        <OpsDisclosure
+          title="Order snapshot"
+          eyebrow="Compact summary"
+          description={`Order #${job.order_id?.substring(0, 8) || jobId.substring(0, 8)} • ${items.length} line item${items.length === 1 ? '' : 's'}`}
+          defaultOpen={false}
+        >
+          <div className="space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 text-[10px]">
+                <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 font-black">Total Qty {(itemAggregate.totalQty || job.quantity || 0).toLocaleString()}</span>
+                {Object.entries(itemAggregate.counts).map(([status, count]) => (
+                  <span key={status} className="px-2 py-1 rounded-full bg-gray-50 border border-gray-200 text-gray-600 capitalize">{status}: {count}</span>
+                ))}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2 text-[10px]">
-              <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 font-black">Total Qty {(itemAggregate.totalQty || job.quantity || 0).toLocaleString()}</span>
-              {Object.entries(itemAggregate.counts).map(([status, count]) => (
-                <span key={status} className="px-2 py-1 rounded-full bg-gray-50 border border-gray-200 text-gray-600 capitalize">{status}: {count}</span>
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {items.length === 0 && <div className="text-sm text-gray-400 italic">No items added yet.</div>}
+              {items.map((item) => (
+                <div key={item.id} className="p-3 border border-gray-100 rounded-xl bg-gray-50">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="overflow-hidden">
+                      <p className="text-sm font-bold text-gray-900 truncate">{item.description}</p>
+                      <p className="text-[11px] text-gray-500 uppercase">Qty {item.quantity?.toLocaleString()}</p>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                      item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-blue-50 text-blue-700 border-blue-200'
+                    }`}>
+                      {item.status || 'Pending'}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-gray-500">
+                    {item.size && <span className="px-2 py-0.5 rounded-full bg-white border border-gray-200">{item.size}</span>}
+                    {item.paper_stock && <span className="px-2 py-0.5 rounded-full bg-white border border-gray-200 truncate">{item.paper_stock}</span>}
+                    {(item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art') && (
+                      <span className="px-2 py-0.5 rounded-full bg-orange-50 border border-orange-200 text-orange-800 font-black uppercase tracking-wider">Waiting on art</span>
+                    )}
+                  </div>
+                </div>
               ))}
             </div>
           </div>
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {items.length === 0 && <div className="text-sm text-gray-400 italic">No items added yet.</div>}
-            {items.map((item) => (
-              <div key={item.id} className="p-3 border border-gray-100 rounded-xl bg-gray-50">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="overflow-hidden">
-                    <p className="text-sm font-bold text-gray-900 truncate">{item.description}</p>
-                    <p className="text-[11px] text-gray-500 uppercase">Qty {item.quantity?.toLocaleString()}</p>
-                  </div>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
-                    item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-blue-50 text-blue-700 border-blue-200'
-                  }`}>
-                    {item.status || 'Pending'}
-                  </span>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-gray-500">
-                  {item.size && <span className="px-2 py-0.5 rounded-full bg-white border border-gray-200">{item.size}</span>}
-                  {item.paper_stock && <span className="px-2 py-0.5 rounded-full bg-white border border-gray-200 truncate">{item.paper_stock}</span>}
-                  {(item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art') && (
-                    <span className="px-2 py-0.5 rounded-full bg-orange-50 border border-orange-200 text-orange-800 font-black uppercase tracking-wider">Waiting on art</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        </OpsDisclosure>
 
-        <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+        <div className="space-y-4">
+          <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -2121,11 +2138,13 @@ export default function JobInteractiveView({
             </div>
           </div>
 
+          </div>
+
           <OpsDisclosure
             title="Blockers, holds, and release reasons"
             eyebrow="Advanced ops"
             description={`${jobBlockers.length} active blocker${jobBlockers.length === 1 ? '' : 's'} tracked across art, approval, and scheduling.`}
-            defaultOpen={jobBlockers.length > 0}
+            defaultOpen={false}
           >
             {isStaff && (
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
@@ -2202,7 +2221,7 @@ export default function JobInteractiveView({
           title="Portal handoff controls"
           eyebrow="Advanced ops"
           description={`${portalState.label}. Use this when CSR needs to change what the customer can see.`}
-          defaultOpen={customerAction.required || isPortalHidden}
+          defaultOpen={false}
         >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-2">
@@ -2319,6 +2338,7 @@ export default function JobInteractiveView({
                  title="Shift handoff note"
                  eyebrow="Internal only"
                  description="Capture the risk, promise, or exact next move for the next operator."
+                 defaultOpen={false}
                >
                  <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4">
                     <div className="mb-3 flex items-center justify-between gap-3">
@@ -2335,6 +2355,7 @@ export default function JobInteractiveView({
                  title="Follow-up discipline"
                  eyebrow="Customer promise tracking"
                  description={`Current state: ${followUpState.badgeLabel}. Keep the next touchpoint explicit.`}
+                 defaultOpen={false}
                >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
@@ -2430,56 +2451,61 @@ export default function JobInteractiveView({
 
         {/* RIGHT COL: FILE VAULT & CHAT */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/3">
-                <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center gap-2">
-                     <div>
-                       <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File Vault</h3>
-                       <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">Live proofs, hidden drafts, and source files</p>
-                     </div>
-                     {isStaff && (
-                       <div className="flex items-center gap-2">
-                         <a href={portalHref} target="_blank" className="text-[10px] border border-gray-200 bg-white px-2 py-1 rounded font-bold text-gray-600 hover:border-black hover:text-black">Portal</a>
-                         <button onClick={() => openUploadModal()} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
-                       </div>
-                     )}
+            <OpsDisclosure
+              title="File vault"
+              eyebrow="Advanced ops"
+              description="Proofs, drafts, and source files. Hidden by default to keep the surface clean."
+              defaultOpen={false}
+            >
+              <div className="flex items-center justify-between gap-2 pb-2">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Files on this job</p>
+                  <p className="text-xs text-gray-600">Live proofs, hidden drafts, and source files.</p>
                 </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                    {visibleAssets.map((asset) => {
-                        const isCurrent = viewingAssetId === asset.id;
-                        const linkedItem = asset.job_item_id ? items.find(i => i.id === asset.job_item_id) : null;
-                        return (
-                        <div key={asset.id} onClick={() => loadPreview(asset)} className={`p-2 rounded border cursor-pointer transition-all flex flex-col gap-2 group ${isCurrent ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
-                            <div className="flex items-center gap-2 overflow-hidden">
-                                {asset.asset_type === 'source' ? <FileText size={16} className="text-gray-400"/> : <FileImage size={16} className="text-purple-500"/>}
-                                <div><p className="text-xs font-bold text-gray-700 truncate w-32">{asset.file_name}</p><p className="text-[10px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</p></div>
-                            </div>
-                            <div className="flex flex-wrap gap-1 items-center">
-                                {asset.asset_type === 'source' ? (
-                                  <span className="text-[9px] font-bold bg-gray-100 text-gray-700 px-1.5 rounded border border-gray-200">SOURCE · INTERNAL ONLY</span>
-                                ) : asset.status === 'archived' ? (
-                                  <span className="text-[9px] font-bold bg-gray-100 text-gray-500 px-1.5 rounded border border-gray-200">REPLACED / ARCHIVED</span>
-                                ) : asset.portal_visible === false ? (
-                                  <span className="text-[9px] font-bold bg-amber-100 text-amber-800 px-1.5 rounded border border-amber-200">PROOF EXISTS · NOT SHAREABLE YET</span>
-                                ) : asset.status === 'approved' ? (
-                                  <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1.5 rounded flex items-center gap-1 border border-green-200">LIVE · APPROVED</span>
-                                ) : (
-                                  <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1.5 rounded border border-purple-200">LIVE ON PORTAL · REVIEW OPEN</span>
-                                )}
-                                {linkedItem && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 rounded flex items-center gap-1 border border-blue-200 truncate max-w-full">LINKED: {linkedItem.description}</span>}
-                                {isStaff && asset.asset_type === 'proof' && asset.status !== 'archived' && (
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); toggleAssetPortalVisibility(asset.id, asset.portal_visible === false); }}
-                                    className="text-[9px] font-bold px-2 py-1 rounded border border-gray-200 bg-white hover:border-black transition"
-                                  >
-                                    {asset.portal_visible === false ? 'Share to portal' : 'Hide from portal'}
-                                  </button>
-                                )}
-                            </div>
+                {isStaff && (
+                  <div className="flex items-center gap-2">
+                    <a href={portalHref} target="_blank" className="text-[10px] border border-gray-200 bg-white px-2 py-1 rounded font-bold text-gray-600 hover:border-black hover:text-black">Portal</a>
+                    <button onClick={() => openUploadModal()} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
+                  </div>
+                )}
+              </div>
+              <div className="max-h-[320px] overflow-y-auto p-2 space-y-2">
+                {visibleAssets.map((asset) => {
+                    const isCurrent = viewingAssetId === asset.id;
+                    const linkedItem = asset.job_item_id ? items.find(i => i.id === asset.job_item_id) : null;
+                    return (
+                    <div key={asset.id} onClick={() => loadPreview(asset)} className={`p-2 rounded border cursor-pointer transition-all flex flex-col gap-2 group ${isCurrent ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
+                        <div className="flex items-center gap-2 overflow-hidden">
+                            {asset.asset_type === 'source' ? <FileText size={16} className="text-gray-400"/> : <FileImage size={16} className="text-purple-500"/>}
+                            <div><p className="text-xs font-bold text-gray-700 truncate w-32">{asset.file_name}</p><p className="text-[10px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</p></div>
                         </div>
-                        );
-                    })}
-                </div>
-            </div>
+                        <div className="flex flex-wrap gap-1 items-center">
+                            {asset.asset_type === 'source' ? (
+                              <span className="text-[9px] font-bold bg-gray-100 text-gray-700 px-1.5 rounded border border-gray-200">SOURCE · INTERNAL ONLY</span>
+                            ) : asset.status === 'archived' ? (
+                              <span className="text-[9px] font-bold bg-gray-100 text-gray-500 px-1.5 rounded border border-gray-200">REPLACED / ARCHIVED</span>
+                            ) : asset.portal_visible === false ? (
+                              <span className="text-[9px] font-bold bg-amber-100 text-amber-800 px-1.5 rounded border border-amber-200">PROOF EXISTS · NOT SHAREABLE YET</span>
+                            ) : asset.status === 'approved' ? (
+                              <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1.5 rounded flex items-center gap-1 border border-green-200">LIVE · APPROVED</span>
+                            ) : (
+                              <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1.5 rounded border border-purple-200">LIVE ON PORTAL · REVIEW OPEN</span>
+                            )}
+                            {linkedItem && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 rounded flex items-center gap-1 border border-blue-200 truncate max-w-full">LINKED: {linkedItem.description}</span>}
+                            {isStaff && asset.asset_type === 'proof' && asset.status !== 'archived' && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleAssetPortalVisibility(asset.id, asset.portal_visible === false); }}
+                                className="text-[9px] font-bold px-2 py-1 rounded border border-gray-200 bg-white hover:border-black transition"
+                              >
+                                {asset.portal_visible === false ? 'Share to portal' : 'Hide from portal'}
+                              </button>
+                            )}
+                        </div>
+                    </div>
+                    );
+                })}
+              </div>
+            </OpsDisclosure>
 
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-2/3 overflow-hidden">
                 <div className="flex border-b border-gray-200">
