@@ -1,17 +1,17 @@
 'use client';
 
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertTriangle,
-  Clock,
-  User,
-  Layers,
+  ArrowRightLeft,
   ChevronRight,
+  Clock,
+  FileText,
+  Layers,
   PauseCircle,
   PlayCircle,
-  FileText,
-  ArrowRightLeft,
+  User,
   Users,
 } from 'lucide-react';
 
@@ -31,7 +31,20 @@ type BoardStats = {
   splitOwner: number;
 };
 type StaffOption = { id: string; first_name?: string; email?: string };
-type OwnerLoadRow = { id: string; name: string; jobs: number; activeItems: number; blockedJobs: number; dueTodayJobs: number };
+type OwnerLoadRow = {
+  id: string;
+  name: string;
+  jobs: number;
+  activeItems: number;
+  blockedJobs: number;
+  dueTodayJobs: number;
+  status?: string;
+  reason?: string;
+  jobIds?: string[];
+  reassignmentNeeded?: boolean;
+  suggestedMoves?: number;
+  unclaimedReady?: number;
+};
 
 type Props = {
   columns: BoardColumn[];
@@ -99,32 +112,51 @@ const getOwnerLabel = (staffId: string | null | undefined, staffLookup: Record<s
   return staffLookup[staffId] || 'Assigned';
 };
 
+const deriveOwnerSignal = (owner: OwnerLoadRow) => {
+  const derivedStatus = owner.activeItems >= 8 || owner.blockedJobs >= 3 ? 'overloaded' : owner.activeItems >= 5 || owner.blockedJobs >= 1 ? 'stretched' : 'healthy';
+  const status = (owner.status === 'overloaded' || owner.status === 'stretched' || owner.status === 'healthy' ? owner.status : derivedStatus) as 'healthy' | 'stretched' | 'overloaded';
+  const reassignmentNeeded = owner.reassignmentNeeded ?? (status !== 'healthy' && owner.activeItems >= 5);
+  const suggestedMoves = owner.suggestedMoves ?? (status === 'overloaded' ? Math.max(1, owner.activeItems - 6) : status === 'stretched' ? 1 : 0);
+  const unclaimedReady = owner.unclaimedReady ?? 0;
+  return { status, reassignmentNeeded, suggestedMoves, unclaimedReady };
+};
+
+const SelectionCheckbox = ({ checked, onChange, ariaLabel }: { checked: boolean; onChange: () => void; ariaLabel: string }) => (
+  <button
+    type="button"
+    aria-label={ariaLabel}
+    aria-pressed={checked}
+    onClick={onChange}
+    className={`inline-flex h-5 w-5 items-center justify-center rounded border transition ${checked ? 'border-black bg-black text-white' : 'border-gray-300 bg-white text-transparent hover:border-gray-500'}`}
+  >
+    <span className="text-[11px] font-black">✓</span>
+  </button>
+);
+
 const QueueOwnershipBar = ({
   job,
   staffLookup,
   staffOptions,
   currentUserId,
   onAssignJob,
-  onAssignItem,
 }: {
   job: any;
   staffLookup: Record<string, string>;
   staffOptions: StaffOption[];
   currentUserId?: string | null;
   onAssignJob: (jobId: string, staffId: string) => void;
-  onAssignItem?: (itemId: string, staffId: string | null) => void;
 }) => {
   const assignedTo = job?.assigned_to || '';
   const ownerName = getOwnerLabel(assignedTo, staffLookup);
   const canClaim = Boolean(currentUserId) && assignedTo !== currentUserId;
   const canUnclaim = Boolean(assignedTo);
   const queueItems = Array.isArray(job?.activeItems) && job.activeItems.length ? job.activeItems : Array.isArray(job?.job_items) ? job.job_items : [];
-  const distinctVisibleOwners = new Set(
-    queueItems.map((item: any) => item?.assigned_to).filter(Boolean)
-  ).size;
+  const distinctVisibleOwners = new Set(queueItems.map((item: any) => item?.assigned_to).filter(Boolean)).size;
+  const ownerStatus = job?.ownerLoadStatus as 'healthy' | 'stretched' | 'overloaded' | undefined;
+  const needsReassignment = Boolean(job?.needsReassignment);
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-3">
+    <div className={`rounded-xl border p-3 ${needsReassignment ? 'border-amber-300 bg-amber-50/80' : 'border-gray-200 bg-gray-50/80'}`}>
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.16em] text-gray-400">Queue ownership</p>
@@ -135,9 +167,19 @@ const QueueOwnershipBar = ({
             <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-gray-600 border border-gray-200">
               {queueItems.length} active item{queueItems.length === 1 ? '' : 's'}
             </span>
+            {ownerStatus && ownerStatus !== 'healthy' ? (
+              <span className={`rounded-full px-2.5 py-1 font-semibold border ${ownerStatus === 'overloaded' ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                {ownerStatus === 'overloaded' ? 'Owner overloaded' : 'Owner stretched'}
+              </span>
+            ) : null}
             {distinctVisibleOwners > 1 ? (
               <span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 font-semibold text-violet-700">
                 <Users size={12} /> Mixed item ownership visible
+              </span>
+            ) : null}
+            {needsReassignment ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-white px-2.5 py-1 font-semibold text-amber-800">
+                <AlertTriangle size={12} /> Reassignment recommended
               </span>
             ) : null}
           </div>
@@ -193,6 +235,10 @@ const JobCard = ({
   onAssignItem,
   onOpenItemDrawer,
   formatDate,
+  isSelected,
+  selectedItemIds,
+  onToggleJob,
+  onToggleItem,
 }: {
   job: any;
   staffLookup: Record<string, string>;
@@ -202,6 +248,10 @@ const JobCard = ({
   onAssignItem?: (itemId: string, staffId: string | null) => void;
   onOpenItemDrawer: (itemId: string) => void;
   formatDate: (value?: string | null) => string;
+  isSelected: boolean;
+  selectedItemIds: Set<string>;
+  onToggleJob: (jobId: string) => void;
+  onToggleItem: (itemId: string) => void;
 }) => {
   const items = Array.isArray(job?.job_items) ? job.job_items : job?.activeItems || [];
   const visibleItems = items.slice(0, 3);
@@ -215,45 +265,55 @@ const JobCard = ({
   const inheritedItemCount = visibleItems.filter((item: any) => !item?.assigned_to && job?.assigned_to).length;
 
   return (
-    <div className={`rounded-xl border bg-white shadow-sm transition hover:shadow-md ${bucketMeta[bucket].color}`}>
+    <div className={`rounded-xl border bg-white shadow-sm transition hover:shadow-md ${bucketMeta[bucket].color} ${isSelected ? 'ring-2 ring-black/80' : ''}`}>
       <div className="flex items-start justify-between gap-2 border-b border-gray-100 px-4 py-3">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.14em] text-gray-400">
-            <span className="rounded-full bg-gray-900 px-2.5 py-0.5 text-white">{brand}</span>
-            <span className="text-gray-500">{formatDate(job?.created_at)}</span>
+        <div className="flex min-w-0 gap-3">
+          <div className="pt-1">
+            <SelectionCheckbox checked={isSelected} onChange={() => onToggleJob(job.id)} ariaLabel={`Select ${job?.title || 'job'}`} />
           </div>
-          <Link href={`/dashboard/jobs/${job?.id || ''}`} className="text-base font-bold text-gray-900 hover:text-blue-700">
-            {job?.title || 'Untitled job'}
-          </Link>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
-            <span className={`font-bold ${dueColor}`}>Due: {dueLabel}</span>
-            <span className="rounded-full bg-gray-100 px-2 py-1 font-semibold text-gray-700">#{String(job?.id || '').substring(0, 6).toUpperCase()}</span>
-            <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-1 font-semibold text-gray-600">
-              <User size={12} /> {owner}
-            </span>
-            <span className="rounded-full bg-gray-50 px-2 py-1 font-semibold text-gray-600 border border-gray-200">
-              {activeItems.length} active item{activeItems.length === 1 ? '' : 's'}
-            </span>
-            {queueItems.length > 0 && queueItems.length !== activeItems.length ? (
-              <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 font-semibold text-blue-700">
-                {queueItems.length} in this queue now
+          <div className="space-y-1 min-w-0">
+            <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.14em] text-gray-400">
+              <span className="rounded-full bg-gray-900 px-2.5 py-0.5 text-white">{brand}</span>
+              <span className="text-gray-500">{formatDate(job?.created_at)}</span>
+            </div>
+            <Link href={`/dashboard/jobs/${job?.id || ''}`} className="text-base font-bold text-gray-900 hover:text-blue-700">
+              {job?.title || 'Untitled job'}
+            </Link>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
+              <span className={`font-bold ${dueColor}`}>Due: {dueLabel}</span>
+              <span className="rounded-full bg-gray-100 px-2 py-1 font-semibold text-gray-700">#{String(job?.id || '').substring(0, 6).toUpperCase()}</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-gray-50 px-2 py-1 font-semibold text-gray-600">
+                <User size={12} /> {owner}
               </span>
-            ) : null}
-            {job?.isOrphaned ? (
-              <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 font-semibold text-red-700">
-                Orphaned work
+              <span className="rounded-full bg-gray-50 px-2 py-1 font-semibold text-gray-600 border border-gray-200">
+                {activeItems.length} active item{activeItems.length === 1 ? '' : 's'}
               </span>
-            ) : null}
-            {job?.isAgingWait ? (
-              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 font-semibold text-amber-700">
-                Waiting {job?.ageDays}+d
-              </span>
-            ) : null}
-            {job?.isSplitOwner ? (
-              <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-1 font-semibold text-violet-700">
-                Split owner
-              </span>
-            ) : null}
+              {queueItems.length > 0 && queueItems.length !== activeItems.length ? (
+                <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 font-semibold text-blue-700">
+                  {queueItems.length} in this queue now
+                </span>
+              ) : null}
+              {job?.isOrphaned ? (
+                <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 font-semibold text-red-700">
+                  Orphaned work
+                </span>
+              ) : null}
+              {job?.isAgingWait ? (
+                <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 font-semibold text-amber-700">
+                  Waiting {job?.ageDays}+d
+                </span>
+              ) : null}
+              {job?.isSplitOwner ? (
+                <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-1 font-semibold text-violet-700">
+                  Split owner
+                </span>
+              ) : null}
+              {job?.needsReassignment ? (
+                <span className="rounded-full border border-amber-300 bg-white px-2 py-1 font-semibold text-amber-800">
+                  Reassign to protect flow
+                </span>
+              ) : null}
+            </div>
           </div>
         </div>
         <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${bucketMeta[bucket].badge}`}>
@@ -268,7 +328,6 @@ const JobCard = ({
           staffOptions={staffOptions}
           currentUserId={currentUserId}
           onAssignJob={onAssignJob}
-          onAssignItem={onAssignItem}
         />
 
         {inheritedItemCount > 0 ? (
@@ -284,30 +343,36 @@ const JobCard = ({
           const itemOwnerSource = item?.assigned_to ? 'Item owner' : job?.assigned_to ? 'Inherited from queue owner' : 'Needs claim';
           const statusLabel = item?.status || nextStep || 'Pending';
           const isOffQueue = job?.current_step && item?.status && item.status !== job.current_step && item.status !== 'Completed';
+          const isItemSelected = selectedItemIds.has(item.id);
           return (
-            <div key={item?.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+            <div key={item?.id} className={`rounded-lg border p-3 ${isItemSelected ? 'border-black bg-white' : 'border-gray-100 bg-gray-50'}`}>
               <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="text-sm font-semibold text-gray-900">{item?.description || 'Item'}</p>
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
-                    {item?.quantity ? <span className="font-bold">Qty {Number(item.quantity).toLocaleString()}</span> : null}
-                    {item?.size ? <span className="rounded-full bg-white px-2 py-1 font-semibold text-gray-700 border border-gray-200">{item.size}</span> : null}
-                    <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 font-semibold text-gray-700 border border-gray-200">
-                      <User size={11} /> {itemOwner}
-                    </span>
-                    <span className="rounded-full bg-white px-2 py-1 font-semibold text-gray-500 border border-gray-200">
-                      {itemOwnerSource}
-                    </span>
-                    {waiting ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 font-black uppercase tracking-wide text-amber-800">
-                        <AlertTriangle size={12} /> Waiting on art
+                <div className="flex min-w-0 gap-3">
+                  <div className="pt-0.5">
+                    <SelectionCheckbox checked={isItemSelected} onChange={() => onToggleItem(item.id)} ariaLabel={`Select ${item?.description || 'item'}`} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">{item?.description || 'Item'}</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-600">
+                      {item?.quantity ? <span className="font-bold">Qty {Number(item.quantity).toLocaleString()}</span> : null}
+                      {item?.size ? <span className="rounded-full bg-white px-2 py-1 font-semibold text-gray-700 border border-gray-200">{item.size}</span> : null}
+                      <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 font-semibold text-gray-700 border border-gray-200">
+                        <User size={11} /> {itemOwner}
                       </span>
-                    ) : null}
-                    {isOffQueue ? (
-                      <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-1 font-semibold text-violet-700">
-                        Working in {item.status}
+                      <span className="rounded-full bg-white px-2 py-1 font-semibold text-gray-500 border border-gray-200">
+                        {itemOwnerSource}
                       </span>
-                    ) : null}
+                      {waiting ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 font-black uppercase tracking-wide text-amber-800">
+                          <AlertTriangle size={12} /> Waiting on art
+                        </span>
+                      ) : null}
+                      {isOffQueue ? (
+                        <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-1 font-semibold text-violet-700">
+                          Working in {item.status}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
                 <span className="rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-gray-700 border border-gray-200">
@@ -381,6 +446,103 @@ const JobCard = ({
 export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, staffLookup, staffOptions, currentUserId, onAssignJob, onAssignItem, onOpenItemDrawer, formatDate }: Props) {
   const safeColumns = columns && columns.length ? columns : [{ queueName: 'All Work', jobs: [] }];
   const bucketOrder: BucketKey[] = ['blocked', 'waiting', 'ready', 'progress'];
+  const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [bulkAssignee, setBulkAssignee] = useState<string>('');
+  const [bulkScope, setBulkScope] = useState<'jobs' | 'items' | 'both'>('both');
+  const [applyingBulk, setApplyingBulk] = useState(false);
+
+  const ownerStatusMap = useMemo(
+    () =>
+      ownerLoadRows.reduce((acc, owner) => {
+        acc[owner.id] = { ...owner, ...deriveOwnerSignal(owner) };
+        return acc;
+      }, {} as Record<string, OwnerLoadRow & { status: 'healthy' | 'stretched' | 'overloaded'; reassignmentNeeded: boolean; suggestedMoves: number; unclaimedReady: number }>),
+    [ownerLoadRows]
+  );
+
+  const jobsWithSignals = useMemo(
+    () =>
+      safeColumns.map((column) => ({
+        ...column,
+        jobs: (column.jobs || []).map((job: any) => {
+          const ownerSignal = job?.assigned_to ? ownerStatusMap[job.assigned_to] : undefined;
+          const activeItems = Array.isArray(job?.activeItems) ? job.activeItems : [];
+          const actionableItems = activeItems.filter((item: any) => !item?.isBlocked && !item?.waitingOnArt && item?.status !== 'Completed');
+          const needsReassignment = Boolean(
+            ownerSignal?.reassignmentNeeded && actionableItems.length > 0 && (job?.isReady || !job?.isBlocked)
+          );
+          return {
+            ...job,
+            ownerLoadStatus: ownerSignal?.status,
+            ownerSuggestedMoves: ownerSignal?.suggestedMoves || 0,
+            needsReassignment,
+          };
+        }),
+      })),
+    [safeColumns, ownerStatusMap]
+  );
+
+  const reassignmentCandidates = useMemo(() => {
+    const jobs = jobsWithSignals.flatMap((column) => column.jobs || []);
+    return jobs
+      .filter((job: any) => job?.needsReassignment)
+      .sort((a: any, b: any) => {
+        const aRisk = Number(Boolean(a?.isLate)) * 4 + Number(Boolean(a?.isDueToday)) * 2 + (a?.ownerSuggestedMoves || 0);
+        const bRisk = Number(Boolean(b?.isLate)) * 4 + Number(Boolean(b?.isDueToday)) * 2 + (b?.ownerSuggestedMoves || 0);
+        return bRisk - aRisk;
+      })
+      .slice(0, 6);
+  }, [jobsWithSignals]);
+
+  const selectedJobCount = selectedJobs.size;
+  const selectedItemCount = selectedItems.size;
+  const hasSelection = selectedJobCount + selectedItemCount > 0;
+
+  const toggleJobSelection = (jobId: string) => {
+    setSelectedJobs((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  };
+
+  const toggleItemSelection = (itemId: string) => {
+    setSelectedItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedJobs(new Set());
+    setSelectedItems(new Set());
+    setBulkScope('both');
+  };
+
+  const applyBulkAssignment = async (staffId: string | null) => {
+    if (!hasSelection || applyingBulk) return;
+    setApplyingBulk(true);
+    try {
+      if ((bulkScope === 'jobs' || bulkScope === 'both') && selectedJobs.size > 0) {
+        for (const jobId of Array.from(selectedJobs)) {
+          await Promise.resolve(onAssignJob(jobId, staffId || ''));
+        }
+      }
+      if ((bulkScope === 'items' || bulkScope === 'both') && selectedItems.size > 0 && onAssignItem) {
+        for (const itemId of Array.from(selectedItems)) {
+          await Promise.resolve(onAssignItem(itemId, staffId));
+        }
+      }
+      clearSelection();
+      setBulkAssignee('');
+    } finally {
+      setApplyingBulk(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -428,60 +590,171 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
       </div>
 
       <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Manager load scan</p>
             <h3 className="text-lg font-black text-gray-900">Owner load at a glance</h3>
-            <p className="text-sm text-gray-500">Use this to spot overload before it turns into missed handoffs.</p>
+            <p className="text-sm text-gray-500">Soft WIP signals only matter if the floor lead can move work. Bulk select jobs/items below, then reassign from one bar.</p>
           </div>
           <div className="text-xs font-semibold text-gray-500">Sorted by active item load, then blocked jobs.</div>
         </div>
+
+        {hasSelection ? (
+          <div className="mt-4 rounded-2xl border border-black bg-gray-900 p-4 text-white shadow-sm">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-300">Bulk reassignment</p>
+                <p className="mt-1 text-sm font-semibold text-white">{selectedJobCount} job{selectedJobCount === 1 ? '' : 's'} and {selectedItemCount} item{selectedItemCount === 1 ? '' : 's'} selected.</p>
+                <p className="text-xs text-gray-300">Use jobs for queue-owner shifts. Use items for partial offloads when the whole job should stay put.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={bulkScope}
+                  onChange={(e) => setBulkScope(e.target.value as 'jobs' | 'items' | 'both')}
+                  className="rounded-full border border-white/20 bg-white/10 px-3 py-2 text-xs font-black uppercase tracking-wide text-white"
+                >
+                  <option value="both">Apply to jobs + items</option>
+                  <option value="jobs">Jobs only</option>
+                  <option value="items">Items only</option>
+                </select>
+                <select
+                  value={bulkAssignee}
+                  onChange={(e) => setBulkAssignee(e.target.value)}
+                  className="rounded-full border border-white/20 bg-white/10 px-3 py-2 text-xs font-black uppercase tracking-wide text-white"
+                >
+                  <option value="">Choose owner…</option>
+                  {staffOptions.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.first_name || s.email?.split('@')[0] || 'Staff'}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={!bulkAssignee || applyingBulk}
+                  onClick={() => applyBulkAssignment(bulkAssignee || null)}
+                  className="rounded-full bg-white px-4 py-2 text-xs font-black uppercase tracking-wide text-black disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {applyingBulk ? 'Applying…' : 'Reassign selected'}
+                </button>
+                <button
+                  type="button"
+                  disabled={applyingBulk}
+                  onClick={() => applyBulkAssignment(null)}
+                  className="rounded-full border border-white/20 bg-transparent px-4 py-2 text-xs font-black uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Clear owner
+                </button>
+                <button
+                  type="button"
+                  disabled={applyingBulk}
+                  onClick={clearSelection}
+                  className="rounded-full border border-white/20 bg-transparent px-4 py-2 text-xs font-black uppercase tracking-wide text-gray-300 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {reassignmentCandidates.length > 0 ? (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-700">Reassignment needed</p>
+                <h4 className="mt-1 text-base font-black text-gray-900">Move these first before adding new work</h4>
+                <p className="text-sm text-gray-600">These jobs sit under stretched/overloaded owners and still look movable.</p>
+              </div>
+              <div className="text-xs font-semibold text-amber-800">Tip: select the job card to move the whole queue owner, or select item rows for partial relief.</div>
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {reassignmentCandidates.map((job: any) => (
+                <button
+                  key={job.id}
+                  type="button"
+                  onClick={() => toggleJobSelection(job.id)}
+                  className={`rounded-xl border px-3 py-3 text-left transition ${selectedJobs.has(job.id) ? 'border-black bg-white shadow-sm' : 'border-amber-200 bg-white/80 hover:border-amber-400'}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-gray-900 truncate">{job.title || 'Untitled job'}</p>
+                      <p className="mt-1 text-[11px] text-gray-600">{job.queueName || job.current_step || 'Queue pending'} • {getOwnerLabel(job.assigned_to, staffLookup)}</p>
+                    </div>
+                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-amber-800">
+                      {job.ownerLoadStatus === 'overloaded' ? 'Hot' : 'Watch'}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         {ownerLoadRows.length === 0 ? (
           <div className="mt-4 rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-400">No owner load to show yet.</div>
         ) : (
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {ownerLoadRows.map((owner) => (
-              <div key={owner.id} className="rounded-2xl border border-gray-200 bg-gray-50/70 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-black text-gray-900">{owner.name}</p>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Owner load</p>
+            {ownerLoadRows.map((owner) => {
+              const signal = deriveOwnerSignal(owner);
+              const status = signal.status;
+              const tone = status === 'overloaded' ? 'bg-red-100 text-red-700' : status === 'stretched' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700';
+              const fillWidth = Math.min(100, Math.round((owner.activeItems / 8) * 100));
+              return (
+                <div key={owner.id} className={`rounded-2xl border p-4 ${signal.reassignmentNeeded ? 'border-amber-300 bg-amber-50/60' : 'border-gray-200 bg-gray-50/70'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-black text-gray-900">{owner.name}</p>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Owner load</p>
+                    </div>
+                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${tone}`}>
+                      {status === 'overloaded' ? 'Overloaded' : status === 'stretched' ? 'Watch' : 'Stable'}
+                    </span>
                   </div>
-                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${owner.activeItems >= 8 || owner.blockedJobs >= 3 ? 'bg-red-100 text-red-700' : owner.activeItems >= 5 || owner.blockedJobs >= 1 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                    {owner.activeItems >= 8 || owner.blockedJobs >= 3 ? 'Overloaded' : owner.activeItems >= 5 || owner.blockedJobs >= 1 ? 'Watch' : 'Stable'}
-                  </span>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-white border border-gray-200">
+                    <div className={`h-full rounded-full ${status === 'overloaded' ? 'bg-red-500' : status === 'stretched' ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${fillWidth}%` }} />
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                    <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
+                      <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Items</p>
+                      <p className="mt-1 text-2xl font-black text-gray-900">{owner.activeItems}</p>
+                    </div>
+                    <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
+                      <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Jobs</p>
+                      <p className="mt-1 text-2xl font-black text-gray-900">{owner.jobs}</p>
+                    </div>
+                    <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
+                      <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">At risk</p>
+                      <p className="mt-1 text-2xl font-black text-gray-900">{owner.blockedJobs + owner.dueTodayJobs}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-gray-600">
+                    <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-red-700">{owner.blockedJobs} blocked</span>
+                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">{owner.dueTodayJobs} due now</span>
+                    {signal.unclaimedReady > 0 ? <span className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-gray-700">{signal.unclaimedReady} unclaimed ready</span> : null}
+                  </div>
+                  <p className="mt-3 text-[11px] font-semibold text-gray-600">
+                    {signal.reassignmentNeeded
+                      ? `Reassign ${signal.suggestedMoves || 1} ${signal.suggestedMoves === 1 ? 'item' : 'items'} to get this lane back under control.`
+                      : status === 'stretched'
+                        ? 'Watch this owner. One more rush or block will tip the lane.'
+                        : 'Load looks workable right now.'}
+                  </p>
                 </div>
-                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
-                    <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Items</p>
-                    <p className="mt-1 text-2xl font-black text-gray-900">{owner.activeItems}</p>
-                  </div>
-                  <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
-                    <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Jobs</p>
-                    <p className="mt-1 text-2xl font-black text-gray-900">{owner.jobs}</p>
-                  </div>
-                  <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
-                    <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">At risk</p>
-                    <p className="mt-1 text-2xl font-black text-gray-900">{owner.blockedJobs + owner.dueTodayJobs}</p>
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-gray-600">
-                  <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-red-700">{owner.blockedJobs} blocked</span>
-                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">{owner.dueTodayJobs} due now</span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
 
       <div className="flex gap-4 overflow-x-auto pb-4">
-        {safeColumns.map((column) => {
+        {jobsWithSignals.map((column) => {
           const columnJobs = column.jobs || [];
           const dueToday = columnJobs.filter((job: any) => job?.isDueToday).length;
           const overdue = columnJobs.filter((job: any) => job?.isLate).length;
           const unassigned = columnJobs.filter((job: any) => !job?.assigned_to).length;
           const activeItemCount = columnJobs.reduce((sum: number, job: any) => sum + (Array.isArray(job?.activeItems) ? job.activeItems.length : 0), 0);
+          const reassignmentCount = columnJobs.filter((job: any) => job?.needsReassignment).length;
 
           return (
             <div key={column.queueName} className="min-w-[360px] flex-1 rounded-3xl border border-gray-200 bg-white shadow-sm">
@@ -498,6 +771,7 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
                   <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-red-700">{overdue} overdue</span>
                   <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">{dueToday} due today</span>
                   <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1">{unassigned} unassigned</span>
+                  {reassignmentCount > 0 ? <span className="rounded-full border border-amber-300 bg-white px-2.5 py-1 text-amber-800">{reassignmentCount} rebalance</span> : null}
                 </div>
               </div>
 
@@ -532,6 +806,10 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
                             onAssignItem={onAssignItem}
                             onOpenItemDrawer={onOpenItemDrawer}
                             formatDate={formatDate}
+                            isSelected={selectedJobs.has(job.id)}
+                            selectedItemIds={selectedItems}
+                            onToggleJob={toggleJobSelection}
+                            onToggleItem={toggleItemSelection}
                           />
                         ))}
                       </div>
