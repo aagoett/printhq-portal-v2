@@ -2167,199 +2167,6 @@ export default function JobInteractiveView({
           </div>
         </OpsDisclosure>
 
-        <div className="space-y-4">
-          <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Proof / file handoff</p>
-                <h2 className="mt-1 text-xl font-black text-gray-900">What CSR can safely tell the customer</h2>
-              </div>
-              <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700">Portal {portalState.label}</span>
-            </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-              {proofWorkflowCards.map((card) => (
-                <div
-                  key={card.key}
-                  className={`rounded-2xl border px-4 py-4 ${card.tone === 'green' ? 'border-green-200 bg-green-50 text-green-900' : card.tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-900' : card.tone === 'orange' ? 'border-orange-200 bg-orange-50 text-orange-900' : card.tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-900' : card.tone === 'red' ? 'border-red-200 bg-red-50 text-red-900' : card.tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-gray-200 bg-gray-50 text-gray-900'}`}
-                >
-                  <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-70">{card.label}</p>
-                  <p className="mt-2 text-sm font-bold leading-snug">{card.value}</p>
-                  <p className="mt-2 text-xs opacity-80">{card.detail}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className={`rounded-2xl border p-4 shadow-sm ${releaseGate.tone === 'red' ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Production release gate</p>
-                <h2 className={`mt-1 text-xl font-black ${releaseGate.tone === 'red' ? 'text-red-900' : 'text-green-900'}`}>{releaseGate.label}</h2>
-                <p className={`mt-2 text-sm ${releaseGate.tone === 'red' ? 'text-red-800' : 'text-green-800'}`}>{releaseGate.detail}</p>
-                <p className={`mt-2 text-xs font-semibold uppercase tracking-[0.18em] ${releaseGate.tone === 'red' ? 'text-red-700' : 'text-green-700'}`}>Next move: {releaseGate.nextStep}</p>
-              </div>
-              <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${releaseGate.tone === 'red' ? 'border-red-200 bg-white text-red-700' : 'border-green-200 bg-white text-green-700'}`}>{releaseBlocked ? 'Blocked' : 'Clear'}</span>
-            </div>
-            <div className="mt-4 grid gap-2 sm:grid-cols-3">
-              {releaseChecklist.map((item) => (
-                <div key={item.key} className={`rounded-2xl border px-3 py-3 ${item.done ? 'border-green-200 bg-white text-green-800' : 'border-red-200 bg-white text-red-800'}`}>
-                  <p className="text-[10px] font-black uppercase tracking-[0.18em]">{item.done ? 'Clear' : 'Open gate'}</p>
-                  <p className="mt-1 text-sm font-bold">{item.label}</p>
-                  <p className="mt-1 text-xs opacity-80">{item.note}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          </div>
-
-          <OpsDisclosure
-            title="Blockers, holds, and release reasons"
-            eyebrow="Advanced ops"
-            description={`${jobBlockers.length} active blocker${jobBlockers.length === 1 ? '' : 's'} tracked across art, approval, and scheduling.`}
-            defaultOpen={false}
-          >
-            {isStaff && (
-              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
-                <div className="grid gap-2 sm:grid-cols-5">
-                  <select value={blockerType} onChange={(e) => setBlockerType(e.target.value as any)} className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-[0.16em]">
-                    <option value="artwork">Waiting on artwork</option>
-                    <option value="proof">Proof approval</option>
-                    <option value="customer">Customer action</option>
-                    <option value="spec">Specs / build missing</option>
-                    <option value="payment">Payment / PO</option>
-                    <option value="inventory">Paper / stock</option>
-                    <option value="scheduling">Scheduling hold</option>
-                    <option value="other">Other hold</option>
-                  </select>
-                  <select value={blockerSeverity} onChange={(e) => setBlockerSeverity(e.target.value as any)} className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-[0.16em]">
-                    <option value="block">Block</option>
-                    <option value="hold">Hold</option>
-                    <option value="warn">Warn</option>
-                  </select>
-                  <select value={blockerItemId || ''} onChange={(e) => setBlockerItemId(e.target.value ? e.target.value : null)} className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-[0.16em]">
-                    <option value="">Job-wide</option>
-                    {items.map((it: any) => (
-                      <option key={it.id} value={it.id}>Item: {it.description}</option>
-                    ))}
-                  </select>
-                  <input value={blockerReason} onChange={(e) => setBlockerReason(e.target.value)} placeholder="Reason / what's blocked" className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px]" />
-                  <input value={blockerNextStep} onChange={(e) => setBlockerNextStep(e.target.value)} placeholder="Next step to clear" className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px]" />
-                </div>
-                <div className="flex justify-end">
-                  <button onClick={handleCreateBlocker} className="inline-flex items-center gap-2 rounded border border-gray-300 bg-black px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-white shadow-sm hover:bg-gray-800">Add blocker / hold</button>
-                </div>
-              </div>
-            )}
-
-            <div className="mt-4 space-y-3">
-              {jobBlockers.length === 0 ? (
-                <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-4 text-sm text-green-800">
-                  No active blocker detected from art, approval, portal handoff, or missing line-item setup.
-                </div>
-              ) : jobBlockers.map((blocker) => {
-                const linkedItem = blocker.job_item_id ? items.find((i: any) => i.id === blocker.job_item_id) : null;
-                const blockerId = blocker.source === 'explicit' ? (blocker.id || blocker.key.replace('explicit-', '')) : null;
-                return (
-                <div key={blocker.key} className={`rounded-2xl border px-4 py-4 ${blocker.tone === 'red' ? 'border-red-200 bg-red-50 text-red-900' : blocker.tone === 'orange' ? 'border-orange-200 bg-orange-50 text-orange-900' : blocker.tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-900' : blocker.tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-900' : blocker.tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-gray-200 bg-gray-50 text-gray-900'}`}>
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-[10px] font-black uppercase tracking-[0.18em]">{blocker.blocking ? 'Blocker reason' : 'Waiting / Warning'}</p>
-                      {blocker.source === 'explicit' ? (
-                        <span className="text-[9px] rounded-full border border-gray-300 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-gray-700">Recorded</span>
-                      ) : (
-                        <span className="text-[9px] rounded-full border border-gray-300 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-gray-500">System</span>
-                      )}
-                      {blocker.blocking ? (
-                        <span className="text-[9px] rounded-full border border-red-200 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-red-700">Blocking</span>
-                      ) : (
-                        <span className="text-[9px] rounded-full border border-amber-200 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-amber-700">Waiting</span>
-                      )}
-                      {linkedItem && <span className="text-[9px] rounded-full border border-blue-200 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-blue-700">Item: {linkedItem.description}</span>}
-                    </div>
-                    {isStaff && blockerId && (
-                      <button onClick={() => resolveBlocker(blockerId)} className="text-[10px] font-black uppercase tracking-[0.18em] rounded-full border border-gray-300 bg-white px-2 py-1 text-gray-700 hover:border-black">Resolve</button>
-                    )}
-                  </div>
-                  <p className="mt-1 text-sm font-bold">{blocker.label}</p>
-                  <p className="mt-2 text-sm opacity-90">{blocker.detail}</p>
-                  <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] opacity-80">What must happen: {blocker.nextStep}</p>
-                </div>
-              );})}
-            </div>
-          </OpsDisclosure>
-        </div>
-
-        <OpsDisclosure
-          title="Portal handoff controls"
-          eyebrow="Advanced ops"
-          description={`${portalState.label}. Use this when CSR needs to change what the customer can see.`}
-          defaultOpen={false}
-        >
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Portal handoff</p>
-                <span className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${portalState.badgeClass}`}>{portalState.label}</span>
-              </div>
-              <p className="max-w-3xl text-sm text-gray-700">{portalState.description}</p>
-              <p className="max-w-3xl text-xs font-semibold uppercase tracking-[0.18em] text-gray-600">Customer next action: {portalNextAction}</p>
-              {customerAction.required && (
-                <div className={`rounded-xl border px-3 py-2 text-sm ${customerAction.tone === 'orange' ? 'bg-orange-50 border-orange-200 text-orange-800' : customerAction.tone === 'blue' ? 'bg-purple-50 border-purple-200 text-purple-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
-                  <p className="text-[10px] font-black uppercase tracking-[0.18em]">Action live on portal</p>
-                  <p className="font-semibold">{customerAction.label}</p>
-                  <p className="text-xs opacity-80">{customerAction.description}</p>
-                </div>
-              )}
-              {isStaff && (
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold uppercase text-gray-500">Customer action note (portal-visible)</label>
-                  <textarea value={customerActionNote} onChange={(e) => setCustomerActionNote(e.target.value)} className="w-full rounded-lg border border-gray-200 p-2 text-sm" placeholder="What do you need from the customer?" />
-                  <div className="flex flex-wrap gap-2">
-                    <button onClick={() => setCustomerAction('upload_artwork', customerActionNote || 'Please upload artwork or copy to proceed.')} className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-orange-800 hover:border-orange-300">Request artwork</button>
-                    <button onClick={() => setCustomerAction('approve_proof', customerActionNote || 'Review and approve the latest proof.')} className="inline-flex items-center gap-2 rounded-full border border-purple-200 bg-purple-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-purple-800 hover:border-purple-300">Require proof approval</button>
-                    <button onClick={clearCustomerAction} className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700 hover:border-black">Clear action</button>
-                  </div>
-                </div>
-              )}
-              <div className="flex flex-wrap gap-2 text-[11px] text-gray-600">
-                <span className="rounded-full border border-white/70 bg-white px-3 py-1">Live proofs {sharedPortalCount}</span>
-                <span className="rounded-full border border-white/70 bg-white px-3 py-1">Archived proofs {archivedProofCount}</span>
-                <span className="rounded-full border border-white/70 bg-white px-3 py-1">Customer-visible steps {items.reduce((sum, item) => sum + ((item.job_item_steps || []).filter((step: any) => step.is_internal === false).length), 0)}</span>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <a href={portalHref} target="_blank" className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-gray-700 hover:border-black hover:text-black">
-                <ExternalLink size={14} /> Open Portal
-              </a>
-              <button
-                type="button"
-                onClick={setPortalShell}
-                disabled={portalActionLoading}
-                className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-gray-700 hover:border-black hover:text-black disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Globe size={14} /> {isPortalShell ? 'Shell live' : 'Shell only'}
-              </button>
-              <button
-                type="button"
-                onClick={() => openUploadModal()}
-                disabled={portalActionLoading}
-                className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Globe size={14} /> {isPortalProofLive ? 'Replace portal proof' : 'Share proof to portal'}
-              </button>
-              <button
-                type="button"
-                onClick={isPortalHidden ? resetPortalInternal : hidePortalFromCustomer}
-                disabled={portalActionLoading}
-                className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-black uppercase tracking-[0.18em] ${isPortalHidden ? 'border-green-200 bg-green-50 text-green-700 hover:border-green-400' : 'border-red-200 bg-red-50 text-red-700 hover:border-red-400'} disabled:opacity-50 disabled:cursor-not-allowed`}
-              >
-                {isPortalHidden ? 'Restore internal-only' : 'Hide from portal'}
-              </button>
-            </div>
-          </div>
-        </OpsDisclosure>
       </div>
 
       {/* MAIN LAYOUT */}
@@ -2641,6 +2448,203 @@ export default function JobInteractiveView({
             </div>
         </div>
       </div>
+
+    <div className="max-w-[1920px] mx-auto w-full px-4 mt-4 space-y-4">
+        <div className="space-y-4">
+          <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Proof / file handoff</p>
+                <h2 className="mt-1 text-xl font-black text-gray-900">What CSR can safely tell the customer</h2>
+              </div>
+              <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700">Portal {portalState.label}</span>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              {proofWorkflowCards.map((card) => (
+                <div
+                  key={card.key}
+                  className={`rounded-2xl border px-4 py-4 ${card.tone === 'green' ? 'border-green-200 bg-green-50 text-green-900' : card.tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-900' : card.tone === 'orange' ? 'border-orange-200 bg-orange-50 text-orange-900' : card.tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-900' : card.tone === 'red' ? 'border-red-200 bg-red-50 text-red-900' : card.tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-gray-200 bg-gray-50 text-gray-900'}`}
+                >
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-70">{card.label}</p>
+                  <p className="mt-2 text-sm font-bold leading-snug">{card.value}</p>
+                  <p className="mt-2 text-xs opacity-80">{card.detail}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className={`rounded-2xl border p-4 shadow-sm ${releaseGate.tone === 'red' ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Production release gate</p>
+                <h2 className={`mt-1 text-xl font-black ${releaseGate.tone === 'red' ? 'text-red-900' : 'text-green-900'}`}>{releaseGate.label}</h2>
+                <p className={`mt-2 text-sm ${releaseGate.tone === 'red' ? 'text-red-800' : 'text-green-800'}`}>{releaseGate.detail}</p>
+                <p className={`mt-2 text-xs font-semibold uppercase tracking-[0.18em] ${releaseGate.tone === 'red' ? 'text-red-700' : 'text-green-700'}`}>Next move: {releaseGate.nextStep}</p>
+              </div>
+              <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${releaseGate.tone === 'red' ? 'border-red-200 bg-white text-red-700' : 'border-green-200 bg-white text-green-700'}`}>{releaseBlocked ? 'Blocked' : 'Clear'}</span>
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              {releaseChecklist.map((item) => (
+                <div key={item.key} className={`rounded-2xl border px-3 py-3 ${item.done ? 'border-green-200 bg-white text-green-800' : 'border-red-200 bg-white text-red-800'}`}>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em]">{item.done ? 'Clear' : 'Open gate'}</p>
+                  <p className="mt-1 text-sm font-bold">{item.label}</p>
+                  <p className="mt-1 text-xs opacity-80">{item.note}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          </div>
+
+          <OpsDisclosure
+            title="Blockers, holds, and release reasons"
+            eyebrow="Advanced ops"
+            description={`${jobBlockers.length} active blocker${jobBlockers.length === 1 ? '' : 's'} tracked across art, approval, and scheduling.`}
+            defaultOpen={false}
+          >
+            {isStaff && (
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
+                <div className="grid gap-2 sm:grid-cols-5">
+                  <select value={blockerType} onChange={(e) => setBlockerType(e.target.value as any)} className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-[0.16em]">
+                    <option value="artwork">Waiting on artwork</option>
+                    <option value="proof">Proof approval</option>
+                    <option value="customer">Customer action</option>
+                    <option value="spec">Specs / build missing</option>
+                    <option value="payment">Payment / PO</option>
+                    <option value="inventory">Paper / stock</option>
+                    <option value="scheduling">Scheduling hold</option>
+                    <option value="other">Other hold</option>
+                  </select>
+                  <select value={blockerSeverity} onChange={(e) => setBlockerSeverity(e.target.value as any)} className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-[0.16em]">
+                    <option value="block">Block</option>
+                    <option value="hold">Hold</option>
+                    <option value="warn">Warn</option>
+                  </select>
+                  <select value={blockerItemId || ''} onChange={(e) => setBlockerItemId(e.target.value ? e.target.value : null)} className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-[0.16em]">
+                    <option value="">Job-wide</option>
+                    {items.map((it: any) => (
+                      <option key={it.id} value={it.id}>Item: {it.description}</option>
+                    ))}
+                  </select>
+                  <input value={blockerReason} onChange={(e) => setBlockerReason(e.target.value)} placeholder="Reason / what's blocked" className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px]" />
+                  <input value={blockerNextStep} onChange={(e) => setBlockerNextStep(e.target.value)} placeholder="Next step to clear" className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px]" />
+                </div>
+                <div className="flex justify-end">
+                  <button onClick={handleCreateBlocker} className="inline-flex items-center gap-2 rounded border border-gray-300 bg-black px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-white shadow-sm hover:bg-gray-800">Add blocker / hold</button>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-4 space-y-3">
+              {jobBlockers.length === 0 ? (
+                <div className="rounded-2xl border border-green-200 bg-green-50 px-4 py-4 text-sm text-green-800">
+                  No active blocker detected from art, approval, portal handoff, or missing line-item setup.
+                </div>
+              ) : jobBlockers.map((blocker) => {
+                const linkedItem = blocker.job_item_id ? items.find((i: any) => i.id === blocker.job_item_id) : null;
+                const blockerId = blocker.source === 'explicit' ? (blocker.id || blocker.key.replace('explicit-', '')) : null;
+                return (
+                <div key={blocker.key} className={`rounded-2xl border px-4 py-4 ${blocker.tone === 'red' ? 'border-red-200 bg-red-50 text-red-900' : blocker.tone === 'orange' ? 'border-orange-200 bg-orange-50 text-orange-900' : blocker.tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-900' : blocker.tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-900' : blocker.tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-gray-200 bg-gray-50 text-gray-900'}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em]">{blocker.blocking ? 'Blocker reason' : 'Waiting / Warning'}</p>
+                      {blocker.source === 'explicit' ? (
+                        <span className="text-[9px] rounded-full border border-gray-300 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-gray-700">Recorded</span>
+                      ) : (
+                        <span className="text-[9px] rounded-full border border-gray-300 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-gray-500">System</span>
+                      )}
+                      {blocker.blocking ? (
+                        <span className="text-[9px] rounded-full border border-red-200 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-red-700">Blocking</span>
+                      ) : (
+                        <span className="text-[9px] rounded-full border border-amber-200 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-amber-700">Waiting</span>
+                      )}
+                      {linkedItem && <span className="text-[9px] rounded-full border border-blue-200 bg-white px-2 py-0.5 font-black uppercase tracking-[0.18em] text-blue-700">Item: {linkedItem.description}</span>}
+                    </div>
+                    {isStaff && blockerId && (
+                      <button onClick={() => resolveBlocker(blockerId)} className="text-[10px] font-black uppercase tracking-[0.18em] rounded-full border border-gray-300 bg-white px-2 py-1 text-gray-700 hover:border-black">Resolve</button>
+                    )}
+                  </div>
+                  <p className="mt-1 text-sm font-bold">{blocker.label}</p>
+                  <p className="mt-2 text-sm opacity-90">{blocker.detail}</p>
+                  <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] opacity-80">What must happen: {blocker.nextStep}</p>
+                </div>
+              );})}
+            </div>
+          </OpsDisclosure>
+        </div>
+
+        <OpsDisclosure
+          title="Portal handoff controls"
+          eyebrow="Advanced ops"
+          description={`${portalState.label}. Use this when CSR needs to change what the customer can see.`}
+          defaultOpen={false}
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Portal handoff</p>
+                <span className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${portalState.badgeClass}`}>{portalState.label}</span>
+              </div>
+              <p className="max-w-3xl text-sm text-gray-700">{portalState.description}</p>
+              <p className="max-w-3xl text-xs font-semibold uppercase tracking-[0.18em] text-gray-600">Customer next action: {portalNextAction}</p>
+              {customerAction.required && (
+                <div className={`rounded-xl border px-3 py-2 text-sm ${customerAction.tone === 'orange' ? 'bg-orange-50 border-orange-200 text-orange-800' : customerAction.tone === 'blue' ? 'bg-purple-50 border-purple-200 text-purple-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em]">Action live on portal</p>
+                  <p className="font-semibold">{customerAction.label}</p>
+                  <p className="text-xs opacity-80">{customerAction.description}</p>
+                </div>
+              )}
+              {isStaff && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase text-gray-500">Customer action note (portal-visible)</label>
+                  <textarea value={customerActionNote} onChange={(e) => setCustomerActionNote(e.target.value)} className="w-full rounded-lg border border-gray-200 p-2 text-sm" placeholder="What do you need from the customer?" />
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => setCustomerAction('upload_artwork', customerActionNote || 'Please upload artwork or copy to proceed.')} className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-orange-800 hover:border-orange-300">Request artwork</button>
+                    <button onClick={() => setCustomerAction('approve_proof', customerActionNote || 'Review and approve the latest proof.')} className="inline-flex items-center gap-2 rounded-full border border-purple-200 bg-purple-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-purple-800 hover:border-purple-300">Require proof approval</button>
+                    <button onClick={clearCustomerAction} className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700 hover:border-black">Clear action</button>
+                  </div>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2 text-[11px] text-gray-600">
+                <span className="rounded-full border border-white/70 bg-white px-3 py-1">Live proofs {sharedPortalCount}</span>
+                <span className="rounded-full border border-white/70 bg-white px-3 py-1">Archived proofs {archivedProofCount}</span>
+                <span className="rounded-full border border-white/70 bg-white px-3 py-1">Customer-visible steps {items.reduce((sum, item) => sum + ((item.job_item_steps || []).filter((step: any) => step.is_internal === false).length), 0)}</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <a href={portalHref} target="_blank" className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-gray-700 hover:border-black hover:text-black">
+                <ExternalLink size={14} /> Open Portal
+              </a>
+              <button
+                type="button"
+                onClick={setPortalShell}
+                disabled={portalActionLoading}
+                className="inline-flex items-center gap-2 rounded-full border border-gray-300 bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-gray-700 hover:border-black hover:text-black disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Globe size={14} /> {isPortalShell ? 'Shell live' : 'Shell only'}
+              </button>
+              <button
+                type="button"
+                onClick={() => openUploadModal()}
+                disabled={portalActionLoading}
+                className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Globe size={14} /> {isPortalProofLive ? 'Replace portal proof' : 'Share proof to portal'}
+              </button>
+              <button
+                type="button"
+                onClick={isPortalHidden ? resetPortalInternal : hidePortalFromCustomer}
+                disabled={portalActionLoading}
+                className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-black uppercase tracking-[0.18em] ${isPortalHidden ? 'border-green-200 bg-green-50 text-green-700 hover:border-green-400' : 'border-red-200 bg-red-50 text-red-700 hover:border-red-400'} disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                {isPortalHidden ? 'Restore internal-only' : 'Hide from portal'}
+              </button>
+            </div>
+          </div>
+        </OpsDisclosure>
+
+    </div>
     </div>
   );
 }
