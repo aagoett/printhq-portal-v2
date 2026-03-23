@@ -1345,6 +1345,11 @@ export default function Dashboard() {
   const isProductionRole = ['admin', 'manager', 'staff-production'].includes(roleTier);
   const isCSRRole = roleTier === 'csr';
   const isCSRDesk = isCSRRole || activeLensPreset.id === 'csr';
+  const workSurfaceOrder = isCSRDesk ? 'order-[1]' : 'order-4';
+  const csrStatsOrder = isCSRDesk ? 'order-[2]' : '';
+  const commandCenterOrder = isCSRDesk ? 'order-[3]' : 'order-1';
+  const queueMetaOrder = isCSRDesk ? 'order-[4]' : 'order-2';
+  const managerExceptionsOrder = isCSRDesk ? 'order-[5]' : 'order-3';
   const normalizedActiveLens = normalizeLensLabel(activeTab);
   const normalizedCustomerSearch = customerSearch.trim().toLowerCase();
 
@@ -1691,6 +1696,23 @@ export default function Dashboard() {
     proofsLive: scopedJobs.filter((job: any) => job.csrActionState?.group === 'proof').length,
     proofApprovedWaitingRelease: scopedJobs.filter((job: any) => String(job.status || '').toLowerCase().includes('proof approved')).length,
     csrReviewNeeded: scopedJobs.filter((job: any) => job.csrActionState?.group === 'csr').length,
+  };
+  const csrAttentionBuckets = [
+    { key: 'awaitingCustomer', label: 'Customer owes files/response', count: csrFocusStats.awaitingCustomer, tone: 'amber', action: () => setOpsFilter('waiting') },
+    { key: 'proofsLive', label: 'Proof live or revisions', count: csrFocusStats.proofsLive, tone: 'blue' },
+    { key: 'proofApprovedWaitingRelease', label: 'Proof approved, waiting release', count: csrFocusStats.proofApprovedWaitingRelease, tone: 'emerald' },
+    { key: 'csrReviewNeeded', label: 'CSR review needed', count: csrFocusStats.csrReviewNeeded, tone: 'slate' },
+    { key: 'readyUnclaimed', label: 'Ready, no owner', count: managerExceptions.readyUnclaimed.length, tone: 'gray', action: () => setOpsFilter('ready_unclaimed') },
+    { key: 'followUps', label: 'Follow-up due/overdue', count: managerExceptions.followUpOverdue.length + managerExceptions.followUpToday.length, tone: 'red' },
+  ];
+  const csrAttentionTotal = csrAttentionBuckets.reduce((sum, bucket) => sum + bucket.count, 0);
+  const attentionToneClass: Record<string, string> = {
+    amber: 'border-amber-200 bg-amber-100 text-amber-800 hover:border-amber-300',
+    blue: 'border-blue-200 bg-blue-50 text-blue-800 hover:border-blue-300',
+    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:border-emerald-300',
+    slate: 'border-slate-200 bg-slate-50 text-slate-800 hover:border-slate-300',
+    gray: 'border-gray-200 bg-gray-50 text-gray-800 hover:border-gray-300',
+    red: 'border-red-200 bg-red-50 text-red-800 hover:border-red-300',
   };
 
   const handleBulkClaimReady = async () => {
@@ -2596,15 +2618,47 @@ export default function Dashboard() {
           {isInternal ? (
             <div className="flex flex-col gap-5">
               {isCSRDesk && (
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 order-0">
-                  <OpsStatCard label="Awaiting customer" value={csrFocusStats.awaitingCustomer} tone="warning" helper="Art or customer response needed" icon={<MessageSquare size={16} />} />
-                  <OpsStatCard label="Proof touches" value={csrFocusStats.proofsLive} tone="neutral" helper="Proof live, revision, or release state" icon={<FileText size={16} />} />
-                  <OpsStatCard label="Approved, waiting release" value={csrFocusStats.proofApprovedWaitingRelease} tone="success" helper="Signed off but not fully released" icon={<CheckCircle2 size={16} />} />
-                  <OpsStatCard label="CSR review needed" value={csrFocusStats.csrReviewNeeded} tone="muted" helper="Still needs internal quote/CSR follow-up" icon={<User size={16} />} />
+                <div className="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 shadow-sm order-[0]">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.18em] text-amber-800">
+                      <AlertTriangle size={14} /> Needs attention
+                    </div>
+                    <span className="text-[11px] font-bold text-amber-800">{csrAttentionTotal} signals</span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {csrAttentionTotal === 0 ? (
+                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-amber-700 border border-amber-200">All clear</span>
+                    ) : (
+                      csrAttentionBuckets.map((bucket) => {
+                        const toneClass = attentionToneClass[bucket.tone] || attentionToneClass.gray;
+                        return (
+                          <button
+                            key={bucket.key}
+                            onClick={() => bucket.action && bucket.action()}
+                            className={`group inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold shadow-sm transition ${toneClass} ${!bucket.action ? 'cursor-default' : ''}`}
+                            disabled={!bucket.action}
+                            aria-label={bucket.label}
+                          >
+                            <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white text-[11px] font-black text-gray-900 border border-white/60 shadow">{bucket.count}</span>
+                            <span>{bucket.label}</span>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
               )}
 
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm order-1">
+              {isCSRDesk && (
+                <div className={`grid gap-2 md:grid-cols-2 xl:grid-cols-4 ${csrStatsOrder}`}>
+                  <OpsStatCard label="Awaiting customer" value={csrFocusStats.awaitingCustomer} tone="warning" helper="Art or customer response needed" icon={<MessageSquare size={16} />} size="compact" />
+                  <OpsStatCard label="Proof touches" value={csrFocusStats.proofsLive} tone="neutral" helper="Proof live, revision, or release state" icon={<FileText size={16} />} size="compact" />
+                  <OpsStatCard label="Approved, waiting release" value={csrFocusStats.proofApprovedWaitingRelease} tone="success" helper="Signed off but not fully released" icon={<CheckCircle2 size={16} />} size="compact" />
+                  <OpsStatCard label="CSR review needed" value={csrFocusStats.csrReviewNeeded} tone="muted" helper="Still needs internal quote/CSR follow-up" icon={<User size={16} />} size="compact" />
+                </div>
+              )}
+
+              <div className={`rounded-2xl border border-gray-200 bg-white ${isCSRDesk ? 'p-4' : 'p-5'} shadow-sm ${commandCenterOrder}`}>
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Shop Floor Command Center</p>
@@ -2616,20 +2670,20 @@ export default function Dashboard() {
                     <button onClick={() => setShopFloorView('table')} className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold ${shopFloorView === 'table' ? 'bg-black text-white' : 'border border-gray-200 bg-white text-gray-600'}`}><Rows3 size={15}/> Table</button>
                   </div>
                 </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-8">
-                  <OpsStatCard label="Jobs in scope" value={boardStats.total} tone="neutral" helper="Current tab + filter set" icon={<Layers size={16} />} active={opsFilter === 'all'} onClick={() => setOpsFilter('all')} />
-                  <OpsStatCard label="Blocked" value={boardStats.blocked} tone="danger" helper="Late or waiting on art" icon={<AlertTriangle size={16} />} active={opsFilter === 'blocked'} onClick={() => setOpsFilter('blocked')} />
-                  <OpsStatCard label="Ready" value={boardStats.ready} tone="success" helper="Assigned and clear to move" icon={<CheckCircle2 size={16} />} active={opsFilter === 'ready'} onClick={() => setOpsFilter('ready')} />
-                  <OpsStatCard label="Ready, no owner" value={boardStats.readyUnclaimed} tone="warning" helper="Ready to run but unassigned" icon={<ArrowRightCircle size={16} />} active={opsFilter === 'ready_unclaimed'} onClick={() => setOpsFilter('ready_unclaimed')} />
-                  <OpsStatCard label="Waiting" value={boardStats.waiting} tone="warning" helper="Customer/art dependency" icon={<PauseCircle size={16} />} active={opsFilter === 'waiting'} onClick={() => setOpsFilter('waiting')} />
-                  <OpsStatCard label="Unassigned" value={boardStats.unassigned} tone="muted" helper="No owner on the job" icon={<User size={16} />} active={opsFilter === 'unassigned'} onClick={() => setOpsFilter('unassigned')} />
-                  <OpsStatCard label="Orphaned work" value={boardStats.orphaned} tone="danger" helper="Active work with no job/item owner" icon={<Briefcase size={16} />} active={opsFilter === 'orphaned'} onClick={() => setOpsFilter('orphaned')} />
-                  <OpsStatCard label="Aging waits" value={boardStats.agingWaits} tone="warning" helper="Waiting 2+ days" icon={<Clock size={16} />} active={opsFilter === 'aging_waits'} onClick={() => setOpsFilter('aging_waits')} />
-                  <OpsStatCard label="Split owners" value={boardStats.splitOwner} tone="muted" helper="Queue + item owners disagree" icon={<ArrowRightCircle size={16} />} active={opsFilter === 'split_owner'} onClick={() => setOpsFilter('split_owner')} />
+                <div className={`mt-4 grid gap-2 ${isCSRDesk ? 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4' : 'md:grid-cols-2 xl:grid-cols-8'}`}>
+                  <OpsStatCard label="Jobs in scope" value={boardStats.total} tone="neutral" helper="Current tab + filter set" icon={<Layers size={16} />} active={opsFilter === 'all'} onClick={() => setOpsFilter('all')} size={isCSRDesk ? 'compact' : 'default'} />
+                  <OpsStatCard label="Blocked" value={boardStats.blocked} tone="danger" helper="Late or waiting on art" icon={<AlertTriangle size={16} />} active={opsFilter === 'blocked'} onClick={() => setOpsFilter('blocked')} size={isCSRDesk ? 'compact' : 'default'} />
+                  <OpsStatCard label="Ready" value={boardStats.ready} tone="success" helper="Assigned and clear to move" icon={<CheckCircle2 size={16} />} active={opsFilter === 'ready'} onClick={() => setOpsFilter('ready')} size={isCSRDesk ? 'compact' : 'default'} />
+                  <OpsStatCard label="Ready, no owner" value={boardStats.readyUnclaimed} tone="warning" helper="Ready to run but unassigned" icon={<ArrowRightCircle size={16} />} active={opsFilter === 'ready_unclaimed'} onClick={() => setOpsFilter('ready_unclaimed')} size={isCSRDesk ? 'compact' : 'default'} />
+                  <OpsStatCard label="Waiting" value={boardStats.waiting} tone="warning" helper="Customer/art dependency" icon={<PauseCircle size={16} />} active={opsFilter === 'waiting'} onClick={() => setOpsFilter('waiting')} size={isCSRDesk ? 'compact' : 'default'} />
+                  <OpsStatCard label="Unassigned" value={boardStats.unassigned} tone="muted" helper="No owner on the job" icon={<User size={16} />} active={opsFilter === 'unassigned'} onClick={() => setOpsFilter('unassigned')} size={isCSRDesk ? 'compact' : 'default'} />
+                  <OpsStatCard label="Orphaned work" value={boardStats.orphaned} tone="danger" helper="Active work with no job/item owner" icon={<Briefcase size={16} />} active={opsFilter === 'orphaned'} onClick={() => setOpsFilter('orphaned')} size={isCSRDesk ? 'compact' : 'default'} />
+                  <OpsStatCard label="Aging waits" value={boardStats.agingWaits} tone="warning" helper="Waiting 2+ days" icon={<Clock size={16} />} active={opsFilter === 'aging_waits'} onClick={() => setOpsFilter('aging_waits')} size={isCSRDesk ? 'compact' : 'default'} />
+                  <OpsStatCard label="Split owners" value={boardStats.splitOwner} tone="muted" helper="Queue + item owners disagree" icon={<ArrowRightCircle size={16} />} active={opsFilter === 'split_owner'} onClick={() => setOpsFilter('split_owner')} size={isCSRDesk ? 'compact' : 'default'} />
                 </div>
               </div>
 
-              <div className={`grid gap-4 xl:grid-cols-2 ${isCSRDesk ? "order-3" : "order-2"}`}>
+              <div className={`grid gap-4 xl:grid-cols-2 ${queueMetaOrder}`}>
                 <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                   <div className="flex items-center justify-between">
                     <div>
@@ -2710,7 +2764,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className={`rounded-2xl border border-gray-200 bg-white p-5 shadow-sm ${isCSRDesk ? "order-4" : "order-3"}`}>
+              <div className={`rounded-2xl border border-gray-200 bg-white p-5 shadow-sm ${managerExceptionsOrder}`}>
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Manager exceptions</p>
@@ -2766,7 +2820,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className={isCSRDesk ? 'order-2' : 'order-4'}>
+              <div className={workSurfaceOrder}>
                 {sortedFilteredJobs.length === 0 ? (
                 <div className="rounded-xl border border-gray-200 bg-white p-12 text-center text-gray-400 flex flex-col items-center shadow-sm">
                    <Scissors size={48} className="mb-4 opacity-20" />
@@ -2917,7 +2971,7 @@ function DashboardLaunchCard({ href, icon, eyebrow, title, body }: { href: strin
   );
 }
 
-function OpsStatCard({ label, value, helper, icon, tone, active, onClick }: { label: string; value: number; helper: string; icon: React.ReactNode; tone: 'neutral' | 'danger' | 'success' | 'warning' | 'muted'; active?: boolean; onClick?: () => void }) {
+function OpsStatCard({ label, value, helper, icon, tone, active, onClick, size = 'default' }: { label: string; value: number; helper: string; icon: React.ReactNode; tone: 'neutral' | 'danger' | 'success' | 'warning' | 'muted'; active?: boolean; onClick?: () => void; size?: 'default' | 'compact'; }) {
   const toneClasses = {
     neutral: 'bg-gray-50 text-gray-900 border-gray-200',
     danger: 'bg-red-50 text-red-700 border-red-200',
@@ -2925,15 +2979,18 @@ function OpsStatCard({ label, value, helper, icon, tone, active, onClick }: { la
     warning: 'bg-amber-50 text-amber-700 border-amber-200',
     muted: 'bg-slate-50 text-slate-700 border-slate-200',
   } as const;
+  const sizeClasses = size === 'compact'
+    ? { wrapper: 'rounded-xl border p-3 text-left', value: 'text-2xl', helper: 'text-[11px]', label: 'text-[10px]' }
+    : { wrapper: 'rounded-2xl border p-4 text-left', value: 'text-3xl', helper: 'text-xs', label: 'text-[11px]' };
 
   return (
-    <button onClick={onClick} className={`rounded-2xl border p-4 text-left transition hover:border-black ${toneClasses[tone]} ${active ? 'ring-2 ring-black/10' : ''}`}>
+    <button onClick={onClick} className={`${sizeClasses.wrapper} transition hover:border-black ${toneClasses[tone]} ${active ? 'ring-2 ring-black/10' : ''}`}>
       <div className="flex items-center justify-between">
-        <div className="text-[11px] font-black uppercase tracking-[0.16em] opacity-70">{label}</div>
+        <div className={`${sizeClasses.label} font-black uppercase tracking-[0.16em] opacity-70`}>{label}</div>
         <div>{icon}</div>
       </div>
-      <div className="mt-3 text-3xl font-black tracking-tight">{value}</div>
-      <div className="mt-1 text-xs opacity-80">{helper}</div>
+      <div className={`mt-2 ${sizeClasses.value} font-black tracking-tight`}>{value}</div>
+      <div className={`mt-1 ${sizeClasses.helper} opacity-80`}>{helper}</div>
     </button>
   );
 }
@@ -3485,3 +3542,4 @@ Price: ${formatCurrency(chosen.winner.totalPrice)}`,
     </div>
   );
 }
+
