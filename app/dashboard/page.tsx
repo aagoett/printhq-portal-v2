@@ -54,9 +54,9 @@ const SHOP_FLOOR_LENS_PRESETS: ShopFloorLensPreset[] = [
     label: 'CSR Lens',
     shortLabel: 'CSR',
     description: 'Catch customer blockers, art waits, and ready work before it hits the floor blind.',
-    defaultTab: 'All',
-    defaultFilter: 'waiting',
-    defaultView: 'table',
+    defaultTab: 'CSR Desk',
+    defaultFilter: 'all',
+    defaultView: 'board',
     audience: ['csr', 'customer service', 'sales', 'account manager'],
   },
   {
@@ -2822,9 +2822,53 @@ export default function Dashboard() {
 
               <div className={workSurfaceOrder}>
                 {sortedFilteredJobs.length === 0 ? (
-                <div className="rounded-xl border border-gray-200 bg-white p-12 text-center text-gray-400 flex flex-col items-center shadow-sm">
-                   <Scissors size={48} className="mb-4 opacity-20" />
-                   <p>No jobs found in {activeTab}.</p>
+                <div className="rounded-xl border border-gray-200 bg-white p-12 text-center text-gray-500 flex flex-col items-center shadow-sm gap-3">
+                   <Scissors size={48} className="mb-2 opacity-20" />
+                   <p className="text-lg font-semibold text-gray-900">No jobs found in {activeTab}.</p>
+                   <p className="text-sm text-gray-500">Use the quick actions below to get back to a working CSR surface.</p>
+                   {isCSRDesk ? (
+                    <div className="mt-2 flex flex-wrap justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const csrTab = departmentTabs.includes('CSR Desk') ? 'CSR Desk' : (departmentTabs.includes('All') ? 'All' : (departmentTabs[0] || 'All'));
+                          setActiveTab(csrTab);
+                          setOpsFilter('all');
+                          setShopFloorView('board');
+                        }}
+                        className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-xs font-black uppercase tracking-wide text-white hover:bg-gray-800"
+                      >
+                        <LayoutGrid size={14} /> Show all CSR work
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('All');
+                          setOpsFilter('all');
+                          setShopFloorView('board');
+                        }}
+                        className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-xs font-black uppercase tracking-wide text-gray-800 hover:border-black"
+                      >
+                        <Layers size={14} /> Jump to All queues
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpsFilter('ready');
+                          setShopFloorView('board');
+                        }}
+                        className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-black uppercase tracking-wide text-emerald-800 hover:border-emerald-300"
+                      >
+                        <CheckCircle2 size={14} /> Ready to move
+                      </button>
+                      <Link
+                        href="/dashboard/intake"
+                        className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-xs font-black uppercase tracking-wide text-gray-800 hover:border-black"
+                      >
+                        <Sparkles size={14} /> Intake / Quick Order
+                      </Link>
+                    </div>
+                   ) : null}
                 </div>
               ) : shopFloorView === 'board' ? (
                 <ShopFloorBoard
