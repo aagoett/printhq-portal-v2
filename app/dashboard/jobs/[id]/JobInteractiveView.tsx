@@ -13,7 +13,7 @@ import CustomerPortalShell from '@/components/CustomerPortalShell';
 import { sendProofNotification } from '../../../server-actions'; 
 import { normalizePortalVisibility } from '@/lib/customerJobs';
 import { getJobFollowUpState } from '@/lib/jobFollowUp';
-import { getProofApprovalRollup } from '@/lib/proofApproval';
+import { summarizeProofRollup, deriveJobStatusFromProofRollup, type ProofRollup } from '@/lib/proofRollup';
 
 // --- HELPER COMPONENT: ADD ITEM FORM ---
 function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel: () => void }) {
@@ -311,22 +311,24 @@ function JobItemsTable({
                             const itemAssets = assets.filter(a => a.job_item_id === item.id);
                             const hasProof = itemAssets.some(a => a.asset_type === 'proof');
                             const isApproved = itemAssets.some(a => a.asset_type === 'proof' && a.status === 'approved');
+                            const hasChangesRequested = itemAssets.some(a => a.asset_type === 'proof' && a.status === 'changes_requested');
                             
                             return isStaff ? (
                               <button 
                                 onClick={(e) => { e.stopPropagation(); onOpenProofModal(item.id); }}
                                 className={`flex items-center gap-1.5 text-[10px] px-2.5 py-1.5 rounded-lg font-black transition-all shadow-sm uppercase tracking-widest border-2
                                   ${isApproved ? 'bg-green-100 text-green-700 border-green-200' : 
+                                    hasChangesRequested ? 'bg-amber-100 text-amber-800 border-amber-200' :
                                     hasProof ? 'bg-purple-100 text-purple-700 border-purple-200' : 
                                     'bg-purple-600 text-white border-purple-700 hover:bg-purple-700 shadow-purple-100'}
                                 `}
                               >
                                 {isApproved ? <CheckCircle size={12}/> : <Plus size={12} />}
-                                {isApproved ? 'Approved' : hasProof ? 'Live / Replace' : 'Share'}
+                                {isApproved ? 'Approved' : hasChangesRequested ? 'Revise' : hasProof ? 'Live / Replace' : 'Share'}
                               </button>
                             ) : (
-                              <span className={`text-[10px] px-2.5 py-1.5 rounded-lg font-black uppercase tracking-widest border-2 ${isApproved ? 'bg-green-50 text-green-700 border-green-200' : hasProof ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
-                                {isApproved ? 'Proof Approved' : hasProof ? 'Proof Sent' : 'No Proof Yet'}
+                              <span className={`text-[10px] px-2.5 py-1.5 rounded-lg font-black uppercase tracking-widest border-2 ${isApproved ? 'bg-green-50 text-green-700 border-green-200' : hasChangesRequested ? 'bg-amber-50 text-amber-800 border-amber-200' : hasProof ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-400 border-gray-200'}`}>
+                                {isApproved ? 'Proof Approved' : hasChangesRequested ? 'Changes requested' : hasProof ? 'Proof Sent' : 'No Proof Yet'}
                               </span>
                             );
                          })()}
@@ -391,6 +393,7 @@ export default function JobInteractiveView({
   const [blockers, setBlockers] = useState(initialBlockers || []);
   const [userRole, setUserRole] = useState('customer');
   const [staffOptions, setStaffOptions] = useState<any[]>([]);
+  const [proofRollup, setProofRollup] = useState<ProofRollup>(summarizeProofRollup(initialItems || [], initialAssets || []));
   
   const isStaff = userRole !== 'customer';
 
@@ -451,6 +454,10 @@ export default function JobInteractiveView({
   }, [items]);
 
   useEffect(() => {
+    setProofRollup(summarizeProofRollup(items, assets));
+  }, [items, assets]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     const channel = supabase.channel('job_realtime')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `job_id=eq.${jobId}` }, 
@@ -504,6 +511,8 @@ export default function JobInteractiveView({
     const { data } = await supabase.from('job_assets').select('*, profiles(email)').eq('job_id', jobId).order('created_at', { ascending: false });
     if (data) {
       setAssets(data);
+      const rollup = summarizeProofRollup(items, data);
+      await applyProofRollupToJob(rollup);
       await syncPortalStateFromAssets(data);
     }
   };
@@ -1007,6 +1016,17 @@ export default function JobInteractiveView({
       }
   };
 
+  const applyProofRollupToJob = async (rollup: ProofRollup) => {
+    if (!rollup) return;
+    setProofRollup(rollup);
+    const updates = deriveJobStatusFromProofRollup(rollup);
+    const changed = Object.keys(updates || {}).some((key) => (job as any)?.[key] !== (updates as any)[key]);
+    if (changed && Object.keys(updates).length > 0) {
+      setJob((prev: any) => ({ ...prev, ...updates }));
+      await supabase.from('jobs').update(updates).eq('id', jobId);
+    }
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setUploadFile(e.target.files[0]);
@@ -1141,10 +1161,21 @@ export default function JobInteractiveView({
   const handleApproveProof = async (assetId: string) => {
       if (!confirm("Mark APPROVED?")) return;
       await supabase.from('job_assets').update({ status: 'approved' }).eq('id', assetId);
-      const blocking = blockingReasonsForItem(undefined).filter((b) => b.blocker_type !== 'proof');
-      const nextStatus = blocking.length > 0 ? 'Proof Approved - Waiting Release' : 'In Production';
-      await supabase.from('jobs').update({ status: nextStatus, customer_action_required: false, customer_action_type: null, customer_action_note: null }).eq('id', jobId);
-      const approvedAsset = assets.find((a: any) => a.id === assetId);
+
+      const { data: refreshedAssets } = await supabase
+        .from('job_assets')
+        .select('*, profiles(email)')
+        .eq('job_id', jobId)
+        .order('created_at', { ascending: false });
+
+      let approvedAsset = assets.find((a: any) => a.id === assetId);
+      if (refreshedAssets) {
+        setAssets(refreshedAssets);
+        approvedAsset = refreshedAssets.find((a: any) => a.id === assetId) || approvedAsset;
+        const rollup = summarizeProofRollup(items, refreshedAssets);
+        await applyProofRollupToJob(rollup);
+      }
+
       await supabase.from('messages').insert({
         job_id: jobId,
         user_id: user.id,
@@ -1152,10 +1183,6 @@ export default function JobInteractiveView({
         is_customer_visible: true,
       });
       await logActivity('Proof approved (staff)', `Approved ${approvedAsset?.file_name || 'proof'} for production`);
-      if (blocking.length > 0) {
-        await logActivity('Release gate blocked', `Proof approved but still blocked: ${blocking[0].label}`);
-      }
-      setJob((prev: any) => ({ ...prev, status: nextStatus, customer_action_required: false, customer_action_type: null, customer_action_note: null }));
       refreshAssets();
   };
 
@@ -1340,7 +1367,7 @@ export default function JobInteractiveView({
   })();
   const portalNextAction = customerAction.required
     ? customerAction.description
-    : portalVisibility === 'proof_live' && latestPortalProof?.status !== 'approved'
+    : (proofRollup.rollup === 'pending' || proofRollup.rollup === 'partial_pending')
       ? 'Customer should review the live proof and either approve it or request changes.'
       : portalVisibility === 'proof_live' && (latestPortalProof?.status === 'approved' || ['In Production', 'Shipped', 'Complete', 'Proof Approved - Waiting Release'].includes(job.status))
         ? 'No customer action needed. Proof is approved and production is moving.'
@@ -1353,7 +1380,6 @@ export default function JobInteractiveView({
   const latestInternalProof = hiddenDraftProofs[0];
   const latestPortalProofScope = latestPortalProof?.job_item_id ? items.find((item: any) => item.id === latestPortalProof.job_item_id)?.description : null;
   const latestPortalProofLabel = latestPortalProofScope || 'Job-wide proof';
-  const proofRollup = getProofApprovalRollup({ items, assets, jobStatus: job.status });
   const followUpState = getJobFollowUpState({
     ...job,
     follow_up_note: followUpNote || job.follow_up_note,
@@ -1388,23 +1414,26 @@ export default function JobInteractiveView({
   const lastTouchValue = lastCustomerTouch ? new Date(lastCustomerTouch.occurredAt).toLocaleString() : 'No customer touch yet';
   const lastTouchDetail = lastCustomerTouch ? lastCustomerTouch.label : 'Share a proof or post a portal-visible reply to start the thread.';
 
+  const proofTone = proofRollup.rollup === 'all_approved'
+    ? 'green'
+    : proofRollup.rollup === 'changes_requested'
+      ? 'amber'
+      : proofRollup.rollup === 'pending' || proofRollup.rollup === 'partial_pending'
+        ? 'blue'
+        : 'gray';
+
   const proofWorkflowCards = [
     {
       key: 'proof-state',
-      label: proofRollup.hasItemScopedProofs ? 'Approval rollup' : 'Proof on file',
-      value: proofRollup.hasItemScopedProofs
-        ? proofRollup.internalStatus.label
-        : latestPortalProof ? (latestPortalProof.status === 'approved' ? 'Approved proof live' : 'Live proof waiting') : latestInternalProof ? 'Internal proof only' : 'No proof yet',
-      detail: proofRollup.hasItemScopedProofs
-        ? proofRollup.internalStatus.detail
-        : latestPortalProof
+      label: proofRollup.scope === 'item' ? 'Approval rollup' : 'Proof on file',
+      value: proofRollup.label,
+      detail: proofRollup.detail
+        || (latestPortalProof
           ? `${latestPortalProof.file_name || 'Latest proof'} • ${latestPortalProofLabel}`
           : latestInternalProof
             ? `${latestInternalProof.file_name || 'Draft proof'} is still internal-only`
-            : 'CSR still needs a customer-safe proof before review can start.',
-      tone: proofRollup.hasItemScopedProofs
-        ? proofRollup.internalStatus.tone
-        : latestPortalProof ? (latestPortalProof.status === 'approved' ? 'green' : 'purple') : latestInternalProof ? 'amber' : 'gray',
+            : 'CSR still needs a customer-safe proof before review can start.'),
+      tone: proofTone,
     },
     {
       key: 'shareable',
@@ -1624,8 +1653,10 @@ export default function JobInteractiveView({
     {
       key: 'approval',
       label: 'Customer approval cleared',
-      done: !customerAction.required && !(portalVisibility === 'proof_live' && latestPortalProof?.status !== 'approved'),
-      note: !customerAction.required && !(portalVisibility === 'proof_live' && latestPortalProof?.status !== 'approved') ? 'No open customer approval gate.' : 'Customer action is still open.',
+      done: !customerAction.required && !['pending', 'partial_pending', 'changes_requested'].includes(proofRollup.rollup),
+      note: !customerAction.required && !['pending', 'partial_pending', 'changes_requested'].includes(proofRollup.rollup)
+        ? 'No open customer approval gate.'
+        : `${proofRollup.label}. ${proofRollup.detail}`,
     },
     {
       key: 'blockers',
@@ -1800,9 +1831,9 @@ export default function JobInteractiveView({
               </div>
               <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-black text-gray-600">{items.length} items</span>
             </div>
-            {proofRollup.hasItemScopedProofs ? (
+            {proofRollup.scope === 'item' ? (
               <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                <span className="font-semibold text-gray-900">Approval rollup:</span> {proofRollup.portalStatus.label}. {proofRollup.portalStatus.detail}
+                <span className="font-semibold text-gray-900">Approval rollup:</span> {proofRollup.label}. {proofRollup.detail}
               </div>
             ) : null}
             <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1810,12 +1841,15 @@ export default function JobInteractiveView({
                 const itemProofAssets = portalSharedAssets.filter((asset: any) => asset.job_item_id === item.id && asset.asset_type === 'proof');
                 const itemApprovedProof = itemProofAssets.find((asset: any) => asset.status === 'approved');
                 const itemPendingProof = itemProofAssets.find((asset: any) => asset.status === 'pending');
-                const itemProofChip = itemApprovedProof ? 'Approved proof' : itemPendingProof ? 'Proof waiting' : null;
+                const itemChangeProof = itemProofAssets.find((asset: any) => asset.status === 'changes_requested');
+                const itemProofChip = itemApprovedProof ? 'Approved proof' : itemChangeProof ? 'Changes requested' : itemPendingProof ? 'Proof waiting' : null;
                 const itemProofChipClass = itemApprovedProof
                   ? 'border-green-200 bg-green-50 text-green-700'
-                  : itemPendingProof
-                    ? 'border-blue-200 bg-blue-50 text-blue-700'
-                    : '';
+                  : itemChangeProof
+                    ? 'border-amber-200 bg-amber-50 text-amber-800'
+                    : itemPendingProof
+                      ? 'border-blue-200 bg-blue-50 text-blue-700'
+                      : '';
                 return (
                 <div key={item.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
                   <div className="flex items-start justify-between gap-2">

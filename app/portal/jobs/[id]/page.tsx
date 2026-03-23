@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
 import { CheckCircle, XCircle, Download, FileImage, FileText, Clock, Printer, Mail, MessageSquare, Send, AlertTriangle, Palette, UploadCloud, Eye } from 'lucide-react';
 import { normalizePortalVisibility } from '@/lib/customerJobs';
-import { getProofApprovalRollup } from '@/lib/proofApproval';
+import { summarizeProofRollup, deriveJobStatusFromProofRollup, type ProofRollup } from '@/lib/proofRollup';
 
 export default function PublicJobProofPage({ params }: { params: { id: string } }) {
   const [job, setJob] = useState<any>(null);
@@ -28,6 +28,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   const [artFile, setArtFile] = useState<File | null>(null);
   const [artUploading, setArtUploading] = useState(false);
   const [artUploadSuccess, setArtUploadSuccess] = useState('');
+  const [proofRollup, setProofRollup] = useState<ProofRollup>(summarizeProofRollup([], []));
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -101,6 +102,8 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
       setPreviewUrl(null);
     }
 
+    setProofRollup(summarizeProofRollup(itemsData || [], assetData || []));
+
     const { data: uploadData } = await supabase
       .from('job_assets')
       .select('*')
@@ -150,18 +153,36 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     assetQuery = applyAssetScope(assetQuery, itemId);
     await assetQuery;
 
-    const nextStatus = 'Proof Approved - Waiting Release';
-    await supabase.from('jobs').update({ status: nextStatus, customer_action_required: false, customer_action_type: null, customer_action_note: null }).eq('id', params.id);
+    const { data: refreshedAssets } = await supabase
+      .from('job_assets')
+      .select('*')
+      .eq('job_id', params.id)
+      .eq('asset_type', 'proof')
+      .neq('status', 'archived')
+      .order('created_at', { ascending: false });
+
+    let nextRollup = proofRollup;
+    if (refreshedAssets) {
+      setAssets(refreshedAssets);
+      nextRollup = summarizeProofRollup(items, refreshedAssets);
+      setProofRollup(nextRollup);
+      const updates = deriveJobStatusFromProofRollup(nextRollup);
+      if (Object.keys(updates).length > 0) {
+        await supabase.from('jobs').update(updates).eq('id', params.id);
+        setJob((j: any) => ({ ...j, ...updates }));
+      }
+    }
+
     await supabase.from('messages').insert({
       job_id: params.id,
       content: `${senderName || 'Customer'} approved the proof${label} and released to production`,
       is_customer_visible: true,
     });
     await recordAudit('Proof approved (customer)', `Customer approved proof${label}`);
-    setJob((j: any) => ({ ...j, status: nextStatus, customer_action_required: false, customer_action_type: null, customer_action_note: null }));
-    setSuccessMsg('✅ Proof approved! We will release to production as soon as remaining holds (if any) are cleared.');
+    setSuccessMsg(nextRollup.rollup === 'all_approved'
+      ? '✅ Proof approved! We will release to production as soon as remaining holds (if any) are cleared.'
+      : '✅ Approval saved. Other items may still need review.');
     setActionLoading(false);
-    await fetchJobData();
   };
 
   const handleRequestChanges = async (note: string, itemId?: string) => {
@@ -170,7 +191,33 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     setActionLoading(true);
     const item = itemId ? items.find((i) => i.id === itemId) : null;
     const label = item ? ` [Item: ${item.description || 'Line item'}]` : '';
-    await supabase.from('jobs').update({ status: 'Changes Requested', notes: cleanNote, customer_action_required: false }).eq('id', params.id);
+
+    let scopedQuery = supabase.from('job_assets').update({ status: 'changes_requested' })
+      .eq('job_id', params.id)
+      .eq('asset_type', 'proof')
+      .eq('status', 'pending');
+    scopedQuery = applyAssetScope(scopedQuery, itemId);
+    await scopedQuery;
+
+    const { data: refreshedAssets } = await supabase
+      .from('job_assets')
+      .select('*')
+      .eq('job_id', params.id)
+      .eq('asset_type', 'proof')
+      .neq('status', 'archived')
+      .order('created_at', { ascending: false });
+
+    let nextRollup = proofRollup;
+    if (refreshedAssets) {
+      setAssets(refreshedAssets);
+      nextRollup = summarizeProofRollup(items, refreshedAssets);
+      setProofRollup(nextRollup);
+    }
+
+    const jobUpdates = { ...deriveJobStatusFromProofRollup(nextRollup), notes: cleanNote } as any;
+    await supabase.from('jobs').update(jobUpdates).eq('id', params.id);
+    setJob((j: any) => ({ ...j, ...jobUpdates }));
+
     await supabase.from('messages').insert({
       job_id: params.id,
       content: `[Changes Requested${label}] ${cleanNote}`,
@@ -178,7 +225,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     });
     await recordAudit('Customer change request', `${cleanNote}${label}`);
     setSuccessMsg('✏️ Change request submitted! Our team will revise the artwork and share the next proof here.');
-    setJob((j: any) => ({ ...j, status: 'Changes Requested', notes: cleanNote, customer_action_required: false }));
     if (itemId) {
       setItemChangeNotes((prev) => ({ ...prev, [itemId]: '' }));
     } else {
@@ -186,7 +232,6 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
       setShowChangeForm(false);
     }
     setActionLoading(false);
-    await fetchJobData();
   };
 
   const handleSendMessage = async () => {
@@ -280,14 +325,13 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   const currentProof = approvedProof || pendingProof || assets[0];
   const awaitingArtworkItems = items.filter((item: any) => item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art');
   const needsCustomerArtwork = job.customer_action_type === 'upload_artwork' && (job.customer_action_required || awaitingArtworkItems.length > 0);
-  const impliedProofAction = pendingProof && (!job.customer_action_required && !job.customer_action_type);
+  const proofNeedsApproval = proofRollup.rollup === 'pending' || proofRollup.rollup === 'partial_pending';
+  const proofChangesRequested = proofRollup.rollup === 'changes_requested';
+  const impliedProofAction = proofNeedsApproval && (!job.customer_action_required && !job.customer_action_type);
   const customerActionType = job.customer_action_type || (impliedProofAction ? 'approve_proof' : null);
   const customerActionRequired = job.customer_action_required || impliedProofAction || needsCustomerArtwork;
   const customerActionNote = job.customer_action_note;
-  const pendingItemProofs = items.filter((item: any) => itemScopedAssets.some((a) => a.job_item_id === item.id && a.status === 'pending'));
-  const approvedItemProofs = items.filter((item: any) => itemScopedAssets.some((a) => a.job_item_id === item.id && a.status === 'approved'));
-  const proofRollup = getProofApprovalRollup({ items, assets, jobStatus: job.status });
-  const hasItemScopedProofs = proofRollup.hasItemScopedProofs;
+  const hasItemScopedProofs = proofRollup.scope === 'item';
 
   const customerAction = (() => {
     if (!customerActionType || !customerActionRequired) return { required: false };
@@ -315,24 +359,27 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     };
   })();
 
-  const actionRequiredLabel = customerAction.required ? customerAction.label : isChangesRequested ? 'PrintHQ is revising your proof' : 'No action required right now';
+  const actionRequiredLabel = customerAction.required ? customerAction.label : (proofChangesRequested || isChangesRequested) ? 'PrintHQ is revising your proof' : 'No action required right now';
+  const proofTone = proofRollup.rollup === 'all_approved'
+    ? 'green'
+    : proofRollup.rollup === 'changes_requested'
+      ? 'orange'
+      : proofRollup.rollup === 'pending' || proofRollup.rollup === 'partial_pending'
+        ? 'blue'
+        : assets.length > 0
+          ? 'gray'
+          : 'gray';
   const proofSummaryCards = [
     {
       label: 'Proof status',
-      value: hasItemScopedProofs
-        ? proofRollup.portalStatus.label
-        : approvedProof ? 'Approved proof on file' : pendingProof ? 'Proof ready for review' : assets.length > 0 ? 'Shared file posted' : 'No proof shared yet',
-      detail: hasItemScopedProofs
-        ? proofRollup.portalStatus.detail
-        : currentProof?.file_name || 'We will post the first customer-safe file here when it is ready.',
-      tone: hasItemScopedProofs
-        ? proofRollup.portalStatus.tone
-        : approvedProof || approvedItemProofs.length > 0 ? 'green' : pendingProof || pendingItemProofs.length > 0 ? 'blue' : assets.length > 0 ? 'gray' : 'gray',
+      value: proofRollup.label,
+      detail: proofRollup.detail || currentProof?.file_name || 'We will post the first customer-safe file here when it is ready.',
+      tone: proofTone,
     },
     {
       label: 'What you can see',
       value: assets.length > 0 ? `${assets.length} shared file${assets.length === 1 ? '' : 's'}` : 'Portal shell only',
-      detail: hasItemScopedProofs
+      detail: proofRollup.scope === 'item'
         ? 'Proofs are tied to specific line items. Open a proof from the item card below.'
         : 'Only customer-safe proofs/files are listed here. Internal shop files stay hidden.',
       tone: assets.length > 0 ? 'purple' : 'gray',
@@ -340,10 +387,24 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     {
       label: 'Action required',
       value: actionRequiredLabel,
-      detail: customerAction.required ? customerAction.description : isApproved ? 'No reply needed right now. We are moving into production.' : 'We will post the next proof or update here when ready.',
-      tone: customerAction.required ? (customerAction.tone === 'orange' ? 'orange' : 'blue') : isApproved ? 'green' : 'gray',
+      detail: customerAction.required
+        ? customerAction.description
+        : proofNeedsApproval
+          ? 'Approve remaining item proofs so we can release to production.'
+          : isApproved
+            ? 'No reply needed right now. We are moving into production.'
+            : 'We will post the next proof or update here when ready.',
+      tone: customerAction.required ? (customerAction.tone === 'orange' ? 'orange' : 'blue') : proofNeedsApproval ? 'blue' : isApproved ? 'green' : 'gray',
     },
   ];
+  const portalToneClass = proofRollup.rollup === 'all_approved'
+    ? 'bg-green-50 border-green-200 text-green-800'
+    : proofRollup.rollup === 'changes_requested'
+      ? 'bg-amber-50 border-amber-200 text-amber-800'
+      : proofNeedsApproval
+        ? 'bg-blue-50 border-blue-200 text-blue-800'
+        : 'bg-gray-50 border-gray-200 text-gray-700';
+
   const portalState = isApproved
     ? {
         label: 'Approved and in production',
@@ -356,29 +417,29 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
           description: customerAction.description,
           className: 'bg-orange-50 border-orange-200 text-orange-800',
         }
-      : isChangesRequested
+      : proofChangesRequested
         ? {
             label: 'Revision requested',
             description: 'We received your feedback. The next proof will appear here when it is ready.',
             className: 'bg-amber-50 border-amber-200 text-amber-800',
           }
-        : pendingProof
+        : proofNeedsApproval
           ? {
-              label: hasItemScopedProofs ? proofRollup.portalStatus.label : 'Customer action required',
-              description: hasItemScopedProofs ? proofRollup.portalStatus.detail : 'A proof is live now. Review it carefully, then approve for print or request changes from this page.',
-              className: hasItemScopedProofs
-                ? proofRollup.portalStatus.tone === 'amber'
-                  ? 'bg-amber-50 border-amber-200 text-amber-800'
-                  : proofRollup.portalStatus.tone === 'green'
-                    ? 'bg-green-50 border-green-200 text-green-800'
-                    : 'bg-blue-50 border-blue-200 text-blue-800'
-                : 'bg-blue-50 border-blue-200 text-blue-800',
+              label: hasItemScopedProofs ? proofRollup.label : 'Customer action required',
+              description: hasItemScopedProofs ? proofRollup.detail : 'A proof is live now. Review it carefully, then approve for print or request changes from this page.',
+              className: portalToneClass,
             }
-          : {
-              label: 'Portal shell ready',
-              description: 'Your job is in our system. Files, proofs, and updates will appear here as soon as they are ready to share.',
-              className: 'bg-gray-50 border-gray-200 text-gray-700',
-            };
+          : pendingProof
+            ? {
+                label: 'Customer action required',
+                description: 'A proof is live now. Review it carefully, then approve for print or request changes from this page.',
+                className: 'bg-blue-50 border-blue-200 text-blue-800',
+              }
+            : {
+                label: 'Portal shell ready',
+                description: 'Your job is in our system. Files, proofs, and updates will appear here as soon as they are ready to share.',
+                className: 'bg-gray-50 border-gray-200 text-gray-700',
+              };
 
   const showJobLevelActionBlock = !!jobLevelPendingProof && !hasItemScopedProofs && !isApproved && !isChangesRequested && !successMsg;
 
@@ -481,7 +542,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
           </div>
           {hasItemScopedProofs && (
             <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
-              <span className="font-semibold text-gray-900">Order approval rollup:</span> {proofRollup.portalStatus.label}. {proofRollup.portalStatus.detail}
+              <span className="font-semibold text-gray-900">Order approval rollup:</span> {proofRollup.label}. {proofRollup.detail}
             </div>
           )}
           <div className="grid gap-3 md:grid-cols-2">
@@ -493,11 +554,12 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
             {items.map((item: any) => {
               const itemPendingProof = itemScopedAssets.find((a) => a.job_item_id === item.id && a.status === 'pending');
               const itemApprovedProof = itemScopedAssets.find((a) => a.job_item_id === item.id && a.status === 'approved');
-              const itemProof = itemApprovedProof || itemPendingProof;
+              const itemChangesProof = itemScopedAssets.find((a) => a.job_item_id === item.id && a.status === 'changes_requested');
+              const itemProof = itemApprovedProof || itemPendingProof || itemChangesProof;
               const changeNote = itemChangeNotes[item.id] || '';
               const showApprove = !!itemPendingProof;
-              const statusChip = itemPendingProof ? 'Proof ready for review' : itemApprovedProof ? 'Approved' : item.status || 'In progress';
-              const statusClass = itemApprovedProof ? 'bg-green-50 text-green-700 border-green-200' : itemPendingProof ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-700 border-gray-200';
+              const statusChip = itemChangesProof ? 'Revision requested' : itemPendingProof ? 'Proof ready for review' : itemApprovedProof ? 'Approved' : item.status || 'In progress';
+              const statusClass = itemChangesProof ? 'bg-amber-50 text-amber-800 border-amber-200' : itemApprovedProof ? 'bg-green-50 text-green-700 border-green-200' : itemPendingProof ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-700 border-gray-200';
               const waitingOnArt = item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art';
               return (
                 <div key={item.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
@@ -528,7 +590,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
                     )}
                     {itemProof && (
                       <span className="rounded-full border border-purple-200 bg-purple-50 px-2 py-1 text-purple-800 font-semibold">
-                        {itemApprovedProof ? 'Approved proof' : 'Proof live'}
+                        {itemApprovedProof ? 'Approved proof' : itemChangesProof ? 'Changes requested' : 'Proof live'}
                       </span>
                     )}
                   </div>
@@ -572,6 +634,9 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
                             Request changes on this item
                           </button>
                         </div>
+                      )}
+                      {itemChangesProof && (
+                        <p className="text-[11px] text-amber-800 font-semibold">Changes requested. We will post the next revision here.</p>
                       )}
                       {itemApprovedProof && (
                         <p className="text-[11px] text-green-700 font-semibold">Approved. We will keep this approval attached to this item.</p>
