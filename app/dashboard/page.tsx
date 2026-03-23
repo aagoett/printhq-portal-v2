@@ -2697,11 +2697,12 @@ export default function Dashboard() {
               )}
 
               {isCSRDesk && (
-                <div className={`grid gap-2 md:grid-cols-2 xl:grid-cols-4 ${csrStatsOrder}`}>
-                  <OpsStatCard label="Awaiting customer" value={csrFocusStats.awaitingCustomer} tone="warning" helper="Art or customer response needed" icon={<MessageSquare size={16} />} size="compact" />
-                  <OpsStatCard label="Proof touches" value={csrFocusStats.proofsLive} tone="neutral" helper="Proof live, revision, or release state" icon={<FileText size={16} />} size="compact" />
-                  <OpsStatCard label="Approved, waiting release" value={csrFocusStats.proofApprovedWaitingRelease} tone="success" helper="Signed off but not fully released" icon={<CheckCircle2 size={16} />} size="compact" />
-                  <OpsStatCard label="CSR review needed" value={csrFocusStats.csrReviewNeeded} tone="muted" helper="Still needs internal quote/CSR follow-up" icon={<User size={16} />} size="compact" />
+                <div className={`grid gap-2 md:grid-cols-2 xl:grid-cols-5 ${csrStatsOrder}`}>
+                  <OpsStatCard label="Needs attention" value={csrFocusStats.needsAttention} tone="warning" helper="Customer action, proof, or follow-up" icon={<AlertTriangle size={16} />} size="compact" onClick={() => setOpsFilter('needs_attention')} />
+                  <OpsStatCard label="Waiting on customer" value={csrFocusStats.waitingCustomer} tone="warning" helper="Customer owes files/info" icon={<MessageSquare size={16} />} size="compact" onClick={() => setOpsFilter('waiting_customer')} />
+                  <OpsStatCard label="Proof pending" value={csrFocusStats.proofPending} tone="neutral" helper="Proof live or revision requested" icon={<FileText size={16} />} size="compact" onClick={() => setOpsFilter('proof_pending')} />
+                  <OpsStatCard label="Follow-up due" value={csrFocusStats.followUpDue} tone="danger" helper="Due or overdue follow-ups" icon={<Clock size={16} />} size="compact" onClick={() => setOpsFilter('follow_up_due')} />
+                  <OpsStatCard label="Needs art/files" value={csrFocusStats.needsArt} tone="warning" helper="Art upload outstanding" icon={<UploadCloud size={16} />} size="compact" onClick={() => setOpsFilter('needs_art')} />
                 </div>
               )}
 
@@ -2717,7 +2718,18 @@ export default function Dashboard() {
                     <button onClick={() => setShopFloorView('table')} className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-bold ${shopFloorView === 'table' ? 'bg-black text-white' : 'border border-gray-200 bg-white text-gray-600'}`}><Rows3 size={15}/> Table</button>
                   </div>
                 </div>
-                <div className={`mt-4 grid gap-2 ${isCSRDesk ? 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4' : 'md:grid-cols-2 xl:grid-cols-8'}`}>
+                {isCSRDesk ? (
+                  <div className="mt-4 grid gap-2 grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+                    <OpsStatCard label="Jobs in scope" value={boardStats.total} tone="neutral" helper="Current tab + filters" icon={<Layers size={16} />} active={opsFilter === 'all'} onClick={() => setOpsFilter('all')} size="compact" />
+                    <OpsStatCard label="Needs attention" value={csrFocusStats.needsAttention} tone="warning" helper="Customer action, proof, or follow-up" icon={<AlertTriangle size={16} />} active={opsFilter === 'needs_attention'} onClick={() => setOpsFilter('needs_attention')} size="compact" />
+                    <OpsStatCard label="Waiting on customer" value={csrFocusStats.waitingCustomer} tone="warning" helper="Customer owes files/info" icon={<MessageSquare size={16} />} active={opsFilter === 'waiting_customer'} onClick={() => setOpsFilter('waiting_customer')} size="compact" />
+                    <OpsStatCard label="Proof pending" value={csrFocusStats.proofPending} tone="neutral" helper="Proof live or revision requested" icon={<FileText size={16} />} active={opsFilter === 'proof_pending'} onClick={() => setOpsFilter('proof_pending')} size="compact" />
+                    <OpsStatCard label="Follow-up due" value={csrFocusStats.followUpDue} tone="danger" helper="Due or overdue follow-ups" icon={<Clock size={16} />} active={opsFilter === 'follow_up_due'} onClick={() => setOpsFilter('follow_up_due')} size="compact" />
+                    <OpsStatCard label="Needs art/files" value={csrFocusStats.needsArt} tone="warning" helper="Art upload outstanding" icon={<UploadCloud size={16} />} active={opsFilter === 'needs_art'} onClick={() => setOpsFilter('needs_art')} size="compact" />
+                    <OpsStatCard label="Ready, no owner" value={boardStats.readyUnclaimed} tone="muted" helper="Ready to run but unassigned" icon={<ArrowRightCircle size={16} />} active={opsFilter === 'ready_unclaimed'} onClick={() => setOpsFilter('ready_unclaimed')} size="compact" />
+                  </div>
+                ) : (
+                  <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-8">
                   <OpsStatCard label="Jobs in scope" value={boardStats.total} tone="neutral" helper="Current tab + filter set" icon={<Layers size={16} />} active={opsFilter === 'all'} onClick={() => setOpsFilter('all')} size={isCSRDesk ? 'compact' : 'default'} />
                   <OpsStatCard label="Blocked" value={boardStats.blocked} tone="danger" helper="Late or waiting on art" icon={<AlertTriangle size={16} />} active={opsFilter === 'blocked'} onClick={() => setOpsFilter('blocked')} size={isCSRDesk ? 'compact' : 'default'} />
                   <OpsStatCard label="Ready" value={boardStats.ready} tone="success" helper="Assigned and clear to move" icon={<CheckCircle2 size={16} />} active={opsFilter === 'ready'} onClick={() => setOpsFilter('ready')} size={isCSRDesk ? 'compact' : 'default'} />
@@ -2727,7 +2739,8 @@ export default function Dashboard() {
                   <OpsStatCard label="Orphaned work" value={boardStats.orphaned} tone="danger" helper="Active work with no job/item owner" icon={<Briefcase size={16} />} active={opsFilter === 'orphaned'} onClick={() => setOpsFilter('orphaned')} size={isCSRDesk ? 'compact' : 'default'} />
                   <OpsStatCard label="Aging waits" value={boardStats.agingWaits} tone="warning" helper="Waiting 2+ days" icon={<Clock size={16} />} active={opsFilter === 'aging_waits'} onClick={() => setOpsFilter('aging_waits')} size={isCSRDesk ? 'compact' : 'default'} />
                   <OpsStatCard label="Split owners" value={boardStats.splitOwner} tone="muted" helper="Queue + item owners disagree" icon={<ArrowRightCircle size={16} />} active={opsFilter === 'split_owner'} onClick={() => setOpsFilter('split_owner')} size={isCSRDesk ? 'compact' : 'default'} />
-                </div>
+                  </div>
+                )}
               </div>
 
               {!isCSRDesk && (
