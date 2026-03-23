@@ -1158,6 +1158,59 @@ export default function JobInteractiveView({
           ? 'Customer can see the shell, thread, and shared updates, but no proof yet.'
           : 'No portal handoff is active yet.';
   const dueRisk = countdown.text.includes('LATE') ? 'late' : countdown.text === 'DUE TODAY' ? 'today' : 'safe';
+  const allProofAssets = assets.filter((asset: any) => asset.asset_type === 'proof');
+  const hiddenDraftProofs = allProofAssets.filter((asset: any) => asset.status !== 'archived' && asset.portal_visible === false);
+  const latestInternalProof = hiddenDraftProofs[0];
+  const latestPortalProofScope = latestPortalProof?.job_item_id ? items.find((item: any) => item.id === latestPortalProof.job_item_id)?.description : null;
+  const latestPortalProofLabel = latestPortalProofScope || 'Job-wide proof';
+  const handoffLines = String(job.notes || internalNotes || '')
+    .split(/\n+/)
+    .map((line: string) => line.trim())
+    .filter(Boolean);
+  const followUpMatch = handoffLines.find((line: string) => /^(follow[ -]?up|next move|next step|promise|promised)\s*:/i.test(line));
+  const nextPromisedFollowUp = followUpMatch
+    ? followUpMatch.replace(/^(follow[ -]?up|next move|next step|promise|promised)\s*:/i, '').trim()
+    : handoffLines[0] || '';
+  const proofWorkflowCards = [
+    {
+      key: 'proof-state',
+      label: 'Proof on file',
+      value: latestPortalProof ? (latestPortalProof.status === 'approved' ? 'Approved proof live' : 'Live proof waiting') : latestInternalProof ? 'Internal proof only' : 'No proof yet',
+      detail: latestPortalProof
+        ? `${latestPortalProof.file_name || 'Latest proof'} • ${latestPortalProofLabel}`
+        : latestInternalProof
+          ? `${latestInternalProof.file_name || 'Draft proof'} is still internal-only`
+          : 'CSR still needs a customer-safe proof before review can start.',
+      tone: latestPortalProof ? (latestPortalProof.status === 'approved' ? 'green' : 'purple') : latestInternalProof ? 'amber' : 'gray',
+    },
+    {
+      key: 'shareable',
+      label: 'Shareable now',
+      value: sharedPortalCount > 0 ? `${sharedPortalCount} live on portal` : 'Nothing customer-visible',
+      detail: sharedPortalCount > 0
+        ? `${archivedProofCount} archived / replaced • ${hiddenDraftProofs.length} internal draft${hiddenDraftProofs.length === 1 ? '' : 's'}`
+        : hiddenDraftProofs.length > 0
+          ? `${hiddenDraftProofs.length} draft proof${hiddenDraftProofs.length === 1 ? '' : 's'} exist but are still private`
+          : 'Only the shell and thread can be shared right now.',
+      tone: sharedPortalCount > 0 ? 'blue' : hiddenDraftProofs.length > 0 ? 'amber' : 'gray',
+    },
+    {
+      key: 'customer-action',
+      label: 'Customer action',
+      value: customerAction.required ? customerAction.label : 'No action open',
+      detail: customerAction.required ? customerAction.description : portalNextAction,
+      tone: customerAction.required ? (customerAction.tone === 'orange' ? 'orange' : customerAction.tone === 'blue' ? 'purple' : 'amber') : 'green',
+    },
+    {
+      key: 'follow-up',
+      label: 'Next promised follow-up',
+      value: nextPromisedFollowUp || 'Not captured yet',
+      detail: nextPromisedFollowUp
+        ? 'Pull this from the handoff note so the next CSR does not have to infer the promise.'
+        : 'Add “Follow-up:” or “Promise:” to the handoff note so the next promised touchpoint is explicit.',
+      tone: nextPromisedFollowUp ? 'gray' : 'red',
+    },
+  ];
 
   type BlockerDisplay = {
     key: string;
@@ -1754,7 +1807,29 @@ export default function JobInteractiveView({
           </div>
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Proof / file handoff</p>
+                <h2 className="mt-1 text-xl font-black text-gray-900">What CSR can safely tell the customer</h2>
+              </div>
+              <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700">Portal {portalState.label}</span>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {proofWorkflowCards.map((card) => (
+                <div
+                  key={card.key}
+                  className={`rounded-2xl border px-4 py-4 ${card.tone === 'green' ? 'border-green-200 bg-green-50 text-green-900' : card.tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-900' : card.tone === 'orange' ? 'border-orange-200 bg-orange-50 text-orange-900' : card.tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-900' : card.tone === 'red' ? 'border-red-200 bg-red-50 text-red-900' : card.tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-gray-200 bg-gray-50 text-gray-900'}`}
+                >
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-70">{card.label}</p>
+                  <p className="mt-2 text-sm font-bold leading-snug">{card.value}</p>
+                  <p className="mt-2 text-xs opacity-80">{card.detail}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className={`rounded-2xl border p-4 shadow-sm ${releaseGate.tone === 'red' ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -2023,7 +2098,7 @@ export default function JobInteractiveView({
                 <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center gap-2">
                      <div>
                        <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File Vault</h3>
-                       <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">Customer sees live proofs only</p>
+                       <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">Live proofs, hidden drafts, and source files</p>
                      </div>
                      {isStaff && (
                        <div className="flex items-center gap-2">
@@ -2044,15 +2119,15 @@ export default function JobInteractiveView({
                             </div>
                             <div className="flex flex-wrap gap-1 items-center">
                                 {asset.asset_type === 'source' ? (
-                                  <span className="text-[9px] font-bold bg-gray-100 text-gray-700 px-1.5 rounded border border-gray-200">INTERNAL ONLY</span>
+                                  <span className="text-[9px] font-bold bg-gray-100 text-gray-700 px-1.5 rounded border border-gray-200">SOURCE · INTERNAL ONLY</span>
                                 ) : asset.status === 'archived' ? (
-                                  <span className="text-[9px] font-bold bg-gray-100 text-gray-500 px-1.5 rounded border border-gray-200">REPLACED</span>
+                                  <span className="text-[9px] font-bold bg-gray-100 text-gray-500 px-1.5 rounded border border-gray-200">REPLACED / ARCHIVED</span>
                                 ) : asset.portal_visible === false ? (
-                                  <span className="text-[9px] font-bold bg-gray-100 text-gray-600 px-1.5 rounded border border-gray-200">Hidden from portal</span>
+                                  <span className="text-[9px] font-bold bg-amber-100 text-amber-800 px-1.5 rounded border border-amber-200">PROOF EXISTS · NOT SHAREABLE YET</span>
                                 ) : asset.status === 'approved' ? (
                                   <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1.5 rounded flex items-center gap-1 border border-green-200">LIVE · APPROVED</span>
                                 ) : (
-                                  <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1.5 rounded border border-purple-200">LIVE ON PORTAL</span>
+                                  <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1.5 rounded border border-purple-200">LIVE ON PORTAL · REVIEW OPEN</span>
                                 )}
                                 {linkedItem && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 rounded flex items-center gap-1 border border-blue-200 truncate max-w-full">LINKED: {linkedItem.description}</span>}
                                 {isStaff && asset.asset_type === 'proof' && asset.status !== 'archived' && (

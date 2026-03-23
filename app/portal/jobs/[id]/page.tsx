@@ -283,6 +283,28 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   })();
 
   const actionRequiredLabel = customerAction.required ? customerAction.label : isChangesRequested ? 'PrintHQ is revising your proof' : 'No action required right now';
+  const approvedProof = assets.find(a => a.status === 'approved');
+  const currentProof = approvedProof || pendingProof || assets[0];
+  const proofSummaryCards = [
+    {
+      label: 'Proof status',
+      value: approvedProof ? 'Approved proof on file' : pendingProof ? 'Proof ready for review' : assets.length > 0 ? 'Shared file posted' : 'No proof shared yet',
+      detail: currentProof?.file_name || 'We will post the first customer-safe file here when it is ready.',
+      tone: approvedProof ? 'green' : pendingProof ? 'blue' : assets.length > 0 ? 'gray' : 'gray',
+    },
+    {
+      label: 'What you can see',
+      value: assets.length > 0 ? `${assets.length} shared file${assets.length === 1 ? '' : 's'}` : 'Portal shell only',
+      detail: assets.length > 0 ? 'Only customer-safe proofs/files are listed here. Internal shop files stay hidden.' : 'You can still track status and message the team from this page.',
+      tone: assets.length > 0 ? 'purple' : 'gray',
+    },
+    {
+      label: 'Action required',
+      value: actionRequiredLabel,
+      detail: customerAction.required ? customerAction.description : isApproved ? 'No reply needed right now. We are moving into production.' : 'We will post the next proof or update here when ready.',
+      tone: customerAction.required ? (customerAction.tone === 'orange' ? 'orange' : 'blue') : isApproved ? 'green' : 'gray',
+    },
+  ];
   const portalState = isApproved
     ? {
         label: 'Approved and in production',
@@ -390,6 +412,16 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
               </span>
             </div>
           </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            {proofSummaryCards.map((card) => (
+              <div key={card.label} className={`rounded-2xl border px-4 py-4 ${card.tone === 'green' ? 'border-green-200 bg-green-50 text-green-900' : card.tone === 'orange' ? 'border-orange-200 bg-orange-50 text-orange-900' : card.tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-900' : card.tone === 'purple' ? 'border-purple-200 bg-purple-50 text-purple-900' : 'border-gray-200 bg-gray-50 text-gray-900'}`}>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] opacity-70">{card.label}</p>
+                <p className="mt-2 text-sm font-semibold leading-snug">{card.value}</p>
+                <p className="mt-2 text-xs opacity-80">{card.detail}</p>
+              </div>
+            ))}
+          </div>
         </div>
 
         {needsCustomerArtwork && (
@@ -469,10 +501,13 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
         {assets.length > 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="border-b border-gray-100 px-6 py-4 bg-gray-50 flex items-center justify-between">
-              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                <FileImage size={18} className="text-purple-500" />
-                Your Proof
-              </h3>
+              <div>
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                  <FileImage size={18} className="text-purple-500" />
+                  Shared proofs & downloads
+                </h3>
+                <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-gray-400">Only customer-safe files appear here</p>
+              </div>
               {previewUrl && (
                 <a href={previewUrl} target="_blank"
                    className="flex items-center gap-1 text-xs font-bold text-gray-500 hover:text-black border border-gray-200 px-3 py-1.5 rounded-lg bg-white">
@@ -488,8 +523,8 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
                     className={`flex-shrink-0 px-3 py-1.5 rounded text-xs font-bold border transition-all ${
                       viewingAssetId === asset.id ? 'border-black bg-black text-white' : 'border-gray-200 text-gray-500 hover:border-black'
                     }`}>
-                    Version {assets.length - i}
-                    {asset.status === 'approved' && ' ✓'}
+                    {asset.status === 'approved' ? 'Approved proof' : `Version ${assets.length - i}`}
+                    {asset.status === 'approved' ? ' ✓' : ''}
                   </button>
                 ))}
               </div>
