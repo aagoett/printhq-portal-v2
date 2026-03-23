@@ -13,6 +13,9 @@ import {
   PlayCircle,
   User,
   Users,
+  MessageSquare,
+  Send,
+  UploadCloud,
 } from 'lucide-react';
 
 // Lightweight board view for shop floor queues
@@ -65,6 +68,8 @@ type BulkAuditContext = {
   source?: 'shop-floor-bulk';
 };
 
+type CsrActionKey = 'waiting_customer' | 'request_art' | 'send_proof' | 'message_customer';
+
 type Props = {
   columns: BoardColumn[];
   boardStats: BoardStats;
@@ -80,6 +85,8 @@ type Props = {
   showOwnerLoad?: boolean;
   enableReassignmentPanel?: boolean;
   lensId?: string;
+  csrShortcutsEnabled?: boolean;
+  onCsrAction?: (job: any, action: CsrActionKey) => void;
 };
 
 type BucketKey = 'blocked' | 'waiting' | 'ready' | 'progress';
@@ -272,6 +279,8 @@ const JobCard = ({
   onToggleJob,
   onToggleItem,
   readOnly = false,
+  csrShortcutsEnabled = false,
+  onCsrAction,
   lensId,
 }: {
   job: any;
@@ -287,6 +296,8 @@ const JobCard = ({
   onToggleJob: (jobId: string) => void;
   onToggleItem: (itemId: string) => void;
   readOnly?: boolean;
+  csrShortcutsEnabled?: boolean;
+  onCsrAction?: (job: any, action: CsrActionKey) => void;
   lensId?: string;
 }) => {
   const allowOwnershipActions = !readOnly;
@@ -303,6 +314,13 @@ const JobCard = ({
     violet: 'border-violet-200 bg-violet-50 text-violet-800',
     slate: 'border-slate-200 bg-slate-50 text-slate-700',
   } as const;
+  const customerActionMeta: Record<string, { label: string; tone: keyof typeof csrToneClasses }> = {
+    upload_artwork: { label: 'Need artwork', tone: 'amber' },
+    approve_proof: { label: 'Waiting for proof approval', tone: 'blue' },
+    review_quote: { label: 'Customer review needed', tone: 'violet' },
+    provide_info: { label: 'Need info', tone: 'amber' },
+    other: { label: 'Customer action', tone: 'slate' },
+  };
   const bucket = getBucketForJob(job);
   const dueLabel = job?.dueStatus?.label || '--';
   const dueColor = job?.dueStatus?.color || 'text-gray-500';
@@ -311,6 +329,10 @@ const JobCard = ({
   const activeItems = Array.isArray(job?.activeItems) ? job.activeItems : items.filter((item: any) => item?.status !== 'Completed');
   const queueItems = activeItems.filter((item: any) => item?.status === job?.current_step);
   const inheritedItemCount = visibleItems.filter((item: any) => !item?.assigned_to && job?.assigned_to).length;
+  const lastTouchedDays = typeof job?.lastTouchedDays === 'number' ? job.lastTouchedDays : null;
+  const lastTouchedLabel = lastTouchedDays != null ? (lastTouchedDays === 0 ? 'Touched today' : `${lastTouchedDays}d ago`) : null;
+  const proofBadge = job?.portal_visibility === 'proof_live' ? 'Proof live' : (job?.proofStatus || '').trim();
+  const customerActionTone = job?.customer_action_required ? customerActionMeta[job?.customer_action_type || 'other'] || customerActionMeta.other : null;
 
   return (
     <div className={`rounded-xl border bg-white shadow-sm transition hover:shadow-md ${bucketMeta[bucket].color} ${isSelected ? 'ring-2 ring-black/80' : ''}`}>
@@ -373,6 +395,24 @@ const JobCard = ({
       </div>
 
       <div className="space-y-3 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-700">
+          {proofBadge ? (<span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 font-semibold text-violet-800">Proof: {proofBadge}</span>) : null}
+          {customerActionTone ? (
+            <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 font-semibold ${csrToneClasses[customerActionTone.tone]}`}>
+              Customer: {customerActionTone.label}
+            </span>
+          ) : null}
+          {lastTouchedLabel ? (<span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 font-semibold text-gray-700">{lastTouchedLabel}</span>) : null}
+          {job?.waitingItems?.length ? (<span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 font-semibold text-amber-800">Waiting items: {job.waitingItems.length}</span>) : null}
+        </div>
+        {csrShortcutsEnabled && onCsrAction ? (
+          <div className="flex flex-wrap gap-2 text-[11px]">
+            <button type="button" onClick={() => onCsrAction(job, 'waiting_customer')} className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 font-black uppercase tracking-wide text-gray-700 hover:border-black"><PauseCircle size={12} /> Wait on customer</button>
+            <button type="button" onClick={() => onCsrAction(job, 'request_art')} className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 font-black uppercase tracking-wide text-gray-700 hover:border-black"><UploadCloud size={12} /> Request art</button>
+            <button type="button" onClick={() => onCsrAction(job, 'send_proof')} className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 font-black uppercase tracking-wide text-gray-700 hover:border-black"><Send size={12} /> Send proof</button>
+            <button type="button" onClick={() => onCsrAction(job, 'message_customer')} className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 font-black uppercase tracking-wide text-gray-700 hover:border-black"><MessageSquare size={12} /> Message</button>
+          </div>
+        ) : null}
         {isCsrLens ? (
           <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3">
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -518,7 +558,7 @@ const JobCard = ({
   );
 };
 
-export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, staffLookup, staffOptions, currentUserId, onAssignJob, onAssignItem, onOpenItemDrawer, formatDate, readOnly = false, showOwnerLoad = true, enableReassignmentPanel = true, lensId }: Props) {
+export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, staffLookup, staffOptions, currentUserId, onAssignJob, onAssignItem, onOpenItemDrawer, formatDate, readOnly = false, showOwnerLoad = true, enableReassignmentPanel = true, lensId, csrShortcutsEnabled = false, onCsrAction }: Props) {
   const safeColumns = columns && columns.length ? columns : [{ queueName: 'All Work', jobs: [] }];
   const bucketOrder: BucketKey[] = ['blocked', 'waiting', 'ready', 'progress'];
   const safeReadOnly = Boolean(readOnly);
@@ -1078,6 +1118,8 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
                             onToggleJob={toggleJobSelection}
                             onToggleItem={toggleItemSelection}
                             readOnly={safeReadOnly}
+                            csrShortcutsEnabled={csrShortcutsEnabled}
+                            onCsrAction={onCsrAction}
                             lensId={lensId}
                           />
                         ))}

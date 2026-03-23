@@ -1355,7 +1355,26 @@ export default function Dashboard() {
     return { label: 'No customer action', tone: 'slate', group: 'clear' as const };
   };
 
+  const matchesCustomerSearch = (job: Job) => {
+    if (!normalizedCustomerSearch) return true;
+    const customerProfile = customers.find((c) => c.id === job.user_id);
+    const haystack = [
+      customerProfile?.first_name,
+      customerProfile?.last_name,
+      customerProfile?.company,
+      customerProfile?.email,
+      job.guest_email,
+      job.title,
+      job.orders?.brands?.name,
+      job.id,
+    ]
+      .filter(Boolean)
+      .map((entry) => String(entry).toLowerCase());
+    return haystack.some((entry) => entry.includes(normalizedCustomerSearch));
+  };
+
   const filteredJobs = jobs.filter(job => {
+    if (!matchesCustomerSearch(job)) return false;
     if (activeTab === 'All') return true;
     if (activeTab === 'My Queue') return job.assigned_to === user?.id; 
     
@@ -1436,7 +1455,9 @@ export default function Dashboard() {
       const ageDays = (
         (Number.isFinite(createdAtMs) ? Math.floor((Date.now() - createdAtMs) / (1000 * 60 * 60 * 24)) : 0)
       );
+      const lastTouchedDays = updatedAt ? Math.max(0, Math.floor((Date.now() - new Date(updatedAt).getTime()) / (1000 * 60 * 60 * 24))) : null;
       const isAgingWait = isWaiting && ageDays >= 2;
+      const proofStatus = job.portal_visibility === 'proof_live' ? 'Proof live' : (String(job.status || '').toLowerCase().includes('proof') ? job.status : '');
 
       return {
         ...job,
@@ -1462,6 +1483,8 @@ export default function Dashboard() {
         ageDays,
         isAgingWait,
         updatedAt,
+        lastTouchedDays,
+        proofStatus,
       } as Job & any;
     });
 
@@ -1678,6 +1701,56 @@ export default function Dashboard() {
       return;
     }
     await bulkAssignJobs(managerExceptions.waitingAging.map((job: any) => job.id), null, { cascadeItems: true });
+  };
+
+  const handleCsrShortcut = async (job: any, action: 'waiting_customer' | 'request_art' | 'send_proof' | 'message_customer') => {
+    if (!job?.id) return;
+    if (action === 'message_customer') {
+      router.push(`/dashboard/messages?jobId=${job.id}`);
+      return;
+    }
+
+    const updates: Record<string, any> = {
+      customer_action_required: true,
+      updated_at: new Date().toISOString(),
+    };
+    let details = '';
+
+    if (action === 'waiting_customer') {
+      updates.customer_action_type = 'provide_info';
+      updates.customer_action_note = 'Waiting on customer';
+      if (!String(job.status || '').toLowerCase().includes('waiting')) {
+        updates.status = 'Waiting on Customer';
+      }
+      details = 'Marked waiting on customer';
+    } else if (action === 'request_art') {
+      updates.customer_action_type = 'upload_artwork';
+      updates.customer_action_note = 'Requesting artwork from customer';
+      details = 'Requested artwork from customer';
+    } else if (action === 'send_proof') {
+      updates.customer_action_type = 'approve_proof';
+      updates.customer_action_note = 'Proof sent to customer';
+      updates.portal_visibility = 'proof_live';
+      updates.portal_shared_at = new Date().toISOString();
+      updates.portal_shared_by = user?.id || null;
+      details = 'Sent proof and marked awaiting approval';
+    }
+
+    setJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, ...updates } : j)));
+
+    const { error } = await supabase.from('jobs').update(updates).eq('id', job.id);
+    if (error) {
+      alert(error.message);
+      fetchDashboardData();
+      return;
+    }
+
+    await supabase.from('job_logs').insert({
+      job_id: job.id,
+      user_id: user?.id || null,
+      action: 'CSR Shortcut',
+      details,
+    });
   };
 
   if (!isInternal) {
@@ -2464,8 +2537,8 @@ export default function Dashboard() {
                 <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3 shadow-sm">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div>
-                      <p className="text-[11px] font-black uppercase tracking-[0.16em] text-blue-700">CSR controls</p>
-                      <p className="text-sm text-blue-900 font-semibold">Filter this board by customer, not just queue.</p>
+                      <p className="text-[11px] font-black uppercase tracking-[0.16em] text-blue-700">CSR quick filter</p>
+                      <p className="text-sm text-blue-900 font-semibold">One-keystroke customer/account filter across the board, stats, and table.</p>
                     </div>
                     <div className="flex w-full max-w-xl items-center gap-2">
                       <input
@@ -2689,6 +2762,8 @@ export default function Dashboard() {
                   showOwnerLoad={isProductionRole}
                   enableReassignmentPanel={isProductionRole}
                   lensId={activeLensPreset.id}
+                  csrShortcutsEnabled={isCSRRole || activeLensPreset.id === 'csr'}
+                  onCsrAction={handleCsrShortcut}
                 />
               ) : (
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-[400px]">
@@ -2719,17 +2794,43 @@ export default function Dashboard() {
                         const customerProfile = customers.find(c => c.id === job.user_id);
                         const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
                         const brandName = job.orders?.brands?.name || 'PrintHQ';
+                        const proofBadge = job.proofStatus || (job.portal_visibility === 'proof_live' ? 'Proof live' : '');
+                        const lastTouchedLabel = typeof job.lastTouchedDays === 'number' ? (job.lastTouchedDays === 0 ? 'Touched today' : `${job.lastTouchedDays}d ago`) : '';
+                        const customerActionToneMap: Record<string, { label: string; className: string }> = {
+                          upload_artwork: { label: 'Need artwork', className: 'border-amber-200 bg-amber-50 text-amber-800' },
+                          approve_proof: { label: 'Proof approval pending', className: 'border-blue-200 bg-blue-50 text-blue-800' },
+                          review_quote: { label: 'Review quote', className: 'border-violet-200 bg-violet-50 text-violet-800' },
+                          provide_info: { label: 'Need info', className: 'border-amber-200 bg-amber-50 text-amber-800' },
+                          other: { label: 'Customer action', className: 'border-slate-200 bg-slate-50 text-slate-700' },
+                        };
+                        const customerActionTone = job.customer_action_required ? (customerActionToneMap[job.customer_action_type || 'other'] || customerActionToneMap.other) : null;
                         return (
                         <React.Fragment key={job.id}>
                         <tr className="hover:bg-gray-50 transition-colors group">
                           <td className="px-6 py-4 whitespace-nowrap"><div className="flex flex-col gap-1"><div className="text-[10px] text-gray-400 font-bold uppercase">In: {formatDate(job.created_at)}</div><div className={`text-xs ${dueStatus.color}`}>Due: {dueStatus.label}</div></div></td>
                           <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">{typeof customerName === 'string' ? customerName.charAt(0).toUpperCase() : '?'}</div><div className="overflow-hidden"><p className="text-sm font-bold text-gray-900 truncate max-w-[120px]">{customerName}</p><p className="text-[10px] text-gray-400 uppercase tracking-wider truncate max-w-[120px]">{brandName}</p></div></div></td>
-                          <td className="px-6 py-4"><Link href={`/dashboard/jobs/${job.id}`} className="block group-hover:text-blue-600 transition-colors"><div className="font-bold text-gray-900 text-base">{job.title}</div></Link><div className="flex items-center gap-2 mt-1"><span className="font-mono text-[10px] text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span></div></td>
+                          <td className="px-6 py-4">
+                            <Link href={`/dashboard/jobs/${job.id}`} className="block group-hover:text-blue-600 transition-colors"><div className="font-bold text-gray-900 text-base">{job.title}</div></Link>
+                            <div className="flex items-center gap-2 mt-1"><span className="font-mono text-[10px] text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span></div>
+                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-gray-700">
+                              {proofBadge ? (<span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-1 text-violet-800">Proof: {proofBadge}</span>) : null}
+                              {customerActionTone ? (<span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 ${customerActionTone.className}`}>Customer: {customerActionTone.label}</span>) : null}
+                              {lastTouchedLabel ? (<span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-1 text-gray-700">Touch: {lastTouchedLabel}</span>) : null}
+                            </div>
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap"><div className="text-xs font-medium text-gray-700">{job.size || 'N/A'}</div></td>
                           <td className="px-6 py-4"><div className="text-xs text-gray-500 truncate max-w-[120px]" title={job.paper_stock}>{job.paper_stock || 'N/A'}</div></td>
                           <td className="px-6 py-4"><span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide ${job.current_step === 'Complete' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{job.current_step || 'Processing'}</span></td>
                           <td className="px-6 py-4"><select value={job.assigned_to || ''} onChange={(e) => handleAssignJob(job.id, e.target.value)} className="bg-transparent border-none text-xs font-bold text-gray-500 focus:ring-0 cursor-pointer hover:text-black w-full truncate"><option value="">-- Unassigned --</option>{staff.map(s => (<option key={s.id} value={s.id}>{s.first_name || s.email?.split('@')[0]}</option>))}</select></td>
-                          <td className="px-6 py-4 text-right"><div className="flex items-center justify-end gap-2"><Link href={`/dashboard/jobs/${job.id}`} className="text-gray-400 hover:text-black transition-colors p-2 hover:bg-gray-100 rounded-full"><ChevronRight size={20} /></Link></div></td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex flex-wrap items-center justify-end gap-1">
+                              <button type="button" onClick={() => handleCsrShortcut(job, 'waiting_customer')} className="rounded-full border border-gray-200 bg-white p-2 text-gray-600 hover:border-black hover:text-black" title="Mark waiting on customer"><PauseCircle size={14} /></button>
+                              <button type="button" onClick={() => handleCsrShortcut(job, 'request_art')} className="rounded-full border border-gray-200 bg-white p-2 text-gray-600 hover:border-black hover:text-black" title="Request artwork"><UploadCloud size={14} /></button>
+                              <button type="button" onClick={() => handleCsrShortcut(job, 'send_proof')} className="rounded-full border border-gray-200 bg-white p-2 text-gray-600 hover:border-black hover:text-black" title="Send proof"><Send size={14} /></button>
+                              <button type="button" onClick={() => handleCsrShortcut(job, 'message_customer')} className="rounded-full border border-gray-200 bg-white p-2 text-gray-600 hover:border-black hover:text-black" title="Message customer"><MessageSquare size={14} /></button>
+                              <Link href={`/dashboard/jobs/${job.id}`} className="text-gray-400 hover:text-black transition-colors p-2 hover:bg-gray-100 rounded-full"><ChevronRight size={20} /></Link>
+                            </div>
+                          </td>
                         </tr>
                         {job.job_items && job.job_items.length > 0 && job.job_items.filter((item: any) => { if (activeTab === 'All' || activeTab === 'My Queue') return true; return item.status === activeTab; }).map((item: any) => {
                           const isDeptMatch = activeTab !== 'All' && activeTab !== 'My Queue' && item.status === activeTab;
