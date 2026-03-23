@@ -391,7 +391,10 @@ export default function JobInteractiveView({
   const [userRole, setUserRole] = useState('customer');
   const [staffOptions, setStaffOptions] = useState<any[]>([]);
   
+  const [advancedOpen, setAdvancedOpen] = useState(userRole === 'admin');
   const isStaff = userRole !== 'customer';
+  const isCSRMode = isStaff && userRole !== 'admin';
+  const showAdvancedOps = !isCSRMode || advancedOpen;
 
   // NEW: State for Dynamic Settings
   const [workflowOptions, setWorkflowOptions] = useState<any[]>([]);
@@ -474,6 +477,17 @@ export default function JobInteractiveView({
 
     return () => { supabase.removeChannel(channel); };
   }, [jobId]);
+
+  useEffect(() => {
+    if (userRole === 'admin') {
+      setAdvancedOpen(true);
+    } else if (userRole && userRole !== 'customer') {
+      setAdvancedOpen(false);
+    }
+    if (!showAdvancedOps && rightTab === 'activity') {
+      setRightTab('chat');
+    }
+  }, [userRole, showAdvancedOps, rightTab]);
 
   const fetchUserRole = async () => {
     const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
@@ -1995,8 +2009,68 @@ export default function JobInteractiveView({
         </div>
       </div>
 
-       {/* STAGE COMMANDER */}
-       {isStaff ? (
+       {/* STAGE COMMANDER / CSR MODE */}
+      {isCSRMode ? (
+        <div className="bg-white border-b border-gray-200 shadow-sm">
+          <div className="max-w-[1920px] mx-auto px-4 py-4 space-y-4">
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-500">Customer action</p>
+                <p className="mt-2 text-lg font-black text-gray-900">{customerAction.required ? customerAction.label : 'No action open'}</p>
+                <p className="mt-1 text-xs text-gray-600 line-clamp-2">{customerAction.required ? customerAction.description : portalNextAction}</p>
+              </div>
+              <div className={`rounded-2xl border p-4 ${releaseGate.tone === 'red' ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-500">Release</p>
+                <p className={`mt-2 text-lg font-black ${releaseGate.tone === 'red' ? 'text-red-900' : 'text-green-900'}`}>{releaseGate.label}</p>
+                <p className="mt-1 text-xs text-gray-700 line-clamp-2">Next: {releaseGate.nextStep}</p>
+              </div>
+              <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-500">Portal / proof</p>
+                <p className="mt-2 text-lg font-black text-gray-900">{portalState.label}</p>
+                <p className="mt-1 text-xs text-gray-600 line-clamp-2">{portalState.description}</p>
+              </div>
+              <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-500">Due</p>
+                <p className="mt-2 text-lg font-black text-gray-900">{countdown.text}</p>
+                <p className="mt-1 text-xs text-gray-600 line-clamp-2">Last touch: {lastTouchValue}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => openUploadModal()} className="inline-flex items-center gap-2 rounded-full bg-black px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-white hover:bg-gray-800"><UploadCloud size={14}/> Share proof</button>
+              <button onClick={() => setCustomerAction('upload_artwork', customerActionNote || 'Please upload artwork or copy to proceed.')} className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-orange-800 hover:border-orange-300"><Paperclip size={14}/> Request files</button>
+              <button onClick={() => { setRightTab('chat'); const el = document.getElementById('csr-message-box') as HTMLInputElement | null; el?.focus(); }} className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-blue-800 hover:border-blue-300"><MessageSquare size={14}/> Message customer</button>
+              <button onClick={() => setAdvancedOpen(!advancedOpen)} className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-gray-700 hover:border-black">{advancedOpen ? 'Hide ops console' : 'Open ops console'}</button>
+            </div>
+            <div className="rounded-2xl border border-gray-200 bg-white p-4">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Line items</p>
+                  <p className="text-sm text-gray-700">Visible to CSR</p>
+                </div>
+                <span className="rounded-full bg-gray-100 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700">{items.length} items</span>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {items.length === 0 ? (
+                  <span className="text-xs text-gray-500 italic">No line items yet.</span>
+                ) : (
+                  items.map((item) => (
+                    <div key={item.id} className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 min-w-[180px]">
+                      <p className="text-sm font-bold text-gray-900 truncate">{item.description}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-gray-600">
+                        <span className="rounded-full bg-white px-2 py-0.5 border border-gray-200">Qty {item.quantity?.toLocaleString() || 0}</span>
+                        <span className={`rounded-full px-2 py-0.5 border text-[9px] font-black uppercase tracking-[0.18em] ${item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>{item.status || 'Pending'}</span>
+                        {(item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art') && (
+                          <span className="rounded-full bg-orange-50 px-2 py-0.5 border border-orange-200 text-[9px] font-black uppercase tracking-[0.18em] text-orange-800">Waiting on art</span>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : isStaff ? (
        <div className="bg-gray-900 text-white shadow-xl">
           <div className="max-w-[1920px] mx-auto px-4 py-4 lg:py-5">
             <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr_1fr_1.1fr]">
@@ -2077,6 +2151,7 @@ export default function JobInteractiveView({
           </div>
         </div>
 
+        {showAdvancedOps && (<>
         <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2269,6 +2344,8 @@ export default function JobInteractiveView({
         </OpsDisclosure>
       </div>
 
+        </>)}
+
       {/* MAIN LAYOUT */}
       <div className="flex-1 max-w-[1920px] mx-auto w-full p-4 grid grid-cols-12 gap-4">
              {/* LEFT COL: ASSETS & INFO */}
@@ -2430,6 +2507,7 @@ export default function JobInteractiveView({
 
         {/* RIGHT COL: FILE VAULT & CHAT */}
         <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
+            {showAdvancedOps ? (
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/3">
                 <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center gap-2">
                      <div>
@@ -2481,10 +2559,29 @@ export default function JobInteractiveView({
                 </div>
             </div>
 
+            ) : (
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/3">
+                <div className="px-4 py-3 border-b border-gray-100 bg-gray-50 flex justify-between items-center gap-2">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> Proofs & files</h3>
+                    <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-gray-400">Portal visibility summary</p>
+                  </div>
+                  <button onClick={() => setAdvancedOpen(true)} className="text-[10px] border border-gray-200 bg-white px-2 py-1 rounded font-bold text-gray-600 hover:border-black hover:text-black">Open ops</button>
+                </div>
+                <div className="flex-1 p-4 text-sm text-gray-700 space-y-2">
+                  <div className="flex flex-wrap gap-2 text-[11px] text-gray-700">
+                    <span className="rounded-full bg-gray-100 px-3 py-1">Live proofs {sharedPortalCount}</span>
+                    <span className="rounded-full bg-gray-100 px-3 py-1">Archived {archivedProofCount}</span>
+                    <span className="rounded-full bg-gray-100 px-3 py-1">Internal drafts {hiddenDraftProofs.length}</span>
+                  </div>
+                  <p className="text-xs text-gray-500">Use the ops console to manage portal visibility, archives, and uploads.</p>
+                </div>
+              </div>
+            )}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-2/3 overflow-hidden">
                 <div className="flex border-b border-gray-200">
                     <button onClick={() => setRightTab('chat')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><MessageSquare size={14}/> Discussion</button>
-                    {isStaff && <button onClick={() => setRightTab('activity')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><Activity size={14}/> Activity Log</button>}
+                    {isStaff && showAdvancedOps && <button onClick={() => setRightTab('activity')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><Activity size={14}/> Activity Log</button>}
                 </div>
                 <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
                     {rightTab === 'chat' && (
@@ -2505,7 +2602,7 @@ export default function JobInteractiveView({
                             <div ref={messagesEndRef} />
                         </>
                     )}
-                    {rightTab === 'activity' && (
+                    {rightTab === 'activity' && showAdvancedOps && (
                         <>
                             {logs.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No activity recorded yet.</div>}
                             {logs.map((log) => (
@@ -2527,7 +2624,7 @@ export default function JobInteractiveView({
                           </div>
                         )}
                         <div className="flex gap-2">
-                            <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-200 text-xs focus:outline-none focus:border-black" placeholder="Type here..." />
+                            <input id="csr-message-box" type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-200 text-xs focus:outline-none focus:border-black" placeholder="Type here..." />
                             <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
                         </div>
                         {isStaff && (
