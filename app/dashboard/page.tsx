@@ -33,7 +33,21 @@ const DEFAULT_ROUTE_LIBRARY: { group: string; steps: string[] }[] = [
   { group: 'QC & Ship', steps: ['QC', 'Ready for Pickup/Ship'] },
 ];
 
-type OpsFilterKey = 'all' | 'blocked' | 'ready' | 'waiting' | 'unassigned' | 'orphaned' | 'aging_waits' | 'split_owner' | 'ready_unclaimed';
+type OpsFilterKey =
+  | 'all'
+  | 'blocked'
+  | 'ready'
+  | 'waiting'
+  | 'unassigned'
+  | 'orphaned'
+  | 'aging_waits'
+  | 'split_owner'
+  | 'ready_unclaimed'
+  | 'needs_attention'
+  | 'waiting_customer'
+  | 'proof_pending'
+  | 'follow_up_due'
+  | 'needs_art';
 type ShopFloorViewMode = 'board' | 'table';
 type ShopFloorLensId = 'auto' | 'csr' | 'prepress' | 'press' | 'digital' | 'bindery' | 'mailing' | 'qc_ship' | 'manager';
 
@@ -55,8 +69,8 @@ const SHOP_FLOOR_LENS_PRESETS: ShopFloorLensPreset[] = [
     shortLabel: 'CSR',
     description: 'Catch customer blockers, art waits, and ready work before it hits the floor blind.',
     defaultTab: 'CSR Desk',
-    defaultFilter: 'all',
-    defaultView: 'board',
+    defaultFilter: 'needs_attention',
+    defaultView: 'table',
     audience: ['csr', 'customer service', 'sales', 'account manager'],
   },
   {
@@ -1373,6 +1387,20 @@ export default function Dashboard() {
     return { label: 'No customer action', tone: 'slate', group: 'clear' as const };
   };
 
+  const getCsrNextMove = (job: any) => {
+    const state = getCsrActionState(job);
+    if (state.group === 'customer') return 'Follow up customer';
+    if (state.group === 'proof') {
+      return String(job?.status || '').toLowerCase().includes('approved') ? 'Release to floor' : 'Check proof status';
+    }
+    if (state.group === 'csr') return 'Review and route';
+    if (job?.hasOverdueFollowUp) return 'Follow up overdue';
+    if (job?.hasFollowUpToday) return 'Touch base today';
+    if (job?.isReadyUnclaimed) return 'Assign owner';
+    if (job?.isWaiting) return 'Unblock artwork';
+    return 'Monitor';
+  };
+
   const matchesCustomerSearch = (job: Job) => {
     if (!normalizedCustomerSearch) return true;
     const customerProfile = customers.find((c) => c.id === job.user_id);
@@ -1530,8 +1558,19 @@ export default function Dashboard() {
     return haystack.includes(normalizedCustomerSearch);
   });
 
+  const matchesNeedsAttention = (job: any) => (job?.csrActionState?.group !== 'clear') || job?.hasOverdueFollowUp || job?.hasFollowUpToday;
+  const matchesWaitingCustomer = (job: any) => job?.csrActionState?.group === 'customer';
+  const matchesProofPending = (job: any) => job?.csrActionState?.group === 'proof';
+  const matchesFollowUpDue = (job: any) => job?.hasOverdueFollowUp || job?.hasFollowUpToday;
+  const matchesNeedsArt = (job: any) => (job?.waitingItems || []).length > 0 || job?.customer_action_type === 'upload_artwork';
+
   const scopedJobs = customerScopedJobs.filter((job: any) => {
     if (opsFilter === 'all') return true;
+    if (opsFilter === 'needs_attention') return matchesNeedsAttention(job);
+    if (opsFilter === 'waiting_customer') return matchesWaitingCustomer(job);
+    if (opsFilter === 'proof_pending') return matchesProofPending(job);
+    if (opsFilter === 'follow_up_due') return matchesFollowUpDue(job);
+    if (opsFilter === 'needs_art') return matchesNeedsArt(job);
     if (opsFilter === 'blocked') return job.isBlocked;
     if (opsFilter === 'ready') return job.isReady;
     if (opsFilter === 'waiting') return job.isWaiting;
@@ -1691,19 +1730,27 @@ export default function Dashboard() {
   const csrBoardColumns = isCSRDesk
     ? boardViewColumns.filter((column) => ['Prepress', 'Press', 'QC & Ship', 'Unassigned / Other'].includes(column.queueName) || column.jobs.length > 0)
     : boardViewColumns;
+  const csrStateCounts = {
+    needsAttention: customerScopedJobs.filter((job: any) => matchesNeedsAttention(job)).length,
+    waitingCustomer: customerScopedJobs.filter((job: any) => matchesWaitingCustomer(job)).length,
+    proofPending: customerScopedJobs.filter((job: any) => matchesProofPending(job)).length,
+    followUpDue: customerScopedJobs.filter((job: any) => matchesFollowUpDue(job)).length,
+    needsArt: customerScopedJobs.filter((job: any) => matchesNeedsArt(job)).length,
+  };
   const csrFocusStats = {
-    awaitingCustomer: scopedJobs.filter((job: any) => job.csrActionState?.group === 'customer').length,
-    proofsLive: scopedJobs.filter((job: any) => job.csrActionState?.group === 'proof').length,
-    proofApprovedWaitingRelease: scopedJobs.filter((job: any) => String(job.status || '').toLowerCase().includes('proof approved')).length,
-    csrReviewNeeded: scopedJobs.filter((job: any) => job.csrActionState?.group === 'csr').length,
+    needsAttention: csrStateCounts.needsAttention,
+    waitingCustomer: csrStateCounts.waitingCustomer,
+    proofPending: csrStateCounts.proofPending,
+    followUpDue: csrStateCounts.followUpDue,
+    needsArt: csrStateCounts.needsArt,
   };
   const csrAttentionBuckets = [
-    { key: 'awaitingCustomer', label: 'Customer owes files/response', count: csrFocusStats.awaitingCustomer, tone: 'amber', action: () => setOpsFilter('waiting') },
-    { key: 'proofsLive', label: 'Proof live or revisions', count: csrFocusStats.proofsLive, tone: 'blue' },
-    { key: 'proofApprovedWaitingRelease', label: 'Proof approved, waiting release', count: csrFocusStats.proofApprovedWaitingRelease, tone: 'emerald' },
-    { key: 'csrReviewNeeded', label: 'CSR review needed', count: csrFocusStats.csrReviewNeeded, tone: 'slate' },
+    { key: 'needsAttention', label: 'Needs attention', count: csrStateCounts.needsAttention, tone: 'amber', action: () => setOpsFilter('needs_attention') },
+    { key: 'waitingCustomer', label: 'Waiting on customer', count: csrStateCounts.waitingCustomer, tone: 'amber', action: () => setOpsFilter('waiting_customer') },
+    { key: 'needsArt', label: 'Needs art/files', count: csrStateCounts.needsArt, tone: 'amber', action: () => setOpsFilter('needs_art') },
+    { key: 'proofPending', label: 'Proof pending / revisions', count: csrStateCounts.proofPending, tone: 'blue', action: () => setOpsFilter('proof_pending') },
+    { key: 'followUpDue', label: 'Follow-up due/overdue', count: csrStateCounts.followUpDue, tone: 'red', action: () => setOpsFilter('follow_up_due') },
     { key: 'readyUnclaimed', label: 'Ready, no owner', count: managerExceptions.readyUnclaimed.length, tone: 'gray', action: () => setOpsFilter('ready_unclaimed') },
-    { key: 'followUps', label: 'Follow-up due/overdue', count: managerExceptions.followUpOverdue.length + managerExceptions.followUpToday.length, tone: 'red' },
   ];
   const csrAttentionTotal = csrAttentionBuckets.reduce((sum, bucket) => sum + bucket.count, 0);
   const attentionToneClass: Record<string, string> = {
@@ -2683,6 +2730,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {!isCSRDesk && (
               <div className={`grid gap-4 xl:grid-cols-2 ${queueMetaOrder}`}>
                 <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                   <div className="flex items-center justify-between">
@@ -2763,7 +2811,9 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
+              )}
 
+              {!isCSRDesk && (
               <div className={`rounded-2xl border border-gray-200 bg-white p-5 shadow-sm ${managerExceptionsOrder}`}>
                 <div className="flex items-center justify-between">
                   <div>
@@ -2819,6 +2869,7 @@ export default function Dashboard() {
                   ))}
                 </div>
               </div>
+              )}
 
               <div className={workSurfaceOrder}>
                 {sortedFilteredJobs.length === 0 ? (
@@ -2891,89 +2942,192 @@ export default function Dashboard() {
                 />
               ) : (
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-[400px]">
-                  <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-                    <h3 className="font-semibold text-gray-900 flex items-center">
-                      <Filter size={16} className="mr-2 text-gray-400" /> 
-                      {activeTab}
-                    </h3>
-                    <div className="text-xs font-bold bg-gray-200 px-2 py-1 rounded text-gray-600">{sortedFilteredJobs.length} Jobs</div>
+                  <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                        <Filter size={16} className="text-gray-400" />
+                        {isCSRDesk ? 'CSR customer workspace' : activeTab}
+                      </h3>
+                      <p className="mt-1 text-sm text-gray-500">
+                        {isCSRDesk
+                          ? 'Customer-state-first worklist with direct next moves.'
+                          : 'Full production table with item-level detail.'}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-gray-600">
+                      <span className="rounded-full bg-gray-200 px-2.5 py-1">{sortedFilteredJobs.length} jobs</span>
+                      {isCSRDesk ? <span className="rounded-full border border-gray-200 bg-white px-2.5 py-1">Filter: {opsFilter.replace('_', ' ')}</span> : null}
+                    </div>
                   </div>
 
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-gray-50 text-gray-500 uppercase font-medium">
-                      <tr>
-                        <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('timeline')}><div className="flex items-center gap-1">Timeline {sortConfig?.key === 'timeline' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
-                        <th className="px-6 py-3 w-48 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('customer')}><div className="flex items-center gap-1">Customer {sortConfig?.key === 'customer' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
-                        <th className="px-6 py-3 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('details')}><div className="flex items-center gap-1">Job Details {sortConfig?.key === 'details' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
-                        <th className="px-6 py-3 w-24 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('size')}><div className="flex items-center gap-1">Size {sortConfig?.key === 'size' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
-                        <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('stock')}><div className="flex items-center gap-1">Stock {sortConfig?.key === 'stock' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
-                        <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('station')}><div className="flex items-center gap-1">Station {sortConfig?.key === 'station' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
-                        <th className="px-6 py-3 w-40 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('team')}><div className="flex items-center gap-1">Team {sortConfig?.key === 'team' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
-                        <th className="px-6 py-3 w-20 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {sortedFilteredJobs.map((job: any) => {
-                        const dueStatus = getDueStatus(job.due_date);
-                        const customerProfile = customers.find(c => c.id === job.user_id);
-                        const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
-                        const brandName = job.orders?.brands?.name || 'PrintHQ';
-                        const proofBadge = job.proofStatus || (job.portal_visibility === 'proof_live' ? 'Proof live' : '');
-                        const lastTouchedLabel = typeof job.lastTouchedDays === 'number' ? (job.lastTouchedDays === 0 ? 'Touched today' : `${job.lastTouchedDays}d ago`) : '';
-                        const customerActionToneMap: Record<string, { label: string; className: string }> = {
-                          upload_artwork: { label: 'Need artwork', className: 'border-amber-200 bg-amber-50 text-amber-800' },
-                          approve_proof: { label: 'Proof approval pending', className: 'border-blue-200 bg-blue-50 text-blue-800' },
-                          review_quote: { label: 'Review quote', className: 'border-violet-200 bg-violet-50 text-violet-800' },
-                          provide_info: { label: 'Need info', className: 'border-amber-200 bg-amber-50 text-amber-800' },
-                          other: { label: 'Customer action', className: 'border-slate-200 bg-slate-50 text-slate-700' },
-                        };
-                        const customerActionTone = job.customer_action_required ? (customerActionToneMap[job.customer_action_type || 'other'] || customerActionToneMap.other) : null;
-                        return (
-                        <React.Fragment key={job.id}>
-                        <tr className="hover:bg-gray-50 transition-colors group">
-                          <td className="px-6 py-4 whitespace-nowrap"><div className="flex flex-col gap-1"><div className="text-[10px] text-gray-400 font-bold uppercase">In: {formatDate(job.created_at)}</div><div className={`text-xs ${dueStatus.color}`}>Due: {dueStatus.label}</div></div></td>
-                          <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">{typeof customerName === 'string' ? customerName.charAt(0).toUpperCase() : '?'}</div><div className="overflow-hidden"><p className="text-sm font-bold text-gray-900 truncate max-w-[120px]">{customerName}</p><p className="text-[10px] text-gray-400 uppercase tracking-wider truncate max-w-[120px]">{brandName}</p></div></div></td>
-                          <td className="px-6 py-4">
-                            <Link href={`/dashboard/jobs/${job.id}`} className="block group-hover:text-blue-600 transition-colors"><div className="font-bold text-gray-900 text-base">{job.title}</div></Link>
-                            <div className="flex items-center gap-2 mt-1"><span className="font-mono text-[10px] text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span></div>
-                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-gray-700">
-                              {proofBadge ? (<span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-1 text-violet-800">Proof: {proofBadge}</span>) : null}
-                              {customerActionTone ? (<span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 ${customerActionTone.className}`}>Customer: {customerActionTone.label}</span>) : null}
-                              {lastTouchedLabel ? (<span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-1 text-gray-700">Touch: {lastTouchedLabel}</span>) : null}
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap"><div className="text-xs font-medium text-gray-700">{job.size || 'N/A'}</div></td>
-                          <td className="px-6 py-4"><div className="text-xs text-gray-500 truncate max-w-[120px]" title={job.paper_stock}>{job.paper_stock || 'N/A'}</div></td>
-                          <td className="px-6 py-4"><span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide ${job.current_step === 'Complete' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{job.current_step || 'Processing'}</span></td>
-                          <td className="px-6 py-4"><select value={job.assigned_to || ''} onChange={(e) => handleAssignJob(job.id, e.target.value)} className="bg-transparent border-none text-xs font-bold text-gray-500 focus:ring-0 cursor-pointer hover:text-black w-full truncate"><option value="">-- Unassigned --</option>{staff.map(s => (<option key={s.id} value={s.id}>{s.first_name || s.email?.split('@')[0]}</option>))}</select></td>
-                          <td className="px-6 py-4 text-right">
-                            <div className="flex flex-wrap items-center justify-end gap-1">
-                              <button type="button" onClick={() => handleCsrShortcut(job, 'waiting_customer')} className="rounded-full border border-gray-200 bg-white p-2 text-gray-600 hover:border-black hover:text-black" title="Mark waiting on customer"><PauseCircle size={14} /></button>
-                              <button type="button" onClick={() => handleCsrShortcut(job, 'request_art')} className="rounded-full border border-gray-200 bg-white p-2 text-gray-600 hover:border-black hover:text-black" title="Request artwork"><UploadCloud size={14} /></button>
-                              <button type="button" onClick={() => handleCsrShortcut(job, 'send_proof')} className="rounded-full border border-gray-200 bg-white p-2 text-gray-600 hover:border-black hover:text-black" title="Send proof"><Send size={14} /></button>
-                              <button type="button" onClick={() => handleCsrShortcut(job, 'message_customer')} className="rounded-full border border-gray-200 bg-white p-2 text-gray-600 hover:border-black hover:text-black" title="Message customer"><MessageSquare size={14} /></button>
-                              <Link href={`/dashboard/jobs/${job.id}`} className="text-gray-400 hover:text-black transition-colors p-2 hover:bg-gray-100 rounded-full"><ChevronRight size={20} /></Link>
-                            </div>
-                          </td>
-                        </tr>
-                        {job.job_items && job.job_items.length > 0 && job.job_items.filter((item: any) => { if (activeTab === 'All' || activeTab === 'My Queue') return true; return item.status === activeTab; }).map((item: any) => {
-                          const isDeptMatch = activeTab !== 'All' && activeTab !== 'My Queue' && item.status === activeTab;
-                          return (
-                          <tr key={item.id} className={`border-b border-gray-100/50 transition-colors ${isDeptMatch ? 'bg-yellow-400/10' : 'bg-gray-50/30'}`}>
-                            <td className="px-6 py-2"></td><td className="px-6 py-2"></td>
-                            <td className="px-6 py-2"><div className={`flex items-center gap-3 pl-4 border-l-2 ${isDeptMatch ? 'border-yellow-400' : 'border-blue-100'}`}><button onClick={() => handleOpenItemDrawer(item.id)} className="flex flex-col text-left hover:opacity-75 transition-opacity"><span className={`text-[11px] font-black uppercase tracking-tight ${isDeptMatch ? 'text-yellow-900' : 'text-gray-700'}`}>{item.description}</span><span className="text-[9px] text-gray-400 font-bold uppercase">{item.quantity?.toLocaleString()} units</span></button></div></td>
-                            <td className="px-6 py-2"><span className="text-xs text-gray-500">{item.size || 'N/A'}</span></td>
-                            <td className="px-6 py-2"><div className="text-[10px] text-gray-400 truncate max-w-[120px]" title={item.paper_stock}>{item.paper_stock || 'N/A'}</div></td>
-                            <td className="px-6 py-2"><div className="flex items-center gap-2"><span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' : isDeptMatch ? 'bg-yellow-400 text-yellow-900 border-yellow-500 shadow-sm' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>{item.status || 'Pending'}</span>{isDeptMatch && (<button onClick={() => handleCompleteItemStep(item, activeTab)} className="bg-green-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-sm hover:bg-green-700 transition-colors uppercase">Mark Done</button>)}</div></td>
-                            <td className="px-6 py-2"></td>
-                            <td className="px-6 py-2"><div className="flex justify-end"><button onClick={() => handleOpenItemDrawer(item.id)} className="text-gray-300 hover:text-black"><ExternalLink size={14} /></button></div></td>
+                  {isCSRDesk ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[1100px] text-left text-sm">
+                        <thead className="bg-gray-50 text-[11px] font-bold uppercase tracking-[0.14em] text-gray-500">
+                          <tr>
+                            <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('timeline')}><div className="flex items-center gap-1">Timing {sortConfig?.key === 'timeline' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                            <th className="px-6 py-3 w-56 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('customer')}><div className="flex items-center gap-1">Customer {sortConfig?.key === 'customer' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                            <th className="px-6 py-3 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('details')}><div className="flex items-center gap-1">Worklist {sortConfig?.key === 'details' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                            <th className="px-6 py-3 w-64">Customer state</th>
+                            <th className="px-6 py-3 w-48">Next move</th>
+                            <th className="px-6 py-3 w-64 text-right">Actions</th>
                           </tr>
-                        );})}
-                        </React.Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {sortedFilteredJobs.map((job: any) => {
+                            const dueStatus = getDueStatus(job.due_date);
+                            const customerName = job.customerName || 'Guest';
+                            const brandName = job.brandName || 'PrintHQ';
+                            const proofBadge = job.proofStatus || (job.portal_visibility === 'proof_live' ? 'Proof live' : '');
+                            const lastTouchedLabel = typeof job.lastTouchedDays === 'number' ? (job.lastTouchedDays === 0 ? 'Touched today' : `${job.lastTouchedDays}d ago`) : '';
+                            const csrState = job.csrActionState || getCsrActionState(job);
+                            const csrStateTone = csrState.tone === 'amber'
+                              ? 'border-amber-200 bg-amber-50 text-amber-800'
+                              : csrState.tone === 'blue'
+                                ? 'border-blue-200 bg-blue-50 text-blue-800'
+                                : csrState.tone === 'emerald'
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                  : csrState.tone === 'violet'
+                                    ? 'border-violet-200 bg-violet-50 text-violet-800'
+                                    : 'border-slate-200 bg-slate-50 text-slate-700';
+                            const nextMove = getCsrNextMove(job);
+                            const itemCount = Array.isArray(job.job_items) ? job.job_items.length : 0;
+                            return (
+                              <tr key={job.id} className="align-top transition-colors hover:bg-gray-50/80">
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                  <div className="space-y-1">
+                                    <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400">In {formatDate(job.created_at)}</div>
+                                    <div className={`text-sm font-semibold ${dueStatus.color}`}>Due {dueStatus.label}</div>
+                                    {lastTouchedLabel ? <div className="text-xs text-gray-500">{lastTouchedLabel}</div> : null}
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="flex items-start gap-3">
+                                    <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-full bg-gray-100 text-xs font-bold text-gray-500">{typeof customerName === 'string' ? customerName.charAt(0).toUpperCase() : '?'}</div>
+                                    <div className="min-w-0">
+                                      <div className="truncate text-sm font-bold text-gray-900">{customerName}</div>
+                                      <div className="mt-1 truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">{brandName}</div>
+                                      <div className="mt-2 text-xs text-gray-500">Owner: {ownerLabel(job.assigned_to)}</div>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <Link href={`/dashboard/jobs/${job.id}`} className="block text-base font-bold text-gray-900 transition-colors hover:text-blue-600">{job.title || 'Untitled job'}</Link>
+                                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+                                    <span className="font-mono">#{job.id.substring(0,6).toUpperCase()}</span>
+                                    <span>•</span>
+                                    <span>{job.current_step || 'Processing'}</span>
+                                    <span>•</span>
+                                    <span>{itemCount} item{itemCount === 1 ? '' : 's'}</span>
+                                  </div>
+                                  <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-600">
+                                    {job.size ? <span className="rounded-full border border-gray-200 bg-white px-2 py-1">{job.size}</span> : null}
+                                    {job.paper_stock ? <span className="rounded-full border border-gray-200 bg-white px-2 py-1">{job.paper_stock}</span> : null}
+                                    {job.hasOverdueFollowUp ? <span className="rounded-full border border-red-200 bg-red-50 px-2 py-1 font-semibold text-red-700">Follow-up overdue</span> : null}
+                                    {!job.hasOverdueFollowUp && job.hasFollowUpToday ? <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 font-semibold text-amber-800">Follow-up today</span> : null}
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="flex flex-wrap gap-2">
+                                    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${csrStateTone}`}>{csrState.label}</span>
+                                    {proofBadge ? <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800">{proofBadge}</span> : null}
+                                    {job.isReadyUnclaimed ? <span className="inline-flex items-center rounded-full border border-gray-900 bg-gray-900 px-2.5 py-1 text-xs font-semibold text-white">Ready · no owner</span> : null}
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700">{nextMove}</div>
+                                </td>
+                                <td className="px-6 py-4">
+                                  <div className="flex flex-wrap items-center justify-end gap-2">
+                                    <button type="button" onClick={() => handleCsrShortcut(job, 'message_customer')} className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:border-black hover:text-black" title="Message customer"><MessageSquare size={14} /> Message</button>
+                                    <button type="button" onClick={() => handleCsrShortcut(job, 'request_art')} className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800 hover:border-amber-300" title="Request artwork"><UploadCloud size={14} /> Art</button>
+                                    <button type="button" onClick={() => handleCsrShortcut(job, 'send_proof')} className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-800 hover:border-blue-300" title="Send proof"><Send size={14} /> Proof</button>
+                                    <Link href={`/dashboard/jobs/${job.id}`} className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:border-black hover:text-black">Open <ChevronRight size={14} /></Link>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-gray-50 text-gray-500 uppercase font-medium">
+                        <tr>
+                          <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('timeline')}><div className="flex items-center gap-1">Timeline {sortConfig?.key === 'timeline' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                          <th className="px-6 py-3 w-48 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('customer')}><div className="flex items-center gap-1">Customer {sortConfig?.key === 'customer' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                          <th className="px-6 py-3 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('details')}><div className="flex items-center gap-1">Job Details {sortConfig?.key === 'details' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                          <th className="px-6 py-3 w-24 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('size')}><div className="flex items-center gap-1">Size {sortConfig?.key === 'size' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                          <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('stock')}><div className="flex items-center gap-1">Stock {sortConfig?.key === 'stock' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                          <th className="px-6 py-3 w-32 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('station')}><div className="flex items-center gap-1">Station {sortConfig?.key === 'station' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                          <th className="px-6 py-3 w-40 cursor-pointer hover:bg-gray-100 transition-colors" onClick={() => requestSort('team')}><div className="flex items-center gap-1">Team {sortConfig?.key === 'team' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12}/> : <ArrowDown size={12}/>) : <ArrowUpDown size={12} className="text-gray-300"/>}</div></th>
+                          <th className="px-6 py-3 w-20 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {sortedFilteredJobs.map((job: any) => {
+                          const dueStatus = getDueStatus(job.due_date);
+                          const customerProfile = customers.find(c => c.id === job.user_id);
+                          const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
+                          const brandName = job.orders?.brands?.name || 'PrintHQ';
+                          const proofBadge = job.proofStatus || (job.portal_visibility === 'proof_live' ? 'Proof live' : '');
+                          const lastTouchedLabel = typeof job.lastTouchedDays === 'number' ? (job.lastTouchedDays === 0 ? 'Touched today' : `${job.lastTouchedDays}d ago`) : '';
+                          const customerActionToneMap: Record<string, { label: string; className: string }> = {
+                            upload_artwork: { label: 'Need artwork', className: 'border-amber-200 bg-amber-50 text-amber-800' },
+                            approve_proof: { label: 'Proof approval pending', className: 'border-blue-200 bg-blue-50 text-blue-800' },
+                            review_quote: { label: 'Review quote', className: 'border-violet-200 bg-violet-50 text-violet-800' },
+                            provide_info: { label: 'Need info', className: 'border-amber-200 bg-amber-50 text-amber-800' },
+                            other: { label: 'Customer action', className: 'border-slate-200 bg-slate-50 text-slate-700' },
+                          };
+                          const customerActionTone = job.customer_action_required ? (customerActionToneMap[job.customer_action_type || 'other'] || customerActionToneMap.other) : null;
+                          return (
+                          <React.Fragment key={job.id}>
+                          <tr className="hover:bg-gray-50 transition-colors group">
+                            <td className="px-6 py-4 whitespace-nowrap"><div className="flex flex-col gap-1"><div className="text-[10px] text-gray-400 font-bold uppercase">In: {formatDate(job.created_at)}</div><div className={`text-xs ${dueStatus.color}`}>Due: {dueStatus.label}</div></div></td>
+                            <td className="px-6 py-4"><div className="flex items-center gap-3"><div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">{typeof customerName === 'string' ? customerName.charAt(0).toUpperCase() : '?'}</div><div className="overflow-hidden"><p className="text-sm font-bold text-gray-900 truncate max-w-[120px]">{customerName}</p><p className="text-[10px] text-gray-400 uppercase tracking-wider truncate max-w-[120px]">{brandName}</p></div></div></td>
+                            <td className="px-6 py-4">
+                              <Link href={`/dashboard/jobs/${job.id}`} className="block group-hover:text-blue-600 transition-colors"><div className="font-bold text-gray-900 text-base">{job.title}</div></Link>
+                              <div className="flex items-center gap-2 mt-1"><span className="font-mono text-[10px] text-gray-400">#{job.id.substring(0,6).toUpperCase()}</span></div>
+                              <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-gray-700">
+                                {proofBadge ? (<span className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-2 py-1 text-violet-800">Proof: {proofBadge}</span>) : null}
+                                {customerActionTone ? (<span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 ${customerActionTone.className}`}>Customer: {customerActionTone.label}</span>) : null}
+                                {lastTouchedLabel ? (<span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-1 text-gray-700">Touch: {lastTouchedLabel}</span>) : null}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap"><div className="text-xs font-medium text-gray-700">{job.size || 'N/A'}</div></td>
+                            <td className="px-6 py-4"><div className="text-xs text-gray-500 truncate max-w-[120px]" title={job.paper_stock}>{job.paper_stock || 'N/A'}</div></td>
+                            <td className="px-6 py-4"><span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide ${job.current_step === 'Complete' ? 'bg-green-100 text-green-700' : 'bg-blue-50 text-blue-700'}`}>{job.current_step || 'Processing'}</span></td>
+                            <td className="px-6 py-4"><select value={job.assigned_to || ''} onChange={(e) => handleAssignJob(job.id, e.target.value)} className="bg-transparent border-none text-xs font-bold text-gray-500 focus:ring-0 cursor-pointer hover:text-black w-full truncate"><option value="">-- Unassigned --</option>{staff.map(s => (<option key={s.id} value={s.id}>{s.first_name || s.email?.split('@')[0]}</option>))}</select></td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="flex flex-wrap items-center justify-end gap-1">
+                                <button type="button" onClick={() => handleCsrShortcut(job, 'waiting_customer')} className="rounded-full border border-gray-200 bg-white p-2 text-gray-600 hover:border-black hover:text-black" title="Mark waiting on customer"><PauseCircle size={14} /></button>
+                                <button type="button" onClick={() => handleCsrShortcut(job, 'request_art')} className="rounded-full border border-gray-200 bg-white p-2 text-gray-600 hover:border-black hover:text-black" title="Request artwork"><UploadCloud size={14} /></button>
+                                <button type="button" onClick={() => handleCsrShortcut(job, 'send_proof')} className="rounded-full border border-gray-200 bg-white p-2 text-gray-600 hover:border-black hover:text-black" title="Send proof"><Send size={14} /></button>
+                                <button type="button" onClick={() => handleCsrShortcut(job, 'message_customer')} className="rounded-full border border-gray-200 bg-white p-2 text-gray-600 hover:border-black hover:text-black" title="Message customer"><MessageSquare size={14} /></button>
+                                <Link href={`/dashboard/jobs/${job.id}`} className="text-gray-400 hover:text-black transition-colors p-2 hover:bg-gray-100 rounded-full"><ChevronRight size={20} /></Link>
+                              </div>
+                            </td>
+                          </tr>
+                          {job.job_items && job.job_items.length > 0 && job.job_items.filter((item: any) => { if (activeTab === 'All' || activeTab === 'My Queue') return true; return item.status === activeTab; }).map((item: any) => {
+                            const isDeptMatch = activeTab !== 'All' && activeTab !== 'My Queue' && item.status === activeTab;
+                            return (
+                            <tr key={item.id} className={`border-b border-gray-100/50 transition-colors ${isDeptMatch ? 'bg-yellow-400/10' : 'bg-gray-50/30'}`}>
+                              <td className="px-6 py-2"></td><td className="px-6 py-2"></td>
+                              <td className="px-6 py-2"><div className={`flex items-center gap-3 pl-4 border-l-2 ${isDeptMatch ? 'border-yellow-400' : 'border-blue-100'}`}><button onClick={() => handleOpenItemDrawer(item.id)} className="flex flex-col text-left hover:opacity-75 transition-opacity"><span className={`text-[11px] font-black uppercase tracking-tight ${isDeptMatch ? 'text-yellow-900' : 'text-gray-700'}`}>{item.description}</span><span className="text-[9px] text-gray-400 font-bold uppercase">{item.quantity?.toLocaleString()} units</span></button></div></td>
+                              <td className="px-6 py-2"><span className="text-xs text-gray-500">{item.size || 'N/A'}</span></td>
+                              <td className="px-6 py-2"><div className="text-[10px] text-gray-400 truncate max-w-[120px]" title={item.paper_stock}>{item.paper_stock || 'N/A'}</div></td>
+                              <td className="px-6 py-2"><div className="flex items-center gap-2"><span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${item.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' : isDeptMatch ? 'bg-yellow-400 text-yellow-900 border-yellow-500 shadow-sm' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>{item.status || 'Pending'}</span>{isDeptMatch && (<button onClick={() => handleCompleteItemStep(item, activeTab)} className="bg-green-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full shadow-sm hover:bg-green-700 transition-colors uppercase">Mark Done</button>)}</div></td>
+                              <td className="px-6 py-2"></td>
+                              <td className="px-6 py-2"><div className="flex justify-end"><button onClick={() => handleOpenItemDrawer(item.id)} className="text-gray-300 hover:text-black"><ExternalLink size={14} /></button></div></td>
+                            </tr>
+                          );})}
+                          </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               )}
               </div>
