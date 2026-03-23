@@ -175,6 +175,11 @@ type Job = {
   customer_action_required?: boolean;
   customer_action_type?: string | null;
   customer_action_note?: string | null;
+  follow_up_note?: string | null;
+  follow_up_at?: string | null;
+  follow_up_owner?: string | null;
+  follow_up_status?: string | null;
+  follow_up_completed_at?: string | null;
   updated_at?: string;
 };
 
@@ -1466,7 +1471,7 @@ export default function Dashboard() {
       const lastTouchedDays = updatedAt ? Math.max(0, Math.floor((Date.now() - new Date(updatedAt).getTime()) / (1000 * 60 * 60 * 24))) : null;
       const isAgingWait = isWaiting && ageDays >= 2;
       const proofStatus = job.portal_visibility === 'proof_live' ? 'Proof live' : (String(job.status || '').toLowerCase().includes('proof') ? job.status : '');
-      const followUpState = getJobFollowUpState(job.notes);
+      const followUpState = getJobFollowUpState(job);
       const hasOverdueFollowUp = followUpState.displayStatus === 'overdue';
       const hasFollowUpToday = followUpState.displayStatus === 'today';
 
@@ -1558,6 +1563,8 @@ export default function Dashboard() {
     orphaned: scopedJobs.filter((job: any) => job.isOrphaned).length,
     agingWaits: scopedJobs.filter((job: any) => job.isAgingWait).length,
     splitOwner: scopedJobs.filter((job: any) => job.isSplitOwner).length,
+    followUpOverdue: scopedJobs.filter((job: any) => job.hasOverdueFollowUp).length,
+    followUpToday: scopedJobs.filter((job: any) => job.hasFollowUpToday).length,
   };
 
   const loadQueues = [...baseQueueOrder, 'Unassigned / Other'];
@@ -1654,6 +1661,8 @@ export default function Dashboard() {
     waitingAging: enrichedAllJobs.filter((job: any) => job.isWaiting && daysSince(job.updatedAt as string | undefined) >= 2),
     proofApproved: enrichedAllJobs.filter((job: any) => String(job.status || '').toLowerCase() === 'proof approved - waiting release'),
     readyUnclaimed: enrichedAllJobs.filter((job: any) => job.isReadyUnclaimed),
+    followUpOverdue: enrichedAllJobs.filter((job: any) => job.hasOverdueFollowUp),
+    followUpToday: enrichedAllJobs.filter((job: any) => job.hasFollowUpToday),
   };
 
   const readyUnclaimedJobs = managerExceptions.readyUnclaimed;
@@ -1914,7 +1923,7 @@ export default function Dashboard() {
                   <StatusCard key={job.id} job={job} formatDate={formatDate} dueStatus={getDueStatus(job.due_date)} />
                 )) : (
                   <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-10 text-center text-sm text-gray-400 md:col-span-2 xl:col-span-3">No jobs yet. When the first order lands, it will show here.</div>
-                )}
+                  )}
               </div>
             </div>
 
@@ -2595,7 +2604,7 @@ export default function Dashboard() {
                 </div>
               )}
 
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm order-1">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Shop Floor Command Center</p>
@@ -2620,7 +2629,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="grid gap-4 xl:grid-cols-2">
+              <div className={`grid gap-4 xl:grid-cols-2 ${isCSRDesk ? "order-3" : "order-2"}`}>
                 <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                   <div className="flex items-center justify-between">
                     <div>
@@ -2701,7 +2710,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className={`rounded-2xl border border-gray-200 bg-white p-5 shadow-sm ${isCSRDesk ? "order-4" : "order-3"}`}>
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Manager exceptions</p>
@@ -2717,6 +2726,8 @@ export default function Dashboard() {
                     { key: 'waitingAging', title: 'Waiting on customer', helper: 'Customer/asset waits 2+ days', jobs: managerExceptions.waitingAging },
                     { key: 'proofApproved', title: 'Proof approved, not released', helper: 'Proof signed but not in production', jobs: managerExceptions.proofApproved },
                     { key: 'readyUnclaimed', title: 'Ready but unclaimed', helper: 'Ready work with no owner', jobs: managerExceptions.readyUnclaimed },
+                    { key: 'followUpOverdue', title: 'Follow-up overdue', helper: 'Promised touchpoint is late', jobs: managerExceptions.followUpOverdue },
+                    { key: 'followUpToday', title: 'Follow-up today', helper: 'Due in the next 24 hours', jobs: managerExceptions.followUpToday },
                   ].map((bucket) => (
                     <div key={bucket.key} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
                       <div className="flex items-center justify-between">
@@ -2755,7 +2766,8 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {sortedFilteredJobs.length === 0 ? (
+              <div className={isCSRDesk ? 'order-2' : 'order-4'}>
+                {sortedFilteredJobs.length === 0 ? (
                 <div className="rounded-xl border border-gray-200 bg-white p-12 text-center text-gray-400 flex flex-col items-center shadow-sm">
                    <Scissors size={48} className="mb-4 opacity-20" />
                    <p>No jobs found in {activeTab}.</p>
@@ -2776,7 +2788,7 @@ export default function Dashboard() {
                   showOwnerLoad={isProductionRole}
                   enableReassignmentPanel={isProductionRole}
                   lensId={activeLensPreset.id}
-                  csrShortcutsEnabled={isCSRRole || activeLensPreset.id === 'csr'}
+                  csrShortcutsEnabled={isCSRDesk}
                   onCsrAction={handleCsrShortcut}
                 />
               ) : (
@@ -2866,6 +2878,7 @@ export default function Dashboard() {
                   </table>
                 </div>
               )}
+              </div>
             </div>
           ) : (
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
