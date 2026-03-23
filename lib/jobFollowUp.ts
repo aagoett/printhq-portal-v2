@@ -33,6 +33,14 @@ const parseDate = (value?: string | null): string | null => {
   return new Date(timestamp).toISOString();
 };
 
+const normalizeIso = (value?: string | null) => {
+  if (!value) return null;
+  const parsed = parseDate(value);
+  if (parsed) return parsed;
+  const ts = Date.parse(value);
+  return Number.isFinite(ts) ? new Date(ts).toISOString() : null;
+};
+
 const formatDateTime = (value?: string | null) => {
   if (!value) return '';
   const timestamp = new Date(value).getTime();
@@ -56,65 +64,93 @@ export type JobFollowUpState = {
   displayAt: string | null;
   displayLabel: string;
   displayValue: string;
-  displayStatus: 'missing' | 'scheduled' | 'today' | 'overdue';
+  displayStatus: 'missing' | 'scheduled' | 'today' | 'overdue' | 'cleared';
   badgeLabel: string;
   helperText: string;
   disciplineHint: string;
+  ownerId?: string | null;
+  status: 'open' | 'done';
+  completedAt: string | null;
+  source: 'structured' | 'notes';
 };
 
-export function getJobFollowUpState(notes?: string | null): JobFollowUpState {
+export function getJobFollowUpState(jobOrNotes?: { follow_up_note?: string | null; follow_up_at?: string | null; follow_up_owner?: string | null; follow_up_status?: string | null; follow_up_completed_at?: string | null; notes?: string | null } | string | null): JobFollowUpState {
+  const isStringInput = typeof jobOrNotes === 'string' || jobOrNotes == null;
+  const notes = (isStringInput ? jobOrNotes : jobOrNotes?.notes) || '';
+  const structuredNote = isStringInput ? '' : jobOrNotes?.follow_up_note || '';
+  const structuredAt = isStringInput ? null : normalizeIso(jobOrNotes?.follow_up_at || null);
+  const structuredStatus = (isStringInput ? null : jobOrNotes?.follow_up_status) || 'open';
+  const structuredOwner = isStringInput ? null : jobOrNotes?.follow_up_owner || null;
+  const completedAt = isStringInput ? null : normalizeIso(jobOrNotes?.follow_up_completed_at || null);
+
   const lines = String(notes || '')
     .split(/\n+/)
-    .map((line) => line.trim())
+    .map((line: string) => line.trim())
     .filter(Boolean);
 
-  const followUpText = extractLineValue(lines, FOLLOW_UP_LABELS);
-  const promiseText = extractLineValue(lines, ['promise', 'promised']);
-  const reminderText = extractLineValue(lines, REMINDER_LABELS);
+  const fallbackFollowUpText = extractLineValue(lines, FOLLOW_UP_LABELS);
+  const fallbackPromiseText = extractLineValue(lines, ['promise', 'promised']);
+  const fallbackReminderText = extractLineValue(lines, REMINDER_LABELS);
   const followUpAtRaw = extractLineValue(lines, FOLLOW_UP_AT_LABELS);
   const promisedAtRaw = extractLineValue(lines, PROMISED_AT_LABELS);
   const reminderAtRaw = extractLineValue(lines, ['reminder at', 'remind at', 'check back at']);
 
-  const derivedText = followUpText || promiseText || lines[0] || '';
-  const nextFollowUpAt = parseDate(followUpAtRaw) || parseDate(followUpText);
-  const promisedAt = parseDate(promisedAtRaw) || parseDate(promiseText);
-  const reminderAt = parseDate(reminderAtRaw) || parseDate(reminderText);
-  const displayAt = nextFollowUpAt || promisedAt || reminderAt;
-  const displayLabel = nextFollowUpAt ? 'Next follow-up due' : promisedAt ? 'Promised by' : reminderAt ? 'Reminder at' : 'Follow-up timing';
+  const nextFollowUpAt = structuredStatus === 'done' ? null : (structuredAt || parseDate(followUpAtRaw));
+  const promisedAt = structuredStatus === 'done' ? null : (parseDate(promisedAtRaw) || parseDate(fallbackPromiseText));
+  const reminderAt = structuredStatus === 'done' ? null : (parseDate(reminderAtRaw) || parseDate(fallbackReminderText));
+  const derivedText = structuredNote || fallbackFollowUpText || fallbackPromiseText || lines[0] || '';
+  const displayAt = structuredStatus === 'done' ? null : (nextFollowUpAt || promisedAt || reminderAt);
+  const displayLabel = structuredStatus === 'done'
+    ? 'Follow-up closed'
+    : nextFollowUpAt
+      ? 'Next follow-up due'
+      : promisedAt
+        ? 'Promised by'
+        : reminderAt
+          ? 'Reminder at'
+          : 'Follow-up timing';
 
-  let displayStatus: JobFollowUpState['displayStatus'] = 'missing';
-  let badgeLabel = 'Follow-up missing';
-  let helperText = 'Use the handoff note to name the next follow-up and when it is due.';
-  if (displayAt) {
+  let displayStatus: JobFollowUpState['displayStatus'] = structuredStatus === 'done' ? 'cleared' : 'missing';
+  let badgeLabel = structuredStatus === 'done' ? 'Follow-up cleared' : 'Follow-up missing';
+  let helperText = structuredStatus === 'done'
+    ? 'Follow-up cleared. Capture the next promise if more touches are needed.'
+    : 'Use the follow-up fields to name the promise and when it is due.';
+
+  if (structuredStatus !== 'done' && displayAt) {
     const diffMs = new Date(displayAt).getTime() - Date.now();
     const diffHours = diffMs / (1000 * 60 * 60);
     if (diffHours < 0) {
       displayStatus = 'overdue';
       badgeLabel = 'Follow-up overdue';
-      helperText = `Missed ${displayLabel.toLowerCase()} — clear it or reset the customer promise.`;
+      helperText = `Missed ${displayLabel.toLowerCase()} — reset the promise or clear it with the customer.`;
     } else if (diffHours <= 24) {
       displayStatus = 'today';
       badgeLabel = 'Follow-up due soon';
-      helperText = `${displayLabel} lands soon. Keep the reminder visible until the customer gets an update.`;
+      helperText = `${displayLabel} lands soon. Keep this visible until the customer gets an update.`;
     } else {
       displayStatus = 'scheduled';
       badgeLabel = 'Follow-up scheduled';
       helperText = `${displayLabel} is set. The next CSR should not have to guess the promised touchpoint.`;
     }
-  } else if (derivedText) {
+  } else if (structuredStatus !== 'done' && derivedText) {
     badgeLabel = 'Timing missing';
-    helperText = 'You captured the promise, but not the date/time. Add a “Follow-up at:” or “Promised by:” line.';
+    helperText = 'You captured the promise, but not the date/time. Add a follow-up date/time and owner.';
   }
 
-  const displayValue = displayAt ? formatDateTime(displayAt) : derivedText || 'Not captured yet';
+  const displayValue = structuredStatus === 'done'
+    ? (completedAt ? `Cleared ${formatDateTime(completedAt)}` : 'Cleared')
+    : displayAt
+      ? formatDateTime(displayAt)
+      : derivedText || 'Not captured yet';
+
   const summary = derivedText || 'No promised follow-up captured yet';
-  const disciplineHint = 'Suggested handoff block: “Follow-up: call with revised stock option” + “Follow-up at: Mar 23 9:00 AM PT” + optional “Promised by: Mar 23 12:00 PM PT”.';
+  const disciplineHint = 'Suggested: set a follow-up note + owner + time (e.g., “Call with stock option” at Mar 23 9:00 AM PT).';
 
   return {
     summary,
-    followUpText,
-    promiseText,
-    reminderText,
+    followUpText: structuredNote || fallbackFollowUpText,
+    promiseText: fallbackPromiseText,
+    reminderText: fallbackReminderText,
     nextFollowUpAt,
     promisedAt,
     reminderAt,
@@ -125,5 +161,9 @@ export function getJobFollowUpState(notes?: string | null): JobFollowUpState {
     badgeLabel,
     helperText,
     disciplineHint,
+    ownerId: structuredOwner,
+    status: structuredStatus === 'done' ? 'done' : 'open',
+    completedAt: completedAt,
+    source: structuredNote || structuredAt ? 'structured' : 'notes',
   };
 }

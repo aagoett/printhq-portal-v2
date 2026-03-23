@@ -33,6 +33,8 @@ type BoardStats = {
   orphaned: number;
   agingWaits: number;
   splitOwner: number;
+  followUpOverdue?: number;
+  followUpToday?: number;
 };
 type StaffOption = { id: string; first_name?: string; email?: string };
 type OwnerLoadRow = {
@@ -334,15 +336,15 @@ const JobCard = ({
   const proofBadge = job?.portal_visibility === 'proof_live' ? 'Proof live' : (job?.proofStatus || '').trim();
   const customerActionTone = job?.customer_action_required ? customerActionMeta[job?.customer_action_type || 'other'] || customerActionMeta.other : null;
   const followUpState = job?.followUpState;
-  const followUpToneClass = followUpState?.displayStatus === 'overdue'
-    ? 'border-red-200 bg-red-50 text-red-800'
-    : followUpState?.displayStatus === 'today'
-      ? 'border-amber-200 bg-amber-50 text-amber-800'
-      : followUpState?.displayStatus === 'scheduled'
-        ? 'border-blue-200 bg-blue-50 text-blue-800'
-        : followUpState?.summary
-          ? 'border-gray-200 bg-white text-gray-700'
-          : 'border-red-200 bg-red-50 text-red-800';
+  const followUpOwnerLabel = followUpState?.ownerId ? getOwnerLabel(followUpState.ownerId, staffLookup) : job?.follow_up_owner ? getOwnerLabel(job.follow_up_owner, staffLookup) : null;
+  const followUpTone: Record<string, string> = {
+    overdue: 'border-red-200 bg-red-50 text-red-800',
+    today: 'border-amber-200 bg-amber-50 text-amber-800',
+    scheduled: 'border-blue-200 bg-blue-50 text-blue-800',
+    cleared: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    missing: 'border-gray-200 bg-gray-50 text-gray-700',
+  };
+  const followUpToneClass = followUpState ? (followUpTone[followUpState.displayStatus] || followUpTone.missing) : followUpTone.missing;
 
   return (
     <div className={`rounded-xl border bg-white shadow-sm transition hover:shadow-md ${bucketMeta[bucket].color} ${isSelected ? 'ring-2 ring-black/80' : ''}`}>
@@ -414,7 +416,8 @@ const JobCard = ({
           ) : null}
           {followUpState ? (
             <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 font-semibold ${followUpToneClass}`}>
-              Follow-up: {followUpState.displayAt ? `${followUpState.badgeLabel} · ${followUpState.displayValue}` : followUpState.summary}
+              Follow-up: {followUpState.displayAt ? followUpState.displayValue : followUpState.summary}
+              {followUpOwnerLabel ? ` • ${followUpOwnerLabel}` : ''}
             </span>
           ) : null}
           {lastTouchedLabel ? (<span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 font-semibold text-gray-700">{lastTouchedLabel}</span>) : null}
@@ -424,7 +427,8 @@ const JobCard = ({
           <div className={`rounded-xl border px-3 py-2 text-[11px] ${followUpToneClass}`}>
             <p className="font-black uppercase tracking-[0.16em]">{followUpState.displayLabel}</p>
             <p className="mt-1 font-semibold">{followUpState.summary}</p>
-            <p className="mt-1 opacity-80">{followUpState.displayAt ? `${followUpState.displayValue} · ${followUpState.helperText}` : followUpState.helperText}</p>
+            <p className="mt-1 opacity-80">{followUpState.displayAt ? followUpState.displayValue : 'No follow-up time set'}{followUpOwnerLabel ? ` • ${followUpOwnerLabel}` : ''}</p>
+            <p className="mt-1 opacity-80">{followUpState.helperText}</p>
           </div>
         ) : null}
         {csrShortcutsEnabled && onCsrAction ? (
@@ -809,7 +813,7 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-8">
+      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-10">
         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">Total</p>
           <p className="mt-2 text-3xl font-black text-gray-900">{boardStats.total}</p>
@@ -844,6 +848,16 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-700">Aging waits</p>
           <p className="mt-2 text-3xl font-black text-amber-800">{boardStats.agingWaits}</p>
           <p className="text-sm text-amber-700">Waiting 2+ days</p>
+        </div>
+        <div className="rounded-2xl border border-red-200 bg-red-50/80 p-4 shadow-sm">
+          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-red-700">Follow-up overdue</p>
+          <p className="mt-2 text-3xl font-black text-red-800">{boardStats.followUpOverdue || 0}</p>
+          <p className="text-sm text-red-700">Promises past due</p>
+        </div>
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-700">Follow-up today</p>
+          <p className="mt-2 text-3xl font-black text-amber-800">{boardStats.followUpToday || 0}</p>
+          <p className="text-sm text-amber-700">Due next 24 hours</p>
         </div>
         <div className="rounded-2xl border border-violet-200 bg-violet-50/70 p-4 shadow-sm">
           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-violet-700">Split owners</p>

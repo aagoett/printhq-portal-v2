@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe, ChevronDown, ArrowUp, ArrowDown, ExternalLink, FilePlus
+  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe, ChevronDown, ArrowUp, ArrowDown, ExternalLink, FilePlus, Clock, User
 } from 'lucide-react';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
@@ -340,6 +340,15 @@ export default function JobInteractiveView({
   jobId 
 }: JobViewProps) {
 
+  const toLocalInput = (iso?: string | null) => {
+    if (!iso) return '';
+    const date = new Date(iso);
+    const offsetMs = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+  };
+
+  const toIsoFromLocal = (value?: string | null) => (value ? new Date(value).toISOString() : null);
+
   // --- STATE ---
   const [job, setJob] = useState(initialJob);
   const [items, setItems] = useState(initialItems || []);
@@ -371,6 +380,10 @@ export default function JobInteractiveView({
   const [messageInternal, setMessageInternal] = useState(false);
   const [portalActionLoading, setPortalActionLoading] = useState(false);
   const [customerActionNote, setCustomerActionNote] = useState(initialJob.customer_action_note || '');
+  const [followUpNote, setFollowUpNote] = useState(initialJob.follow_up_note || '');
+  const [followUpOwner, setFollowUpOwner] = useState<string | null>(initialJob.follow_up_owner || initialJob.assigned_to || null);
+  const [followUpStatus, setFollowUpStatus] = useState<string>(initialJob.follow_up_status || 'open');
+  const [followUpAtInput, setFollowUpAtInput] = useState<string>(toLocalInput(initialJob.follow_up_at));
 
   const [blockerType, setBlockerType] = useState<'artwork' | 'proof' | 'customer' | 'spec' | 'payment' | 'inventory' | 'scheduling' | 'other'>('artwork');
   const [blockerSeverity, setBlockerSeverity] = useState<'block' | 'hold' | 'warn'>('block');
@@ -1152,6 +1165,40 @@ export default function JobInteractiveView({
       setIsSaving(false); 
   };
 
+  const handleSaveFollowUp = async (mode: 'save' | 'done' | 'clear') => {
+    if (!isStaff) return;
+    const nextStatus = mode === 'done' || mode === 'clear' ? 'done' : 'open';
+    const nextFollowUpAt = nextStatus === 'done' ? null : toIsoFromLocal(followUpAtInput);
+    const payload: any = {
+      follow_up_note: mode === 'clear' ? null : (followUpNote.trim() || null),
+      follow_up_at: mode === 'clear' ? null : nextFollowUpAt,
+      follow_up_owner: mode === 'clear' ? null : (followUpOwner || null),
+      follow_up_status: nextStatus,
+      follow_up_completed_at: nextStatus === 'done' ? new Date().toISOString() : null,
+    };
+    if (nextStatus === 'open') {
+      payload.follow_up_completed_at = null;
+    }
+
+    const { error } = await supabase.from('jobs').update(payload).eq('id', jobId);
+    if (error) {
+      alert('Error saving follow-up: ' + error.message);
+      return;
+    }
+
+    setJob((prev: any) => ({ ...prev, ...payload }));
+    setFollowUpStatus(nextStatus);
+    if (mode === 'clear') {
+      setFollowUpNote('');
+      setFollowUpAtInput('');
+      setFollowUpOwner(null);
+    }
+    await logActivity(
+      'Follow-up updated',
+      `Status: ${nextStatus.toUpperCase()} • Note: ${payload.follow_up_note || 'none'} • When: ${payload.follow_up_at ? new Date(payload.follow_up_at).toLocaleString() : 'not set'}${payload.follow_up_owner ? ` • Owner: ${ownerLabel(payload.follow_up_owner)}` : ''}`
+    );
+  };
+
   const toggleFinishingOption = async (optionName: string) => {
       if (!isStaff) return;
       const currentOptions = job.finishing_options || [];
@@ -1273,7 +1320,24 @@ export default function JobInteractiveView({
   const latestInternalProof = hiddenDraftProofs[0];
   const latestPortalProofScope = latestPortalProof?.job_item_id ? items.find((item: any) => item.id === latestPortalProof.job_item_id)?.description : null;
   const latestPortalProofLabel = latestPortalProofScope || 'Job-wide proof';
-  const followUpState = getJobFollowUpState(job.notes || internalNotes || '');
+  const followUpState = getJobFollowUpState({
+    ...job,
+    follow_up_note: followUpNote || job.follow_up_note,
+    follow_up_at: followUpAtInput ? toIsoFromLocal(followUpAtInput) : job.follow_up_at,
+    follow_up_owner: followUpOwner ?? job.follow_up_owner,
+    follow_up_status: followUpStatus || job.follow_up_status,
+    follow_up_completed_at: job.follow_up_completed_at,
+    notes: job.notes || internalNotes || '',
+  });
+  const followUpOwnerLabel = followUpState.ownerId ? ownerLabel(followUpState.ownerId) : job.assigned_to ? ownerLabel(job.assigned_to) : null;
+  const followUpToneClasses: Record<string, string> = {
+    overdue: 'border-red-200 bg-red-50 text-red-800',
+    today: 'border-amber-200 bg-amber-50 text-amber-800',
+    scheduled: 'border-blue-200 bg-blue-50 text-blue-800',
+    cleared: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    missing: 'border-gray-200 bg-gray-50 text-gray-700',
+  };
+  const followUpBadgeClass = followUpToneClasses[followUpState.displayStatus] || followUpToneClasses.missing;
 
   const customerVisibleMessages = (messages || []).filter((m: any) => m.is_customer_visible !== false);
   const customerTouchEvents = [
@@ -1331,17 +1395,33 @@ export default function JobInteractiveView({
       key: 'follow-up',
       label: 'Next promised follow-up',
       value: followUpState.summary || 'Not captured yet',
-      detail: followUpState.summary
-        ? 'Keep the exact promised touchpoint visible so the next CSR does not have to infer it.'
-        : 'Add “Follow-up:” or “Promise:” to the handoff note so the next promised touchpoint is explicit.',
-      tone: followUpState.summary && followUpState.summary !== 'No promised follow-up captured yet' ? 'gray' : 'red',
+      detail: followUpState.displayAt ? (followUpOwnerLabel ? `Owner: ${followUpOwnerLabel}. ${followUpState.helperText}` : followUpState.helperText) : followUpState.disciplineHint,
+      tone:
+        followUpState.displayStatus === 'overdue'
+          ? 'red'
+          : followUpState.displayStatus === 'today'
+            ? 'orange'
+            : followUpState.displayStatus === 'cleared'
+              ? 'green'
+              : followUpState.displayStatus === 'scheduled'
+                ? 'blue'
+                : 'amber',
     },
     {
       key: 'follow-up-timing',
       label: followUpState.displayLabel,
       value: followUpState.displayValue,
       detail: followUpState.displayAt ? followUpState.helperText : followUpState.disciplineHint,
-      tone: followUpState.displayStatus === 'overdue' ? 'red' : followUpState.displayStatus === 'today' ? 'orange' : followUpState.displayStatus === 'scheduled' ? 'blue' : 'amber',
+      tone:
+        followUpState.displayStatus === 'overdue'
+          ? 'red'
+          : followUpState.displayStatus === 'today'
+            ? 'orange'
+            : followUpState.displayStatus === 'scheduled'
+              ? 'blue'
+              : followUpState.displayStatus === 'cleared'
+                ? 'green'
+                : 'amber',
     },
   ];
 
@@ -2205,6 +2285,64 @@ export default function JobInteractiveView({
                       <button onClick={handleSaveNotes} disabled={isSaving} className="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-3 py-1.5 rounded hover:bg-yellow-500 flex items-center gap-2 shadow-sm uppercase tracking-wider"><Save size={12}/> Save Handoff Note</button>
                   </div>
                   <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private production handoff: what changed, what is blocked, and what the next owner needs to do..." className="w-full h-24 bg-white border border-yellow-300 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 transition-all"/>
+               </div>
+             )}
+
+             {isStaff && (
+               <div className="bg-white rounded-lg border border-blue-100 p-4 shadow-sm">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Follow-up discipline</p>
+                      <h3 className="mt-1 text-xl font-black text-gray-900">Next promised touchpoint</h3>
+                      <p className="mt-1 text-sm text-gray-600">Keep the next customer follow-up explicit: note, owner, and time.</p>
+                    </div>
+                    <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${followUpBadgeClass}`}>
+                      {followUpState.badgeLabel}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    <div className="md:col-span-2">
+                      <label className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">Follow-up note</label>
+                      <textarea value={followUpNote} onChange={(e) => setFollowUpNote(e.target.value)} placeholder="e.g. Call with revised stock option / confirm ship method" className="mt-1 w-full rounded-lg border border-gray-200 bg-white p-3 text-sm focus:border-black focus:outline-none" />
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">Follow-up time</label>
+                        <input type="datetime-local" value={followUpAtInput} onChange={(e) => setFollowUpAtInput(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm focus:border-black focus:outline-none" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black uppercase tracking-[0.14em] text-gray-500">Owner</label>
+                        <select value={followUpOwner || ''} onChange={(e) => setFollowUpOwner(e.target.value || null)} className="mt-1 w-full rounded-lg border border-gray-200 bg-white p-2 text-sm focus:border-black focus:outline-none">
+                          <option value="">Unassigned</option>
+                          {job.assigned_to ? <option value={job.assigned_to}>{ownerLabel(job.assigned_to)}</option> : null}
+                          {staffOptions.map((s: any) => (
+                            <option key={s.id} value={s.id}>
+                              {s.first_name || s.email || 'Staff'}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <p className="text-[11px] text-gray-600">{followUpState.displayAt ? followUpState.helperText : followUpState.disciplineHint}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-gray-700">
+                    <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 font-semibold">
+                      <Clock size={12} /> {followUpState.displayValue || 'No timing set'}
+                    </span>
+                    {followUpOwnerLabel ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 font-semibold">
+                        <User size={12} /> Owner: {followUpOwnerLabel}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button onClick={() => handleSaveFollowUp('save')} className="rounded-full bg-black px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white hover:bg-gray-800">
+                      Save follow-up
+                    </button>
+                    <button onClick={() => handleSaveFollowUp('done')} className="rounded-full border border-gray-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-wide text-gray-700 hover:border-black">
+                      Mark done / clear
+                    </button>
+                  </div>
                </div>
              )}
 
