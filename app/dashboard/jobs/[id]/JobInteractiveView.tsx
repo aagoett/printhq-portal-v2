@@ -4,7 +4,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { 
   ArrowLeft, Send, FileText, Download, Scissors, CheckSquare, Megaphone,
   History, Eye, FileImage, ThumbsUp, XCircle, CheckCircle,
-  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe, ChevronDown, ArrowUp, ArrowDown, ExternalLink, FilePlus, Clock, User
+  Activity, Save, Lock, X, UploadCloud, MessageSquare, Layers, Plus, Settings, Paperclip, Trash2, ListTodo, Globe, ChevronDown, ArrowUp, ArrowDown, ExternalLink, FilePlus, Clock, User, ChevronRight
 } from 'lucide-react';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
@@ -50,6 +50,38 @@ function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel
 
 import ItemDetailDrawer from '@/components/ItemDetailDrawer';
 
+function OpsDisclosure({
+  title,
+  eyebrow,
+  description,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  eyebrow?: string;
+  description?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details
+      open={defaultOpen}
+      className="group rounded-2xl border border-gray-200 bg-white shadow-sm open:border-gray-300"
+    >
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-3 px-4 py-4">
+        <div>
+          {eyebrow ? <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-400">{eyebrow}</p> : null}
+          <h3 className="mt-1 text-lg font-black text-gray-900">{title}</h3>
+          {description ? <p className="mt-1 text-sm text-gray-600">{description}</p> : null}
+        </div>
+        <span className="mt-1 inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-gray-50 text-gray-500 transition group-open:rotate-90 group-open:border-gray-300 group-open:bg-white group-open:text-gray-900">
+          <ChevronRight size={16} />
+        </span>
+      </summary>
+      <div className="border-t border-gray-100 px-4 py-4">{children}</div>
+    </details>
+  );
+}
 
 // --- HELPER COMPONENT: PRODUCTION ITEMS TABLE ---
 function JobItemsTable({ 
@@ -1965,26 +1997,31 @@ export default function JobInteractiveView({
 
        {/* STAGE COMMANDER */}
        {isStaff ? (
-       <div className={`bg-gray-900 text-white shadow-xl`}>
-          <div className="max-w-[1920px] mx-auto flex flex-col md:flex-row">
-              <div className="p-8 flex-1">
-                  <p className="text-xs font-bold uppercase opacity-75 tracking-widest mb-2">Current Department</p>
-                  <h1 className="text-6xl font-black uppercase tracking-tight leading-none">{job.status || 'PREPRESS'}</h1>
+       <div className="bg-gray-900 text-white shadow-xl">
+          <div className="max-w-[1920px] mx-auto px-4 py-4 lg:py-5">
+            <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr_1fr_1.1fr]">
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-300">Current status</p>
+                <p className="mt-2 text-2xl font-black uppercase tracking-tight">{job.status || 'PREPRESS'}</p>
               </div>
-              <div className="p-8 md:w-1/3 bg-black/20 border-l border-white/10 backdrop-blur-sm flex flex-col justify-center">
-                  <div className="flex items-start gap-3">
-                      <Megaphone size={24} className="mt-1 opacity-80" />
-                      <div className="w-full">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-xs font-bold uppercase opacity-75 tracking-widest">Shift handoff note</p>
-                            <span className="rounded-full border border-white/20 bg-white/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.18em] text-gray-200">Internal only</span>
-                          </div>
-                          <p className="mt-2 text-lg font-bold leading-tight">{job.notes || "No handoff note yet. Add the risk, promise, or next move so the next operator is not guessing."}</p>
-                          <p className="mt-3 text-xs text-gray-300">Use this field for shift-critical context: what changed, what is waiting on customer/art, and what the next owner must not miss.</p>
-                          <p className="mt-2 text-[11px] text-gray-200">Best format: “Follow-up: what we promised” + “Follow-up at: Mar 23 9:00 AM PT” + optional “Promised by: Mar 23 12:00 PM PT”.</p>
-                      </div>
-                  </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-300">Due</p>
+                <p className="mt-2 text-xl font-black uppercase tracking-tight">{countdown.text}</p>
+                <p className="mt-1 text-xs text-gray-300">{job.due_date ? new Date(job.due_date).toLocaleDateString() : 'No due date set'}</p>
               </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-300">Release gate</p>
+                <p className="mt-2 text-xl font-black uppercase tracking-tight">{releaseBlocked ? 'Blocked' : 'Clear'}</p>
+                <p className="mt-1 text-xs text-gray-300">{releaseGate.nextStep}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4">
+                <div className="flex items-center gap-2">
+                  <Megaphone size={14} className="text-gray-300" />
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-300">Shift handoff</p>
+                </div>
+                <p className="mt-2 line-clamp-3 text-sm font-semibold leading-snug text-white/95">{job.notes || 'No handoff note yet. Capture the risk, promise, or next move below.'}</p>
+              </div>
+            </div>
           </div>
       </div>
       ) : (
@@ -2084,17 +2121,14 @@ export default function JobInteractiveView({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Explicit blockers</p>
-                <h2 className="mt-1 text-xl font-black text-gray-900">Why this job is waiting</h2>
-              </div>
-              <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-gray-700">{jobBlockers.length} blocker{jobBlockers.length === 1 ? '' : 's'}</span>
-            </div>
-
+          <OpsDisclosure
+            title="Blockers, holds, and release reasons"
+            eyebrow="Advanced ops"
+            description={`${jobBlockers.length} active blocker${jobBlockers.length === 1 ? '' : 's'} tracked across art, approval, and scheduling.`}
+            defaultOpen={jobBlockers.length > 0}
+          >
             {isStaff && (
-              <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
                 <div className="grid gap-2 sm:grid-cols-5">
                   <select value={blockerType} onChange={(e) => setBlockerType(e.target.value as any)} className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-[0.16em]">
                     <option value="artwork">Waiting on artwork</option>
@@ -2161,10 +2195,15 @@ export default function JobInteractiveView({
                 </div>
               );})}
             </div>
-          </div>
+          </OpsDisclosure>
         </div>
 
-        <div className={`rounded-2xl border p-4 shadow-sm ${portalState.panelClass}`}>
+        <OpsDisclosure
+          title="Portal handoff controls"
+          eyebrow="Advanced ops"
+          description={`${portalState.label}. Use this when CSR needs to change what the customer can see.`}
+          defaultOpen={customerAction.required || isPortalHidden}
+        >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -2227,7 +2266,7 @@ export default function JobInteractiveView({
               </button>
             </div>
           </div>
-        </div>
+        </OpsDisclosure>
       </div>
 
       {/* MAIN LAYOUT */}
@@ -2276,24 +2315,30 @@ export default function JobInteractiveView({
         {/* MIDDLE COL: MAIN PRODUCTION HUB */}
         <div className="col-span-12 lg:col-span-7 flex flex-col gap-4">
              {isStaff && (
-               <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-6">
-                  <div className="flex justify-between items-center mb-4 gap-3">
-                      <div>
-                        <h3 className="text-xs font-bold uppercase text-yellow-700 flex items-center gap-2"><Lock size={16}/> Global Job Notes / Handoff</h3>
-                        <p className="mt-1 text-xs text-yellow-800">Internal only. Leave the next operator a clean handoff: current risk, last promise made, and the exact next move.</p>
-                      </div>
+               <OpsDisclosure
+                 title="Shift handoff note"
+                 eyebrow="Internal only"
+                 description="Capture the risk, promise, or exact next move for the next operator."
+               >
+                 <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 text-xs font-bold uppercase text-yellow-700"><Lock size={16}/> Global Job Notes / Handoff</div>
                       <button onClick={handleSaveNotes} disabled={isSaving} className="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-3 py-1.5 rounded hover:bg-yellow-500 flex items-center gap-2 shadow-sm uppercase tracking-wider"><Save size={12}/> Save Handoff Note</button>
-                  </div>
-                  <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private production handoff: what changed, what is blocked, and what the next owner needs to do..." className="w-full h-24 bg-white border border-yellow-300 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 transition-all"/>
-               </div>
+                    </div>
+                    <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private production handoff: what changed, what is blocked, and what the next owner needs to do..." className="w-full h-24 bg-white border border-yellow-300 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 transition-all"/>
+                 </div>
+               </OpsDisclosure>
              )}
 
              {isStaff && (
-               <div className="bg-white rounded-lg border border-blue-100 p-4 shadow-sm">
+               <OpsDisclosure
+                 title="Follow-up discipline"
+                 eyebrow="Customer promise tracking"
+                 description={`Current state: ${followUpState.badgeLabel}. Keep the next touchpoint explicit.`}
+               >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-500">Follow-up discipline</p>
-                      <h3 className="mt-1 text-xl font-black text-gray-900">Next promised touchpoint</h3>
+                      <h3 className="text-xl font-black text-gray-900">Next promised touchpoint</h3>
                       <p className="mt-1 text-sm text-gray-600">Keep the next customer follow-up explicit: note, owner, and time.</p>
                     </div>
                     <span className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] ${followUpBadgeClass}`}>
@@ -2343,7 +2388,7 @@ export default function JobInteractiveView({
                       Mark done / clear
                     </button>
                   </div>
-               </div>
+               </OpsDisclosure>
              )}
 
              <JobItemsTable 
