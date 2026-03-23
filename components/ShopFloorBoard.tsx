@@ -76,6 +76,9 @@ type Props = {
   onAssignItem?: (itemId: string, staffId: string | null, extraUpdates?: Record<string, any>, audit?: BulkAuditContext) => void;
   onOpenItemDrawer: (itemId: string) => void;
   formatDate: (value?: string | null) => string;
+  readOnly?: boolean;
+  showOwnerLoad?: boolean;
+  enableReassignmentPanel?: boolean;
 };
 
 type BucketKey = 'blocked' | 'waiting' | 'ready' | 'progress';
@@ -140,13 +143,14 @@ const deriveOwnerSignal = (owner: OwnerLoadRow) => {
   return { status, reassignmentNeeded, suggestedMoves, unclaimedReady };
 };
 
-const SelectionCheckbox = ({ checked, onChange, ariaLabel }: { checked: boolean; onChange: () => void; ariaLabel: string }) => (
+const SelectionCheckbox = ({ checked, onChange, ariaLabel, disabled = false }: { checked: boolean; onChange: () => void; ariaLabel: string; disabled?: boolean }) => (
   <button
     type="button"
     aria-label={ariaLabel}
     aria-pressed={checked}
-    onClick={onChange}
-    className={`inline-flex h-5 w-5 items-center justify-center rounded border transition ${checked ? 'border-black bg-black text-white' : 'border-gray-300 bg-white text-transparent hover:border-gray-500'}`}
+    onClick={disabled ? undefined : onChange}
+    disabled={disabled}
+    className={`inline-flex h-5 w-5 items-center justify-center rounded border transition ${checked ? 'border-black bg-black text-white' : 'border-gray-300 bg-white text-transparent hover:border-gray-500'} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
   >
     <span className="text-[11px] font-black">✓</span>
   </button>
@@ -158,17 +162,20 @@ const QueueOwnershipBar = ({
   staffOptions,
   currentUserId,
   onAssignJob,
+  readOnly = false,
 }: {
   job: any;
   staffLookup: Record<string, string>;
   staffOptions: StaffOption[];
   currentUserId?: string | null;
   onAssignJob: (jobId: string, staffId: string) => void;
+  readOnly?: boolean;
 }) => {
+  const allowActions = !readOnly;
   const assignedTo = job?.assigned_to || '';
   const ownerName = getOwnerLabel(assignedTo, staffLookup);
-  const canClaim = Boolean(currentUserId) && assignedTo !== currentUserId;
-  const canUnclaim = Boolean(assignedTo);
+  const canClaim = allowActions && Boolean(currentUserId) && assignedTo !== currentUserId;
+  const canUnclaim = allowActions && Boolean(assignedTo);
   const queueItems = Array.isArray(job?.activeItems) && job.activeItems.length ? job.activeItems : Array.isArray(job?.job_items) ? job.job_items : [];
   const distinctVisibleOwners = new Set(queueItems.map((item: any) => item?.assigned_to).filter(Boolean)).size;
   const ownerStatus = job?.ownerLoadStatus as 'healthy' | 'stretched' | 'overloaded' | undefined;
@@ -223,22 +230,25 @@ const QueueOwnershipBar = ({
               <PauseCircle size={12} /> Unclaim
             </button>
           ) : null}
-          <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5">
-            <ArrowRightLeft size={12} className="text-gray-400" />
-            <select
-              value={assignedTo}
-              onChange={(e) => onAssignJob(job.id, e.target.value)}
-              className="bg-transparent text-[11px] font-black uppercase tracking-wide text-gray-700 focus:ring-0 border-none pr-6"
-              aria-label={`Assign owner for ${job?.title || 'job'}`}
-            >
-              <option value="">Unassigned</option>
-              {staffOptions.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.first_name || s.email?.split('@')[0] || 'Staff'}
-                </option>
-              ))}
-            </select>
-          </div>
+          {allowActions ? (
+            <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1.5">
+              <ArrowRightLeft size={12} className="text-gray-400" />
+              <select
+                value={assignedTo}
+                onChange={(e) => onAssignJob(job.id, e.target.value)}
+                className="bg-transparent text-[11px] font-black uppercase tracking-wide text-gray-700 focus:ring-0 border-none pr-6"
+                aria-label={`Assign owner for ${job?.title || 'job'}`}
+                disabled={!allowActions}
+              >
+                <option value="">Unassigned</option>
+                {staffOptions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.first_name || s.email?.split('@')[0] || 'Staff'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -258,6 +268,7 @@ const JobCard = ({
   selectedItemIds,
   onToggleJob,
   onToggleItem,
+  readOnly = false,
 }: {
   job: any;
   staffLookup: Record<string, string>;
@@ -271,7 +282,11 @@ const JobCard = ({
   selectedItemIds: Set<string>;
   onToggleJob: (jobId: string) => void;
   onToggleItem: (itemId: string) => void;
+  readOnly?: boolean;
 }) => {
+  const allowOwnershipActions = !readOnly;
+  const allowItemActions = !readOnly;
+  const allowBulkSelection = !readOnly;
   const items = Array.isArray(job?.job_items) ? job.job_items : job?.activeItems || [];
   const visibleItems = items.slice(0, 3);
   const bucket = getBucketForJob(job);
@@ -288,7 +303,9 @@ const JobCard = ({
       <div className="flex items-start justify-between gap-2 border-b border-gray-100 px-4 py-3">
         <div className="flex min-w-0 gap-3">
           <div className="pt-1">
-            <SelectionCheckbox checked={isSelected} onChange={() => onToggleJob(job.id)} ariaLabel={`Select ${job?.title || 'job'}`} />
+            {allowBulkSelection ? (
+              <SelectionCheckbox checked={isSelected} onChange={() => onToggleJob(job.id)} ariaLabel={`Select ${job?.title || 'job'}`} disabled={!allowBulkSelection} />
+            ) : null}
           </div>
           <div className="space-y-1 min-w-0">
             <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.14em] text-gray-400">
@@ -347,6 +364,7 @@ const JobCard = ({
           staffOptions={staffOptions}
           currentUserId={currentUserId}
           onAssignJob={onAssignJob}
+          readOnly={readOnly}
         />
 
         {inheritedItemCount > 0 ? (
@@ -368,7 +386,9 @@ const JobCard = ({
               <div className="flex items-start justify-between gap-2">
                 <div className="flex min-w-0 gap-3">
                   <div className="pt-0.5">
-                    <SelectionCheckbox checked={isItemSelected} onChange={() => onToggleItem(item.id)} ariaLabel={`Select ${item?.description || 'item'}`} />
+                    {allowBulkSelection ? (
+                      <SelectionCheckbox checked={isItemSelected} onChange={() => onToggleItem(item.id)} ariaLabel={`Select ${item?.description || 'item'}`} disabled={!allowBulkSelection} />
+                    ) : null}
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-gray-900">{item?.description || 'Item'}</p>
@@ -407,7 +427,7 @@ const JobCard = ({
                     {completed}/{total} steps
                   </span>
                 )}
-                {onAssignItem ? (
+                {allowItemActions && onAssignItem ? (
                   <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-2 py-1">
                     <Users size={11} className="text-gray-400" />
                     <select
@@ -424,7 +444,7 @@ const JobCard = ({
                     </select>
                   </div>
                 ) : null}
-                {currentUserId ? (
+                {allowItemActions && currentUserId ? (
                   <button
                     type="button"
                     onClick={() => onAssignItem?.(item.id, item?.assigned_to === currentUserId ? null : currentUserId)}
@@ -462,9 +482,13 @@ const JobCard = ({
   );
 };
 
-export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, staffLookup, staffOptions, currentUserId, onAssignJob, onAssignItem, onOpenItemDrawer, formatDate }: Props) {
+export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, staffLookup, staffOptions, currentUserId, onAssignJob, onAssignItem, onOpenItemDrawer, formatDate, readOnly = false, showOwnerLoad = true, enableReassignmentPanel = true }: Props) {
   const safeColumns = columns && columns.length ? columns : [{ queueName: 'All Work', jobs: [] }];
   const bucketOrder: BucketKey[] = ['blocked', 'waiting', 'ready', 'progress'];
+  const safeReadOnly = Boolean(readOnly);
+  const allowBulkSelection = !safeReadOnly;
+  const allowOwnerInsights = showOwnerLoad;
+  const allowReassignmentPanel = enableReassignmentPanel && !safeReadOnly;
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [bulkAssignee, setBulkAssignee] = useState<string>('');
@@ -576,7 +600,7 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
 
   const selectedJobCount = selectedJobs.size;
   const selectedItemCount = selectedItems.size;
-  const hasSelection = selectedJobCount + selectedItemCount > 0;
+  const hasSelection = allowBulkSelection && (selectedJobCount + selectedItemCount > 0);
 
   const riskBullets = useMemo(() => {
     const notes: string[] = [];
@@ -608,6 +632,7 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
   });
 
   const toggleJobSelection = (jobId: string) => {
+    if (!allowBulkSelection) return;
     setSelectedJobs((prev) => {
       const next = new Set(prev);
       if (next.has(jobId)) next.delete(jobId);
@@ -617,6 +642,7 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
   };
 
   const toggleItemSelection = (itemId: string) => {
+    if (!allowBulkSelection) return;
     setSelectedItems((prev) => {
       const next = new Set(prev);
       if (next.has(itemId)) next.delete(itemId);
@@ -626,13 +652,14 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
   };
 
   const clearSelection = () => {
+    if (!allowBulkSelection) return;
     setSelectedJobs(new Set());
     setSelectedItems(new Set());
     setBulkScope('both');
   };
 
   const applyBulkAssignment = async (staffId: string | null, audit?: BulkAuditContext) => {
-    if (!hasSelection || applyingBulk) return;
+    if (!hasSelection || applyingBulk || !allowBulkSelection) return;
 
     setApplyingBulk(true);
     try {
@@ -860,7 +887,7 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
           </div>
         ) : null}
 
-        {reassignmentCandidates.length > 0 ? (
+        {allowReassignmentPanel && reassignmentCandidates.length > 0 ? (
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
             <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
               <div>
@@ -893,60 +920,62 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
           </div>
         ) : null}
 
-        {ownerLoadRows.length === 0 ? (
-          <div className="mt-4 rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-400">No owner load to show yet.</div>
-        ) : (
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {ownerLoadRows.map((owner) => {
-              const signal = deriveOwnerSignal(owner);
-              const status = signal.status;
-              const tone = status === 'overloaded' ? 'bg-red-100 text-red-700' : status === 'stretched' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700';
-              const fillWidth = Math.min(100, Math.round((owner.activeItems / 8) * 100));
-              return (
-                <div key={owner.id} className={`rounded-2xl border p-4 ${signal.reassignmentNeeded ? 'border-amber-300 bg-amber-50/60' : 'border-gray-200 bg-gray-50/70'}`}>
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-black text-gray-900">{owner.name}</p>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Owner load</p>
+        {allowOwnerInsights ? (
+          ownerLoadRows.length === 0 ? (
+            <div className="mt-4 rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-400">No owner load to show yet.</div>
+          ) : (
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {ownerLoadRows.map((owner) => {
+                const signal = deriveOwnerSignal(owner);
+                const status = signal.status;
+                const tone = status === 'overloaded' ? 'bg-red-100 text-red-700' : status === 'stretched' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700';
+                const fillWidth = Math.min(100, Math.round((owner.activeItems / 8) * 100));
+                return (
+                  <div key={owner.id} className={`rounded-2xl border p-4 ${signal.reassignmentNeeded ? 'border-amber-300 bg-amber-50/60' : 'border-gray-200 bg-gray-50/70'}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-black text-gray-900">{owner.name}</p>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Owner load</p>
+                      </div>
+                      <span className={`rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${tone}`}>
+                        {status === 'overloaded' ? 'Overloaded' : status === 'stretched' ? 'Watch' : 'Stable'}
+                      </span>
                     </div>
-                    <span className={`rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide ${tone}`}>
-                      {status === 'overloaded' ? 'Overloaded' : status === 'stretched' ? 'Watch' : 'Stable'}
-                    </span>
-                  </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-white border border-gray-200">
-                    <div className={`h-full rounded-full ${status === 'overloaded' ? 'bg-red-500' : status === 'stretched' ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${fillWidth}%` }} />
-                  </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                    <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
-                      <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Items</p>
-                      <p className="mt-1 text-2xl font-black text-gray-900">{owner.activeItems}</p>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-white border border-gray-200">
+                      <div className={`h-full rounded-full ${status === 'overloaded' ? 'bg-red-500' : status === 'stretched' ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${fillWidth}%` }} />
                     </div>
-                    <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
-                      <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Jobs</p>
-                      <p className="mt-1 text-2xl font-black text-gray-900">{owner.jobs}</p>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
+                        <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Items</p>
+                        <p className="mt-1 text-2xl font-black text-gray-900">{owner.activeItems}</p>
+                      </div>
+                      <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
+                        <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">Jobs</p>
+                        <p className="mt-1 text-2xl font-black text-gray-900">{owner.jobs}</p>
+                      </div>
+                      <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
+                        <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">At risk</p>
+                        <p className="mt-1 text-2xl font-black text-gray-900">{owner.blockedJobs + owner.dueTodayJobs}</p>
+                      </div>
                     </div>
-                    <div className="rounded-xl bg-white px-3 py-2 border border-gray-200">
-                      <p className="text-[10px] font-black uppercase tracking-wide text-gray-400">At risk</p>
-                      <p className="mt-1 text-2xl font-black text-gray-900">{owner.blockedJobs + owner.dueTodayJobs}</p>
+                    <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-gray-600">
+                      <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-red-700">{owner.blockedJobs} blocked</span>
+                      <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">{owner.dueTodayJobs} due now</span>
+                      {signal.unclaimedReady > 0 ? <span className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-gray-700">{signal.unclaimedReady} unclaimed ready</span> : null}
                     </div>
+                    <p className="mt-3 text-[11px] font-semibold text-gray-600">
+                      {signal.reassignmentNeeded
+                        ? `Reassign ${signal.suggestedMoves || 1} ${signal.suggestedMoves === 1 ? 'item' : 'items'} to get this lane back under control.`
+                        : status === 'stretched'
+                          ? 'Watch this owner. One more rush or block will tip the lane.'
+                          : 'Load looks workable right now.'}
+                    </p>
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-gray-600">
-                    <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-red-700">{owner.blockedJobs} blocked</span>
-                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-700">{owner.dueTodayJobs} due now</span>
-                    {signal.unclaimedReady > 0 ? <span className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-gray-700">{signal.unclaimedReady} unclaimed ready</span> : null}
-                  </div>
-                  <p className="mt-3 text-[11px] font-semibold text-gray-600">
-                    {signal.reassignmentNeeded
-                      ? `Reassign ${signal.suggestedMoves || 1} ${signal.suggestedMoves === 1 ? 'item' : 'items'} to get this lane back under control.`
-                      : status === 'stretched'
-                        ? 'Watch this owner. One more rush or block will tip the lane.'
-                        : 'Load looks workable right now.'}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          )
+        ) : null}
       </div>
 
       <div className="flex gap-4 overflow-x-auto pb-4">
@@ -1012,6 +1041,7 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
                             selectedItemIds={selectedItems}
                             onToggleJob={toggleJobSelection}
                             onToggleItem={toggleItemSelection}
+                            readOnly={safeReadOnly}
                           />
                         ))}
                       </div>

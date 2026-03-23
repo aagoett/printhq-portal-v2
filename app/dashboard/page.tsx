@@ -229,6 +229,82 @@ type BulkAuditContext = {
   source?: 'shop-floor-bulk';
 };
 
+const normalizeRoleTier = (role?: string): 'admin' | 'manager' | 'staff-production' | 'csr' | 'customer' => {
+  const key = (role || '').toLowerCase();
+  if (['admin', 'owner'].includes(key)) return 'admin';
+  if (['manager', 'lead', 'leadership'].some((k) => key.includes(k))) return 'manager';
+  if (['csr', 'customer_service', 'support'].some((k) => key.includes(k))) return 'csr';
+  if (
+    ['staff', 'production', 'operator', 'shop', 'floor', 'bindery', 'press', 'digital', 'mail', 'qc', 'ship', 'shipping'].some(
+      (k) => key.includes(k)
+    )
+  )
+    return 'staff-production';
+  return 'customer';
+};
+
+const normalizeLensLabel = (value?: string) => {
+  const lower = (value || '').toLowerCase();
+  if (lower.includes('csr')) return 'CSR Desk';
+  if (lower.includes('prepress') || lower.includes('proof')) return 'Prepress';
+  if (lower.includes('digital')) return 'Digital';
+  if (lower.includes('press') || lower.includes('offset')) return lower.includes('digital') ? 'Digital' : 'Press';
+  if (lower.includes('bindery') || lower.includes('finish')) return 'Bindery';
+  if (lower.includes('mail')) return 'Mailing';
+  if (lower.includes('qc') || lower.includes('ship') || lower.includes('delivery') || lower.includes('pickup')) return 'QC & Ship';
+  if (lower.includes('lead')) return 'Leadership';
+  return value || '';
+};
+
+const normalizeDepartmentLens = (role?: string, department?: string) => {
+  const source = (department || role || '').toLowerCase();
+  if (!source) return '';
+  if (source.includes('bindery') || source.includes('finish')) return 'Bindery';
+  if (source.includes('digital')) return 'Digital';
+  if (source.includes('press') || source.includes('offset')) return 'Press';
+  if (source.includes('mail')) return 'Mailing';
+  if (source.includes('qc') || source.includes('ship') || source.includes('deliver')) return 'QC & Ship';
+  if (source.includes('csr') || source.includes('customer')) return 'CSR Desk';
+  if (source.includes('lead')) return 'Leadership';
+  if (source.includes('prepress') || source.includes('proof')) return 'Prepress';
+  return department || role || '';
+};
+
+const canonicalLensOrder = ['My Queue', 'All', 'CSR Desk', 'Prepress', 'Press', 'Digital', 'Bindery', 'Mailing', 'QC & Ship', 'Leadership'];
+
+const buildTabsForUser = (
+  dbTabs: string[],
+  roleTier: 'admin' | 'manager' | 'staff-production' | 'csr' | 'customer',
+  deptLens?: string
+) => {
+  const normalizedDb = (dbTabs || []).map((t) => normalizeLensLabel(t)).filter(Boolean);
+  const merged = Array.from(new Set(['My Queue', 'All', ...normalizedDb]));
+  if (roleTier === 'csr' && !merged.includes('CSR Desk')) merged.push('CSR Desk');
+  ['Prepress', 'Press', 'Digital', 'Bindery', 'Mailing', 'QC & Ship'].forEach((lane) => {
+    if (normalizedDb.includes(lane) && !merged.includes(lane)) merged.push(lane);
+  });
+  const sorted = merged.sort((a, b) => {
+    const ai = canonicalLensOrder.indexOf(a);
+    const bi = canonicalLensOrder.indexOf(b);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+
+  let allowed = sorted;
+  if (roleTier === 'staff-production') {
+    allowed = sorted.filter((tab) => ['My Queue', 'All', deptLens].includes(tab));
+  } else if (roleTier === 'csr') {
+    allowed = sorted.filter((tab) => ['My Queue', 'All', 'CSR Desk', 'Prepress', deptLens].includes(tab));
+  } else if (roleTier === 'customer') {
+    allowed = ['My Queue', 'All'];
+  }
+  const defaultTab = deptLens && allowed.includes(deptLens)
+    ? deptLens
+    : roleTier === 'csr' && allowed.includes('CSR Desk')
+      ? 'CSR Desk'
+      : 'My Queue';
+  return { tabs: allowed.length ? allowed : ['My Queue', 'All'], defaultTab };
+};
+
 export default function Dashboard() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -236,6 +312,8 @@ export default function Dashboard() {
   // --- STATE ---
   const [user, setUser] = useState<any>(null);
   const [role, setRole] = useState('customer');
+  const [roleTier, setRoleTier] = useState<'admin' | 'manager' | 'staff-production' | 'csr' | 'customer'>('customer');
+  const [department, setDepartment] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [customers, setCustomers] = useState<Profile[]>([]);
@@ -509,15 +587,13 @@ export default function Dashboard() {
       .single();
       
     const userRole = profile?.role || 'customer';
+    const tier = normalizeRoleTier(userRole);
+    const deptLens = normalizeDepartmentLens(userRole, profile?.department || undefined);
     setRole(userRole);
+    setRoleTier(tier);
+    setDepartment(deptLens);
 
-    // Redirect Bindery users to their specialized dashboard
-    if (userRole === 'bindery') {
-      router.push('/bindery');
-      return;
-    }
-
-    const isInternal = userRole === 'admin' || userRole === 'staff';
+    const isInternal = tier !== 'customer';
 
     let jobQuery = supabase
         .from('jobs')
@@ -555,29 +631,26 @@ export default function Dashboard() {
     if (isInternal) {
       const { data: dbDepts } = await supabase.from('departments').select('name').order('sort_order');
       const dynamicTabs = dbDepts ? dbDepts.map(d => d.name) : [];
-      setDepartmentTabs(['My Queue', 'All', ...dynamicTabs]);
+      const { tabs, defaultTab } = buildTabsForUser(dynamicTabs, tier, deptLens);
+      setDepartmentTabs(tabs);
 
       const { data: allProfiles } = await supabase.from('profiles').select('*');
       if (allProfiles) {
         setCustomers(allProfiles);
-        setStaff(allProfiles.filter(p => p.role === 'admin' || p.role === 'staff'));
+        setStaff(allProfiles.filter(p => ['admin', 'manager', 'staff-production', 'csr'].includes(normalizeRoleTier(p.role))));
       }
       setSelectedCustomerId(user.id);
       
       const matchedLens = resolveLensPreset(profile);
-      const nextLensTab = matchedLens.defaultTab === 'My Queue'
-        ? 'My Queue'
-        : dynamicTabs.includes(matchedLens.defaultTab)
-          ? matchedLens.defaultTab
-          : matchedLens.defaultTab === 'All'
-            ? 'All'
-            : profile?.department && dynamicTabs.includes(profile.department)
-              ? profile.department
-              : 'All';
+      const preferredTab = tabs.includes(matchedLens.defaultTab)
+        ? matchedLens.defaultTab
+        : tabs.includes(defaultTab)
+          ? defaultTab
+          : tabs.find((t) => t !== 'My Queue') || 'All';
 
       setResolvedLensId(matchedLens.id);
       setActiveLensId('auto');
-      setActiveTab(nextLensTab);
+      setActiveTab(preferredTab);
       setOpsFilter(matchedLens.defaultFilter);
       setShopFloorView(matchedLens.defaultView);
 
@@ -1093,7 +1166,7 @@ export default function Dashboard() {
 
     setIsUploading(true);
     try {
-      const isInternal = role === 'admin' || role === 'staff';
+      const isInternal = roleTier !== 'customer';
       let targetEmail = user?.email || '';
 
       if (isInternal) {
@@ -1236,7 +1309,7 @@ export default function Dashboard() {
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
 
-  const isInternal = role === 'admin' || role === 'staff';
+  const isInternal = roleTier !== 'customer';
   const activeLensPreset = SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === (activeLensId === 'auto' ? resolvedLensId : activeLensId)) || SHOP_FLOOR_LENS_PRESETS.find((lens) => lens.id === 'manager')!;
   const applyLensPreset = (lensId: ShopFloorLensId) => {
     if (lensId === 'auto') {
@@ -1256,25 +1329,32 @@ export default function Dashboard() {
     setShopFloorView(preset.defaultView);
   };
 
+  const isProductionRole = ['admin', 'manager', 'staff-production'].includes(roleTier);
+  const isCSRRole = roleTier === 'csr';
+  const normalizedActiveLens = normalizeLensLabel(activeTab);
+
   const filteredJobs = jobs.filter(job => {
     if (activeTab === 'All') return true;
     if (activeTab === 'My Queue') return job.assigned_to === user?.id; 
     
     // SMART FILTER: Match by Main Job Station OR by any child Item Status
-    const hasMatchingItem = job.job_items?.some((item: any) => item.status === activeTab);
-    return job.current_step === activeTab || hasMatchingItem;
+    const jobLens = normalizeLensLabel(job.current_step || job.job_items?.[0]?.status || '');
+    const hasMatchingItem = job.job_items?.some((item: any) => normalizeLensLabel(item.status) === normalizedActiveLens);
+    return jobLens === normalizedActiveLens || hasMatchingItem;
   });
 
   const queueColumns = (departmentTabs || []).filter((tab) => tab !== 'My Queue' && tab !== 'All');
-  const defaultQueueOrder = ['Prepress', 'Press', 'Bindery', 'Mailing', 'QC & Ship', 'Delivery / Pickup'];
+  const defaultQueueOrder = ['Prepress', 'Press', 'Digital', 'Bindery', 'Mailing', 'QC & Ship', 'Delivery / Pickup'];
   const queueAliases: Record<string, string> = {
     prepress: 'Prepress',
     proof: 'Prepress',
+    digital: 'Digital',
+    'digital press': 'Digital',
     press: 'Press',
-    'digital press': 'Press',
     'offset press': 'Press',
-    'wide format': 'Press',
+    'wide format': 'Digital',
     bindery: 'Bindery',
+    finishing: 'Bindery',
     cut: 'Bindery',
     trim: 'Bindery',
     fold: 'Bindery',
@@ -1283,12 +1363,15 @@ export default function Dashboard() {
     drill: 'Bindery',
     lamination: 'Bindery',
     mailing: 'Mailing',
+    mail: 'Mailing',
     address: 'Mailing',
     tabbing: 'Mailing',
     qc: 'QC & Ship',
-    ship: 'Delivery / Pickup',
-    delivery: 'Delivery / Pickup',
-    pickup: 'Delivery / Pickup',
+    ship: 'QC & Ship',
+    shipping: 'QC & Ship',
+    delivery: 'QC & Ship',
+    pickup: 'QC & Ship',
+    'ready for pickup/ship': 'QC & Ship',
   };
   const normalizeQueueName = (value?: string) => {
     if (!value) return 'Unassigned / Other';
@@ -1297,7 +1380,7 @@ export default function Dashboard() {
     if (alias) return queueAliases[alias];
     const exact = queueColumns.find((queue) => queue.toLowerCase() === lower);
     if (exact) return exact;
-    return value;
+    return normalizeLensLabel(value) || 'Unassigned / Other';
   };
 
 
@@ -2525,6 +2608,9 @@ export default function Dashboard() {
                   onAssignItem={handleAssignItem}
                   onOpenItemDrawer={handleOpenItemDrawer}
                   formatDate={formatDate}
+                  readOnly={!isProductionRole}
+                  showOwnerLoad={isProductionRole}
+                  enableReassignmentPanel={isProductionRole}
                 />
               ) : (
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-[400px]">
