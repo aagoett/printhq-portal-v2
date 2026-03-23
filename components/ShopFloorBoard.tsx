@@ -25,6 +25,7 @@ type BoardStats = {
   blocked: number;
   waiting: number;
   ready: number;
+  readyUnclaimed?: number;
   unassigned: number;
   orphaned: number;
   agingWaits: number;

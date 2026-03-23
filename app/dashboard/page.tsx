@@ -165,7 +165,9 @@ export default function Dashboard() {
     if (typeof window === 'undefined') return 'board';
     return (localStorage.getItem('phq-shop-floor-view') as 'board' | 'table') || 'board';
   });
-  const [opsFilter, setOpsFilter] = useState<'all' | 'blocked' | 'ready' | 'waiting' | 'unassigned' | 'orphaned' | 'aging_waits' | 'split_owner'>('all');
+  const [opsFilter, setOpsFilter] = useState<'all' | 'blocked' | 'ready' | 'waiting' | 'unassigned' | 'orphaned' | 'aging_waits' | 'split_owner' | 'ready_unclaimed'>('all');
+  const [bulkTargetOwner, setBulkTargetOwner] = useState('');
+  const [bulkSourceOwner, setBulkSourceOwner] = useState('');
 
 
   const supabase = createBrowserClient(
@@ -498,6 +500,51 @@ export default function Dashboard() {
         details: `${actor} set item owner ${prevLabel} → ${nextLabel}`,
         job_item_id: itemId,
       });
+    }
+  };
+
+  // --- BULK ASSIGNMENT HELPERS ---
+  const bulkAssignJobs = async (jobIds: string[], staffId: string | null, options: { cascadeItems?: boolean } = {}) => {
+    const uniqueJobIds = Array.from(new Set(jobIds.filter(Boolean)));
+    if (!uniqueJobIds.length) return;
+
+    const normalizedStaffId = staffId || null;
+    const staffMember = normalizedStaffId ? staff.find((s) => s.id === normalizedStaffId) : null;
+    const staffName = normalizedStaffId ? (staffMember?.first_name || staffMember?.email || 'Staff') : null;
+    const targetItemIds: string[] = [];
+
+    setJobs((current) =>
+      current.map((job) => {
+        if (!uniqueJobIds.includes(job.id)) return job;
+
+        const updatedItems = options.cascadeItems
+          ? (job.job_items || []).map((item: any) => {
+              if (normalizedStaffId) {
+                if (!item.assigned_to) {
+                  targetItemIds.push(item.id);
+                  return { ...item, assigned_to: normalizedStaffId, claimed_at: new Date().toISOString() };
+                }
+                return item;
+              }
+
+              if (item.assigned_to === job.assigned_to || !item.assigned_to) {
+                targetItemIds.push(item.id);
+                return { ...item, assigned_to: null, claimed_at: null };
+              }
+              return item;
+            })
+          : job.job_items;
+
+        return { ...job, assigned_to: normalizedStaffId || undefined, csr_name: staffName || undefined, job_items: updatedItems };
+      })
+    );
+
+    await supabase.from('jobs').update({ assigned_to: normalizedStaffId, csr_name: staffName }).in('id', uniqueJobIds);
+    if (options.cascadeItems && targetItemIds.length) {
+      await supabase
+        .from('job_items')
+        .update({ assigned_to: normalizedStaffId, claimed_at: normalizedStaffId ? new Date().toISOString() : null })
+        .in('id', targetItemIds);
     }
   };
 
@@ -1015,7 +1062,9 @@ export default function Dashboard() {
       const isUnassigned = !job.assigned_to;
       const isWaiting = waitingItems.length > 0;
       const isBlocked = isLate || isWaiting || String(job.status || '').toLowerCase().includes('hold');
-      const isReady = !isBlocked && !isUnassigned && activeItems.length > 0;
+      const isReadyForWork = !isBlocked && activeItems.length > 0;
+      const isReady = isReadyForWork && !isUnassigned;
+      const isReadyUnclaimed = isReadyForWork && isUnassigned;
       const queueName = normalizeQueueName(job.current_step || activeItems[0]?.status);
       const distinctItemOwners = new Set(items.map((i: any) => i?.assigned_to).filter(Boolean)).size;
       const readyItems = activeItems.filter((item: any) => !item.waitingOnArt && item.status !== 'Hold');
@@ -1041,6 +1090,8 @@ export default function Dashboard() {
         isWaiting,
         isBlocked,
         isReady,
+        isReadyForWork,
+        isReadyUnclaimed,
         waitingItems,
         completedItems,
         activeItems,
@@ -1064,6 +1115,7 @@ export default function Dashboard() {
     if (opsFilter === 'ready') return job.isReady;
     if (opsFilter === 'waiting') return job.isWaiting;
     if (opsFilter === 'unassigned') return job.isUnassigned;
+    if (opsFilter === 'ready_unclaimed') return job.isReadyUnclaimed;
     if (opsFilter === 'orphaned') return job.isOrphaned;
     if (opsFilter === 'aging_waits') return job.isAgingWait;
     if (opsFilter === 'split_owner') return job.isSplitOwner;
@@ -1089,6 +1141,7 @@ export default function Dashboard() {
     total: scopedJobs.length,
     blocked: scopedJobs.filter((job: any) => job.isBlocked).length,
     ready: scopedJobs.filter((job: any) => job.isReady).length,
+    readyUnclaimed: scopedJobs.filter((job: any) => job.isReadyUnclaimed).length,
     waiting: scopedJobs.filter((job: any) => job.isWaiting).length,
     unassigned: scopedJobs.filter((job: any) => job.isUnassigned).length,
     orphaned: scopedJobs.filter((job: any) => job.isOrphaned).length,
@@ -1111,14 +1164,22 @@ export default function Dashboard() {
       return normalized === queueName;
     });
     const activeItemCount = queueJobs.reduce((sum: number, job: any) => sum + ((job.activeItems || []).length || 0), 0);
+    const overdueCount = queueJobs.filter((job: any) => job.isLate).length;
+    const blockedCount = queueJobs.filter((job: any) => job.isBlocked).length;
+    const readyCount = queueJobs.filter((job: any) => job.isReady).length;
+    const unassignedCount = queueJobs.filter((job: any) => job.isUnassigned).length;
+    const status = activeItemCount >= 12 || blockedCount >= 3 ? 'overload' : activeItemCount >= 8 || blockedCount >= 2 ? 'watch' : 'stable';
+    const statusReason = status === 'stable' ? '' : `Items ${activeItemCount} • blocked ${blockedCount}`;
     return {
       queueName,
       jobs: queueJobs.length,
       items: activeItemCount,
-      overdue: queueJobs.filter((job: any) => job.isLate).length,
-      blocked: queueJobs.filter((job: any) => job.isBlocked).length,
-      ready: queueJobs.filter((job: any) => job.isReady).length,
-      unassigned: queueJobs.filter((job: any) => job.isUnassigned).length,
+      overdue: overdueCount,
+      blocked: blockedCount,
+      ready: readyCount,
+      unassigned: unassignedCount,
+      status,
+      statusReason,
     };
   });
 
@@ -1156,17 +1217,23 @@ export default function Dashboard() {
     });
 
     return Object.entries(map)
-      .map(([ownerId, entry]) => ({
-        ownerId,
-        name: entry.name,
-        jobs: entry.jobIds.size,
-        items: entry.items,
-        blocked: entry.blocked,
-        waiting: entry.waiting,
-        ready: entry.ready,
-        unclaimedReady: entry.unclaimedReady,
-        status: entry.items >= 8 ? 'overloaded' : entry.items >= 5 ? 'stretched' : 'healthy',
-      }))
+      .map(([ownerId, entry]) => {
+        const status = entry.items >= 10 || entry.blocked >= 3 ? 'overloaded' : entry.items >= 6 || entry.blocked >= 1 ? 'stretched' : 'healthy';
+        const reason = status === 'healthy' ? '' : `Items ${entry.items} • blocked ${entry.blocked}`;
+        return {
+          ownerId,
+          name: entry.name,
+          jobs: entry.jobIds.size,
+          items: entry.items,
+          blocked: entry.blocked,
+          waiting: entry.waiting,
+          ready: entry.ready,
+          unclaimedReady: entry.unclaimedReady,
+          status,
+          reason,
+          jobIds: Array.from(entry.jobIds),
+        };
+      })
       .sort((a, b) => (b.items !== a.items ? b.items - a.items : b.blocked - a.blocked));
   })();
 
@@ -1183,8 +1250,12 @@ export default function Dashboard() {
     overdueBlocked: enrichedAllJobs.filter((job: any) => job.isLate && (job.isBlocked || job.isWaiting)),
     waitingAging: enrichedAllJobs.filter((job: any) => job.isWaiting && daysSince(job.updatedAt as string | undefined) >= 2),
     proofApproved: enrichedAllJobs.filter((job: any) => String(job.status || '').toLowerCase() === 'proof approved - waiting release'),
-    readyUnclaimed: enrichedAllJobs.filter((job: any) => job.isReady && job.isUnassigned),
+    readyUnclaimed: enrichedAllJobs.filter((job: any) => job.isReadyUnclaimed),
   };
+
+  const readyUnclaimedJobs = managerExceptions.readyUnclaimed;
+  const hotQueues = queueLoad.filter((queue) => queue.status !== 'stable');
+  const overloadedOwners = ownerLoad.filter((owner) => owner.status !== 'healthy');
 
   const ownerLoadRows = ownerLoad.slice(0, 6).map((owner) => ({
     id: owner.ownerId,
@@ -1193,9 +1264,46 @@ export default function Dashboard() {
     activeItems: owner.items,
     blockedJobs: owner.blocked,
     dueTodayJobs: owner.ready,
+    status: owner.status,
+    reason: owner.reason,
+    jobIds: owner.jobIds,
+    unclaimedReady: owner.unclaimedReady,
   }));
 
   const boardViewColumns = boardColumns.length ? boardColumns : [{ queueName: 'All Work', jobs: scopedJobs }];
+
+  const handleBulkClaimReady = async () => {
+    if (!readyUnclaimedJobs.length) {
+      alert('No ready, unassigned jobs right now.');
+      return;
+    }
+    if (!bulkTargetOwner) {
+      alert('Choose an owner to assign.');
+      return;
+    }
+    await bulkAssignJobs(readyUnclaimedJobs.map((job: any) => job.id), bulkTargetOwner, { cascadeItems: true });
+  };
+
+  const handleBulkReassignFromOwner = async () => {
+    if (!bulkSourceOwner) {
+      alert('Choose a source owner to rebalance.');
+      return;
+    }
+    const sourceJobs = enrichedAllJobs.filter((job: any) => job.assigned_to === bulkSourceOwner && (job.isReadyForWork || job.isBlocked || job.isWaiting));
+    if (!sourceJobs.length) {
+      alert('No jobs to move from that owner.');
+      return;
+    }
+    await bulkAssignJobs(sourceJobs.map((job: any) => job.id), bulkTargetOwner || null, { cascadeItems: true });
+  };
+
+  const handleClearWaitingAging = async () => {
+    if (!managerExceptions.waitingAging.length) {
+      alert('No aging waits to clear.');
+      return;
+    }
+    await bulkAssignJobs(managerExceptions.waitingAging.map((job: any) => job.id), null, { cascadeItems: true });
+  };
 
   if (!isInternal) {
     const customerJobs = filterCustomerVisibleJobs(jobs);
@@ -1977,6 +2085,7 @@ export default function Dashboard() {
                   <OpsStatCard label="Jobs in scope" value={boardStats.total} tone="neutral" helper="Current tab + filter set" icon={<Layers size={16} />} active={opsFilter === 'all'} onClick={() => setOpsFilter('all')} />
                   <OpsStatCard label="Blocked" value={boardStats.blocked} tone="danger" helper="Late or waiting on art" icon={<AlertTriangle size={16} />} active={opsFilter === 'blocked'} onClick={() => setOpsFilter('blocked')} />
                   <OpsStatCard label="Ready" value={boardStats.ready} tone="success" helper="Assigned and clear to move" icon={<CheckCircle2 size={16} />} active={opsFilter === 'ready'} onClick={() => setOpsFilter('ready')} />
+                  <OpsStatCard label="Ready, no owner" value={boardStats.readyUnclaimed} tone="warning" helper="Ready to run but unassigned" icon={<ArrowRightCircle size={16} />} active={opsFilter === 'ready_unclaimed'} onClick={() => setOpsFilter('ready_unclaimed')} />
                   <OpsStatCard label="Waiting" value={boardStats.waiting} tone="warning" helper="Customer/art dependency" icon={<PauseCircle size={16} />} active={opsFilter === 'waiting'} onClick={() => setOpsFilter('waiting')} />
                   <OpsStatCard label="Unassigned" value={boardStats.unassigned} tone="muted" helper="No owner on the job" icon={<User size={16} />} active={opsFilter === 'unassigned'} onClick={() => setOpsFilter('unassigned')} />
                   <OpsStatCard label="Orphaned work" value={boardStats.orphaned} tone="danger" helper="Active work with no job/item owner" icon={<Briefcase size={16} />} active={opsFilter === 'orphaned'} onClick={() => setOpsFilter('orphaned')} />
@@ -2007,6 +2116,11 @@ export default function Dashboard() {
                               <span className="rounded-full bg-red-50 px-2.5 py-1 font-semibold text-red-700 border border-red-200">{queue.overdue} overdue</span>
                               <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700 border border-amber-200">{queue.blocked} blocked</span>
                               <span className="rounded-full bg-gray-100 px-2.5 py-1 font-semibold text-gray-700 border border-gray-200">{queue.unassigned} unassigned</span>
+                              {queue.status !== 'stable' ? (
+                                <span className={`rounded-full px-2.5 py-1 font-black uppercase tracking-wide border ${queue.status === 'overload' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-amber-100 text-amber-800 border-amber-200'}`}>
+                                  {queue.status === 'overload' ? 'Overload risk' : 'Watch load'} {queue.statusReason}
+                                </span>
+                              ) : null}
                             </div>
                           </div>
                           <div className="text-right">
@@ -2049,6 +2163,7 @@ export default function Dashboard() {
                                   <span className="rounded-full bg-red-50 px-2.5 py-1 font-semibold text-red-800 border border-red-200">{owner.blocked} blocked</span>
                                   {owner.unclaimedReady > 0 && <span className="rounded-full bg-gray-900 px-2.5 py-1 font-semibold text-white border border-gray-900">{owner.unclaimedReady} unclaimed ready</span>}
                                 </div>
+                                {owner.status !== 'healthy' && owner.reason ? (<p className="mt-2 text-[11px] font-semibold text-red-700">{owner.reason}</p>) : null}
                               </div>
                               <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wide border ${tone}`}>{owner.status}</span>
                             </div>
