@@ -95,6 +95,24 @@ type PaperStock = {
     name: string;
 };
 
+type BulkAuditContext = {
+  reason?: string;
+  mode?: 'assign' | 'clear';
+  selection?: {
+    jobs: number;
+    items: number;
+    owners: number;
+    ready: number;
+    blocked: number;
+    waiting: number;
+    inherited: number;
+    splitOwnerJobs: number;
+    scope: 'jobs' | 'items' | 'both';
+  };
+  risky?: boolean;
+  source?: 'shop-floor-bulk';
+};
+
 export default function Dashboard() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -439,12 +457,29 @@ export default function Dashboard() {
     router.push('/login');
   };
 
-  const handleAssignJob = async (jobId: string, staffId: string) => {
+  const handleAssignJob = async (jobId: string, staffId: string, audit?: BulkAuditContext) => {
     const normalizedStaffId = staffId || null;
     const staffMember = staff.find(s => s.id === normalizedStaffId);
     const staffName = normalizedStaffId ? (staffMember ? (staffMember.first_name || staffMember.email) : 'Staff') : null;
+    const prevJob = jobs.find((j) => j.id === jobId);
+    const previousOwner = prevJob?.assigned_to || null;
     setJobs(jobs.map(j => j.id === jobId ? { ...j, assigned_to: normalizedStaffId || undefined, csr_name: staffName || undefined } : j));
     await supabase.from('jobs').update({ assigned_to: normalizedStaffId, csr_name: staffName }).eq('id', jobId);
+
+    if (audit && previousOwner !== normalizedStaffId) {
+      const actor = ownerLabel(user?.id) || user?.email || 'User';
+      const prevLabel = ownerLabel(previousOwner);
+      const nextLabel = ownerLabel(normalizedStaffId);
+      const reasonNote = audit.reason ? ` • Reason: ${audit.reason}` : '';
+      const selectionNote = audit.selection ? ` • Scope: ${audit.selection.scope} | Jobs ${audit.selection.jobs} | Items ${audit.selection.items} | Owners ${audit.selection.owners}` : '';
+      const riskNote = audit.risky ? ' • Risk-reviewed bulk move' : ' • Bulk move';
+      await supabase.from('job_logs').insert({
+        job_id: jobId,
+        user_id: user?.id || null,
+        action: normalizedStaffId ? (previousOwner ? 'Bulk Owner Reassigned' : 'Bulk Owner Claimed') : 'Bulk Owner Cleared',
+        details: `${actor} set queue owner ${prevLabel} → ${nextLabel}${riskNote}${reasonNote}${selectionNote}`,
+      });
+    }
   };
 
   const ownerLabel = (staffId?: string | null) => {
@@ -453,7 +488,7 @@ export default function Dashboard() {
     return staffLookup[staffId] || staffMember?.first_name || staffMember?.email || 'Staff';
   };
 
-  const handleAssignItem = async (itemId: string, staffId: string | null, extraUpdates: Record<string, any> = {}) => {
+  const handleAssignItem = async (itemId: string, staffId: string | null, extraUpdates: Record<string, any> = {}, audit?: BulkAuditContext) => {
     const targetJob = jobs.find((j) => (j.job_items || []).some((i: any) => i.id === itemId));
     const targetItem = targetJob?.job_items?.find((i: any) => i.id === itemId);
     if (!targetJob || !targetItem) return;
@@ -493,11 +528,14 @@ export default function Dashboard() {
       const actor = ownerLabel(user?.id) || user?.email || 'User';
       const prevLabel = ownerLabel(prevOwner);
       const nextLabel = ownerLabel(nextOwner);
+      const reasonNote = audit?.reason ? ` • Reason: ${audit.reason}` : '';
+      const selectionNote = audit?.selection ? ` • Scope: ${audit.selection.scope} | Jobs ${audit.selection.jobs} | Items ${audit.selection.items}` : '';
+      const riskNote = audit?.risky ? ' • Risk-reviewed bulk move' : audit ? ' • Bulk move' : '';
       await supabase.from('job_logs').insert({
         job_id: targetJob.id,
         user_id: user?.id || null,
         action: nextOwner ? (prevOwner ? 'Item Reassigned' : 'Item Claimed') : 'Item Unclaimed',
-        details: `${actor} set item owner ${prevLabel} → ${nextLabel}`,
+        details: `${actor} set item owner ${prevLabel} → ${nextLabel}${riskNote}${reasonNote}${selectionNote}`,
         job_item_id: itemId,
       });
     }

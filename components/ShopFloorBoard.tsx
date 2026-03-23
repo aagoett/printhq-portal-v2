@@ -47,6 +47,24 @@ type OwnerLoadRow = {
   unclaimedReady?: number;
 };
 
+type BulkAuditContext = {
+  reason?: string;
+  mode?: 'assign' | 'clear';
+  selection?: {
+    jobs: number;
+    items: number;
+    owners: number;
+    ready: number;
+    blocked: number;
+    waiting: number;
+    inherited: number;
+    splitOwnerJobs: number;
+    scope: 'jobs' | 'items' | 'both';
+  };
+  risky?: boolean;
+  source?: 'shop-floor-bulk';
+};
+
 type Props = {
   columns: BoardColumn[];
   boardStats: BoardStats;
@@ -54,8 +72,8 @@ type Props = {
   staffLookup: Record<string, string>;
   staffOptions: StaffOption[];
   currentUserId?: string | null;
-  onAssignJob: (jobId: string, staffId: string) => void;
-  onAssignItem?: (itemId: string, staffId: string | null) => void;
+  onAssignJob: (jobId: string, staffId: string, audit?: BulkAuditContext) => void;
+  onAssignItem?: (itemId: string, staffId: string | null, extraUpdates?: Record<string, any>, audit?: BulkAuditContext) => void;
   onOpenItemDrawer: (itemId: string) => void;
   formatDate: (value?: string | null) => string;
 };
@@ -245,8 +263,8 @@ const JobCard = ({
   staffLookup: Record<string, string>;
   staffOptions: StaffOption[];
   currentUserId?: string | null;
-  onAssignJob: (jobId: string, staffId: string) => void;
-  onAssignItem?: (itemId: string, staffId: string | null) => void;
+  onAssignJob: (jobId: string, staffId: string, audit?: BulkAuditContext) => void;
+  onAssignItem?: (itemId: string, staffId: string | null, extraUpdates?: Record<string, any>, audit?: BulkAuditContext) => void;
   onOpenItemDrawer: (itemId: string) => void;
   formatDate: (value?: string | null) => string;
   isSelected: boolean;
@@ -452,6 +470,9 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
   const [bulkAssignee, setBulkAssignee] = useState<string>('');
   const [bulkScope, setBulkScope] = useState<'jobs' | 'items' | 'both'>('both');
   const [applyingBulk, setApplyingBulk] = useState(false);
+  const [bulkReason, setBulkReason] = useState('');
+  const [pendingAction, setPendingAction] = useState<{ type: 'assign' | 'clear'; staffId: string | null } | null>(null);
+  const [reasonError, setReasonError] = useState<string | null>(null);
 
   const ownerStatusMap = useMemo(
     () =>
@@ -557,6 +578,35 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
   const selectedItemCount = selectedItems.size;
   const hasSelection = selectedJobCount + selectedItemCount > 0;
 
+  const riskBullets = useMemo(() => {
+    const notes: string[] = [];
+    if (selectionRisk.sourceOwnerCount > 1) notes.push(`Selection spans ${selectionRisk.sourceOwnerCount} owners.`);
+    if (selectionRisk.readyJobs > 0) notes.push(`${selectionRisk.readyJobs} ready job${selectionRisk.readyJobs === 1 ? '' : 's'} could be disrupted.`);
+    if (selectionRisk.blockedJobs > 0) notes.push(`${selectionRisk.blockedJobs} blocked job${selectionRisk.blockedJobs === 1 ? '' : 's'} still need accountable ownership.`);
+    if (selectionRisk.waitingJobs > 0) notes.push(`${selectionRisk.waitingJobs} waiting job${selectionRisk.waitingJobs === 1 ? '' : 's'} rely on follow-up.`);
+    if (selectionRisk.inheritedItems > 0) notes.push(`${selectionRisk.inheritedItems} item${selectionRisk.inheritedItems === 1 ? '' : 's'} inherit owners and may create mixed ownership.`);
+    if (selectionRisk.splitOwnerJobs > 0) notes.push(`${selectionRisk.splitOwnerJobs} selected record${selectionRisk.splitOwnerJobs === 1 ? '' : 's'} already have split ownership.`);
+    return notes;
+  }, [selectionRisk]);
+
+  const buildAuditContext = (mode: 'assign' | 'clear', reason?: string): BulkAuditContext => ({
+    reason: reason?.trim() || undefined,
+    mode,
+    selection: {
+      jobs: selectedJobCount,
+      items: selectedItemCount,
+      owners: selectionRisk.sourceOwnerCount,
+      ready: selectionRisk.readyJobs,
+      blocked: selectionRisk.blockedJobs,
+      waiting: selectionRisk.waitingJobs,
+      inherited: selectionRisk.inheritedItems,
+      splitOwnerJobs: selectionRisk.splitOwnerJobs,
+      scope: bulkScope,
+    },
+    risky: selectionRisk.risky,
+    source: 'shop-floor-bulk',
+  });
+
   const toggleJobSelection = (jobId: string) => {
     setSelectedJobs((prev) => {
       const next = new Set(prev);
@@ -581,43 +631,55 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
     setBulkScope('both');
   };
 
-  const applyBulkAssignment = async (staffId: string | null) => {
+  const applyBulkAssignment = async (staffId: string | null, audit?: BulkAuditContext) => {
     if (!hasSelection || applyingBulk) return;
-
-    const actionLabel = staffId ? 'reassign' : 'clear ownership on';
-    if (selectionRisk.risky) {
-      const confirmationMessage = [
-        `You are about to ${actionLabel} ${selectedJobCount} job${selectedJobCount === 1 ? '' : 's'} and ${selectedItemCount} item${selectedItemCount === 1 ? '' : 's'}.`,
-        selectionRisk.sourceOwnerCount > 1 ? `• Selection spans ${selectionRisk.sourceOwnerCount} different current owners.` : null,
-        selectionRisk.readyJobs > 0 ? `• ${selectionRisk.readyJobs} ready job${selectionRisk.readyJobs === 1 ? '' : 's'} could be disrupted.` : null,
-        selectionRisk.blockedJobs > 0 ? `• ${selectionRisk.blockedJobs} blocked job${selectionRisk.blockedJobs === 1 ? '' : 's'} still need accountable ownership.` : null,
-        selectionRisk.waitingJobs > 0 ? `• ${selectionRisk.waitingJobs} waiting job${selectionRisk.waitingJobs === 1 ? '' : 's'} may lose follow-up accountability.` : null,
-        selectionRisk.inheritedItems > 0 ? `• ${selectionRisk.inheritedItems} item${selectionRisk.inheritedItems === 1 ? '' : 's'} currently inherit the queue owner and may create mixed ownership.` : null,
-        selectionRisk.splitOwnerJobs > 0 ? `• ${selectionRisk.splitOwnerJobs} selected record${selectionRisk.splitOwnerJobs === 1 ? '' : 's'} already show split ownership.` : null,
-        '',
-        'Continue only if a manager explicitly wants this audit trail.',
-      ].filter(Boolean).join('\n');
-
-      if (typeof window !== 'undefined' && !window.confirm(confirmationMessage)) return;
-    }
 
     setApplyingBulk(true);
     try {
       if ((bulkScope === 'jobs' || bulkScope === 'both') && selectedJobs.size > 0) {
         for (const jobId of Array.from(selectedJobs)) {
-          await Promise.resolve(onAssignJob(jobId, staffId || ''));
+          await Promise.resolve(onAssignJob(jobId, staffId || '', audit));
         }
       }
       if ((bulkScope === 'items' || bulkScope === 'both') && selectedItems.size > 0 && onAssignItem) {
         for (const itemId of Array.from(selectedItems)) {
-          await Promise.resolve(onAssignItem(itemId, staffId));
+          await Promise.resolve(onAssignItem(itemId, staffId, {}, audit));
         }
       }
       clearSelection();
       setBulkAssignee('');
+      setBulkReason('');
+      setPendingAction(null);
+      setReasonError(null);
     } finally {
       setApplyingBulk(false);
     }
+  };
+
+  const requestBulkAction = (type: 'assign' | 'clear') => {
+    if (type === 'assign' && !bulkAssignee) return;
+    const staffId = type === 'assign' ? bulkAssignee : null;
+    setPendingAction({ type, staffId });
+    setReasonError(null);
+  };
+
+  const confirmBulkAction = async () => {
+    if (!pendingAction) return;
+    const needsReason = selectionRisk.risky;
+    if (needsReason && !bulkReason.trim()) {
+      setReasonError('Reason or code is required for risky bulk moves.');
+      return;
+    }
+
+    const audit = buildAuditContext(pendingAction.type, bulkReason);
+    await applyBulkAssignment(pendingAction.staffId, audit);
+  };
+
+  const cancelBulkFlow = () => {
+    clearSelection();
+    setPendingAction(null);
+    setReasonError(null);
+    setBulkReason('');
   };
 
   return (
@@ -716,7 +778,7 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
                 <button
                   type="button"
                   disabled={!bulkAssignee || applyingBulk}
-                  onClick={() => applyBulkAssignment(bulkAssignee || null)}
+                  onClick={() => requestBulkAction('assign')}
                   className="rounded-full bg-white px-4 py-2 text-xs font-black uppercase tracking-wide text-black disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {applyingBulk ? 'Applying…' : 'Reassign selected'}
@@ -724,7 +786,7 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
                 <button
                   type="button"
                   disabled={applyingBulk}
-                  onClick={() => applyBulkAssignment(null)}
+                  onClick={() => requestBulkAction('clear')}
                   className="rounded-full border border-white/20 bg-transparent px-4 py-2 text-xs font-black uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Clear owner
@@ -732,13 +794,69 @@ export default function ShopFloorBoard({ columns, boardStats, ownerLoadRows, sta
                 <button
                   type="button"
                   disabled={applyingBulk}
-                  onClick={clearSelection}
+                  onClick={cancelBulkFlow}
                   className="rounded-full border border-white/20 bg-transparent px-4 py-2 text-xs font-black uppercase tracking-wide text-gray-300 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Cancel
                 </button>
               </div>
             </div>
+            {pendingAction ? (
+              <div className="mt-3 rounded-xl border border-white/30 bg-white/5 p-4">
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gray-300">Manager confirmation</p>
+                      <p className="text-sm font-semibold text-white">
+                        {pendingAction.type === 'assign'
+                          ? `Reassign to ${getOwnerLabel(pendingAction.staffId, staffLookup)}`
+                          : 'Clear owner on selection'}
+                      </p>
+                      <p className="text-[11px] text-gray-300">Risk summary will be recorded in the audit log.</p>
+                    </div>
+                    <span className={`rounded-full px-3 py-1 text-[11px] font-black uppercase tracking-wide ${selectionRisk.risky ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'}`}>
+                      {selectionRisk.risky ? 'Risk review required' : 'Low risk'}
+                    </span>
+                  </div>
+                  <div className="rounded-lg border border-white/20 bg-black/30 p-3 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[11px] font-semibold text-gray-100">Reason or code</p>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Required when risky</span>
+                    </div>
+                    <input
+                      value={bulkReason}
+                      onChange={(e) => { setBulkReason(e.target.value); setReasonError(null); }}
+                      placeholder="e.g. Load balance to digital team / Owner on leave / Rush hotfix"
+                      className="w-full rounded-md border border-white/20 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-gray-400 focus:border-white focus:outline-none"
+                    />
+                    {reasonError ? <p className="text-[11px] font-semibold text-red-200">{reasonError}</p> : null}
+                    <div className="flex flex-wrap gap-2 text-[11px] text-gray-200">
+                      {riskBullets.length === 0 ? <span className="rounded-full bg-white/10 px-2.5 py-1">Low-risk selection</span> : riskBullets.map((note) => (
+                        <span key={note} className="rounded-full border border-white/20 bg-white/5 px-2.5 py-1">{note}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={confirmBulkAction}
+                      disabled={applyingBulk}
+                      className="rounded-full bg-white px-4 py-2 text-xs font-black uppercase tracking-wide text-black disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {applyingBulk ? 'Applying…' : 'Confirm bulk move'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setPendingAction(null); setReasonError(null); }}
+                      disabled={applyingBulk}
+                      className="rounded-full border border-white/20 bg-transparent px-4 py-2 text-xs font-black uppercase tracking-wide text-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Back
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
