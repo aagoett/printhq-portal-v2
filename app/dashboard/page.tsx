@@ -553,6 +553,7 @@ export default function Dashboard() {
     const targetItemIds: string[] = [];
     const affectedJobs = jobs.filter((job) => uniqueJobIds.includes(job.id));
     const jobLogEntries: any[] = [];
+    const itemLogEntries: any[] = [];
 
     setJobs((current) =>
       current.map((job) => {
@@ -564,16 +565,46 @@ export default function Dashboard() {
           ? (job.job_items || []).map((item: any) => {
               if (normalizedStaffId) {
                 if (!item.assigned_to) {
+                  const prevOwner = item.assigned_to || null;
+                  const nextOwner = normalizedStaffId;
+                  const ownershipChanged = prevOwner !== nextOwner;
+                  if (ownershipChanged) {
+                    const prevLabel = ownerLabel(prevOwner);
+                    const nextLabel = ownerLabel(nextOwner);
+                    const action = nextOwner ? (prevOwner ? 'Item Reassigned' : 'Item Claimed') : 'Item Unclaimed';
+                    itemLogEntries.push({
+                      job_id: job.id,
+                      job_item_id: item.id,
+                      user_id: user?.id || null,
+                      action,
+                      details: `${actor} bulk-set item owner ${prevLabel} → ${nextLabel} • cascaded from queue owner change`,
+                    });
+                  }
                   targetItemIds.push(item.id);
-                  cascadedItemCount += 1;
+                  if (ownershipChanged) cascadedItemCount += 1;
                   return { ...item, assigned_to: normalizedStaffId, claimed_at: new Date().toISOString() };
                 }
                 return item;
               }
 
               if (item.assigned_to === job.assigned_to || !item.assigned_to) {
+                const prevOwner = item.assigned_to || null;
+                const nextOwner = null;
+                const ownershipChanged = prevOwner !== nextOwner;
+                if (ownershipChanged) {
+                  const prevLabel = ownerLabel(prevOwner);
+                  const nextLabel = ownerLabel(nextOwner);
+                  const action = nextOwner ? (prevOwner ? 'Item Reassigned' : 'Item Claimed') : 'Item Unclaimed';
+                  itemLogEntries.push({
+                    job_id: job.id,
+                    job_item_id: item.id,
+                    user_id: user?.id || null,
+                    action,
+                    details: `${actor} bulk-set item owner ${prevLabel} → ${nextLabel} • cascaded from queue owner change`,
+                  });
+                }
                 targetItemIds.push(item.id);
-                cascadedItemCount += 1;
+                if (ownershipChanged) cascadedItemCount += 1;
                 return { ...item, assigned_to: null, claimed_at: null };
               }
               return item;
@@ -602,8 +633,9 @@ export default function Dashboard() {
         .update({ assigned_to: normalizedStaffId, claimed_at: normalizedStaffId ? new Date().toISOString() : null })
         .in('id', targetItemIds);
     }
-    if (jobLogEntries.length) {
-      await supabase.from('job_logs').insert(jobLogEntries);
+    const logEntries = [...jobLogEntries, ...itemLogEntries];
+    if (logEntries.length) {
+      await supabase.from('job_logs').insert(logEntries);
     } else if (affectedJobs.length) {
       await supabase.from('job_logs').insert({
         job_id: affectedJobs[0].id,
