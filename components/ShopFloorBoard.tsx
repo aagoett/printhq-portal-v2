@@ -333,6 +333,16 @@ const JobCard = ({
   const lastTouchedLabel = lastTouchedDays != null ? (lastTouchedDays === 0 ? 'Touched today' : `${lastTouchedDays}d ago`) : null;
   const proofBadge = job?.portal_visibility === 'proof_live' ? 'Proof live' : (job?.proofStatus || '').trim();
   const customerActionTone = job?.customer_action_required ? customerActionMeta[job?.customer_action_type || 'other'] || customerActionMeta.other : null;
+  const followUpState = job?.followUpState;
+  const followUpToneClass = followUpState?.displayStatus === 'overdue'
+    ? 'border-red-200 bg-red-50 text-red-800'
+    : followUpState?.displayStatus === 'today'
+      ? 'border-amber-200 bg-amber-50 text-amber-800'
+      : followUpState?.displayStatus === 'scheduled'
+        ? 'border-blue-200 bg-blue-50 text-blue-800'
+        : followUpState?.summary
+          ? 'border-gray-200 bg-white text-gray-700'
+          : 'border-red-200 bg-red-50 text-red-800';
 
   return (
     <div className={`rounded-xl border bg-white shadow-sm transition hover:shadow-md ${bucketMeta[bucket].color} ${isSelected ? 'ring-2 ring-black/80' : ''}`}>
@@ -402,9 +412,21 @@ const JobCard = ({
               Customer: {customerActionTone.label}
             </span>
           ) : null}
+          {followUpState ? (
+            <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 font-semibold ${followUpToneClass}`}>
+              Follow-up: {followUpState.displayAt ? `${followUpState.badgeLabel} · ${followUpState.displayValue}` : followUpState.summary}
+            </span>
+          ) : null}
           {lastTouchedLabel ? (<span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 font-semibold text-gray-700">{lastTouchedLabel}</span>) : null}
           {job?.waitingItems?.length ? (<span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 font-semibold text-amber-800">Waiting items: {job.waitingItems.length}</span>) : null}
         </div>
+        {followUpState ? (
+          <div className={`rounded-xl border px-3 py-2 text-[11px] ${followUpToneClass}`}>
+            <p className="font-black uppercase tracking-[0.16em]">{followUpState.displayLabel}</p>
+            <p className="mt-1 font-semibold">{followUpState.summary}</p>
+            <p className="mt-1 opacity-80">{followUpState.displayAt ? `${followUpState.displayValue} · ${followUpState.helperText}` : followUpState.helperText}</p>
+          </div>
+        ) : null}
         {csrShortcutsEnabled && onCsrAction ? (
           <div className="flex flex-wrap gap-2 text-[11px]">
             <button type="button" onClick={() => onCsrAction(job, 'waiting_customer')} className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 font-black uppercase tracking-wide text-gray-700 hover:border-black"><PauseCircle size={12} /> Wait on customer</button>

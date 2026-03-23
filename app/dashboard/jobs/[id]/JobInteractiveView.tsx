@@ -12,6 +12,7 @@ import CustomerPortalShell from '@/components/CustomerPortalShell';
 // Fix: Use relative path (3 dots) for Dashboard folder
 import { sendProofNotification } from '../../../server-actions'; 
 import { normalizePortalVisibility } from '@/lib/customerJobs';
+import { getJobFollowUpState } from '@/lib/jobFollowUp';
 
 // --- HELPER COMPONENT: ADD ITEM FORM ---
 function AddItemForm({ onAdd, onCancel }: { onAdd: (item: any) => void, onCancel: () => void }) {
@@ -1272,14 +1273,7 @@ export default function JobInteractiveView({
   const latestInternalProof = hiddenDraftProofs[0];
   const latestPortalProofScope = latestPortalProof?.job_item_id ? items.find((item: any) => item.id === latestPortalProof.job_item_id)?.description : null;
   const latestPortalProofLabel = latestPortalProofScope || 'Job-wide proof';
-  const handoffLines = String(job.notes || internalNotes || '')
-    .split(/\n+/)
-    .map((line: string) => line.trim())
-    .filter(Boolean);
-  const followUpMatch = handoffLines.find((line: string) => /^(follow[ -]?up|next move|next step|promise|promised)\s*:/i.test(line));
-  const nextPromisedFollowUp = followUpMatch
-    ? followUpMatch.replace(/^(follow[ -]?up|next move|next step|promise|promised)\s*:/i, '').trim()
-    : handoffLines[0] || '';
+  const followUpState = getJobFollowUpState(job.notes || internalNotes || '');
 
   const customerVisibleMessages = (messages || []).filter((m: any) => m.is_customer_visible !== false);
   const customerTouchEvents = [
@@ -1336,11 +1330,18 @@ export default function JobInteractiveView({
     {
       key: 'follow-up',
       label: 'Next promised follow-up',
-      value: nextPromisedFollowUp || 'Not captured yet',
-      detail: nextPromisedFollowUp
-        ? 'Pull this from the handoff note so the next CSR does not have to infer the promise.'
+      value: followUpState.summary || 'Not captured yet',
+      detail: followUpState.summary
+        ? 'Keep the exact promised touchpoint visible so the next CSR does not have to infer it.'
         : 'Add “Follow-up:” or “Promise:” to the handoff note so the next promised touchpoint is explicit.',
-      tone: nextPromisedFollowUp ? 'gray' : 'red',
+      tone: followUpState.summary && followUpState.summary !== 'No promised follow-up captured yet' ? 'gray' : 'red',
+    },
+    {
+      key: 'follow-up-timing',
+      label: followUpState.displayLabel,
+      value: followUpState.displayValue,
+      detail: followUpState.displayAt ? followUpState.helperText : followUpState.disciplineHint,
+      tone: followUpState.displayStatus === 'overdue' ? 'red' : followUpState.displayStatus === 'today' ? 'orange' : followUpState.displayStatus === 'scheduled' ? 'blue' : 'amber',
     },
   ];
 
@@ -1900,6 +1901,7 @@ export default function JobInteractiveView({
                           </div>
                           <p className="mt-2 text-lg font-bold leading-tight">{job.notes || "No handoff note yet. Add the risk, promise, or next move so the next operator is not guessing."}</p>
                           <p className="mt-3 text-xs text-gray-300">Use this field for shift-critical context: what changed, what is waiting on customer/art, and what the next owner must not miss.</p>
+                          <p className="mt-2 text-[11px] text-gray-200">Best format: “Follow-up: what we promised” + “Follow-up at: Mar 23 9:00 AM PT” + optional “Promised by: Mar 23 12:00 PM PT”.</p>
                       </div>
                   </div>
               </div>

@@ -17,6 +17,7 @@ import { sendOrderConfirmation } from '../server-actions';
 import ItemDetailDrawer from '@/components/ItemDetailDrawer';
 import CustomerPortalShell from '@/components/CustomerPortalShell';
 import ShopFloorBoard from '@/components/ShopFloorBoard';
+import { getJobFollowUpState } from '@/lib/jobFollowUp';
 import { applyOverridesToList, parseQuantityList, formatCurrency } from '@/utils/pricing';
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
 import { applyPricingProfileToRoute, calculateProposals, PricingProfileKey, PRICING_PROFILES } from '@/lib/estimator';
@@ -1338,6 +1339,7 @@ export default function Dashboard() {
 
   const isProductionRole = ['admin', 'manager', 'staff-production'].includes(roleTier);
   const isCSRRole = roleTier === 'csr';
+  const isCSRDesk = isCSRRole || activeLensPreset.id === 'csr';
   const normalizedActiveLens = normalizeLensLabel(activeTab);
   const normalizedCustomerSearch = customerSearch.trim().toLowerCase();
 
@@ -1464,6 +1466,9 @@ export default function Dashboard() {
       const lastTouchedDays = updatedAt ? Math.max(0, Math.floor((Date.now() - new Date(updatedAt).getTime()) / (1000 * 60 * 60 * 24))) : null;
       const isAgingWait = isWaiting && ageDays >= 2;
       const proofStatus = job.portal_visibility === 'proof_live' ? 'Proof live' : (String(job.status || '').toLowerCase().includes('proof') ? job.status : '');
+      const followUpState = getJobFollowUpState(job.notes);
+      const hasOverdueFollowUp = followUpState.displayStatus === 'overdue';
+      const hasFollowUpToday = followUpState.displayStatus === 'today';
 
       return {
         ...job,
@@ -1491,6 +1496,9 @@ export default function Dashboard() {
         updatedAt,
         lastTouchedDays,
         proofStatus,
+        followUpState,
+        hasOverdueFollowUp,
+        hasFollowUpToday,
       } as Job & any;
     });
 
@@ -1666,7 +1674,7 @@ export default function Dashboard() {
   }));
 
   const boardViewColumns = boardColumns.length ? boardColumns : [{ queueName: 'All Work', jobs: scopedJobs }];
-  const csrBoardColumns = (isCSRRole || activeLensPreset.id === 'csr')
+  const csrBoardColumns = isCSRDesk
     ? boardViewColumns.filter((column) => ['Prepress', 'Press', 'QC & Ship', 'Unassigned / Other'].includes(column.queueName) || column.jobs.length > 0)
     : boardViewColumns;
   const csrFocusStats = {
@@ -2539,7 +2547,7 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-              {(isCSRRole || activeLensPreset.id === 'csr') && (
+              {isCSRDesk && (
                 <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3 shadow-sm">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div>
@@ -2577,9 +2585,9 @@ export default function Dashboard() {
           )}
 
           {isInternal ? (
-            <div className="space-y-5">
-              {(isCSRRole || activeLensPreset.id === 'csr') && (
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="flex flex-col gap-5">
+              {isCSRDesk && (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 order-0">
                   <OpsStatCard label="Awaiting customer" value={csrFocusStats.awaitingCustomer} tone="warning" helper="Art or customer response needed" icon={<MessageSquare size={16} />} />
                   <OpsStatCard label="Proof touches" value={csrFocusStats.proofsLive} tone="neutral" helper="Proof live, revision, or release state" icon={<FileText size={16} />} />
                   <OpsStatCard label="Approved, waiting release" value={csrFocusStats.proofApprovedWaitingRelease} tone="success" helper="Signed off but not fully released" icon={<CheckCircle2 size={16} />} />
