@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
-import { CheckCircle, XCircle, Download, FileImage, FileText, Clock, Printer, Mail, MessageSquare, Send, AlertTriangle, Palette, UploadCloud } from 'lucide-react';
+import { CheckCircle, XCircle, Download, FileImage, FileText, Clock, Printer, Mail, MessageSquare, Send, AlertTriangle, Palette, UploadCloud, Eye } from 'lucide-react';
 import { normalizePortalVisibility } from '@/lib/customerJobs';
 
 export default function PublicJobProofPage({ params }: { params: { id: string } }) {
@@ -19,6 +19,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   const [actionLoading, setActionLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [requestChangesNote, setRequestChangesNote] = useState('');
+  const [itemChangeNotes, setItemChangeNotes] = useState<Record<string, string>>({});
   const [showChangeForm, setShowChangeForm] = useState(false);
   const [newMessage, setNewMessage] = useState('');
   const [senderName, setSenderName] = useState('');
@@ -91,7 +92,9 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
 
     if (assetData && assetData.length > 0) {
       setAssets(assetData);
-      loadPreview(assetData[0]);
+      const approved = assetData.find((a) => a.status === 'approved');
+      const pending = assetData.find((a) => a.status === 'pending');
+      loadPreview(approved || pending || assetData[0]);
     } else {
       setAssets([]);
       setPreviewUrl(null);
@@ -131,40 +134,58 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     }
   };
 
-  const handleApprove = async () => {
-    if (!confirm('Approve this proof for printing? This cannot be undone.')) return;
+  const applyAssetScope = (query: any, itemId?: string) => {
+    if (itemId) return query.eq('job_item_id', itemId);
+    return query.is('job_item_id', null);
+  };
+
+  const handleApprove = async (itemId?: string) => {
+    const item = itemId ? items.find((i) => i.id === itemId) : null;
+    const label = item ? ` (Item: ${item.description || 'Line item'})` : '';
+    if (!confirm(`Approve this proof${item ? ' for this item' : ''}? This cannot be undone.`)) return;
     setActionLoading(true);
-    await supabase.from('job_assets').update({ status: 'approved' })
+    let assetQuery = supabase.from('job_assets').update({ status: 'approved' })
       .eq('job_id', params.id).eq('asset_type', 'proof').eq('status', 'pending');
+    assetQuery = applyAssetScope(assetQuery, itemId);
+    await assetQuery;
+
     const nextStatus = 'Proof Approved - Waiting Release';
     await supabase.from('jobs').update({ status: nextStatus, customer_action_required: false, customer_action_type: null, customer_action_note: null }).eq('id', params.id);
     await supabase.from('messages').insert({
       job_id: params.id,
-      content: `${senderName || 'Customer'} approved the proof and released to production`,
+      content: `${senderName || 'Customer'} approved the proof${label} and released to production`,
       is_customer_visible: true,
     });
-    await recordAudit('Proof approved (customer)', 'Customer approved proof from portal');
+    await recordAudit('Proof approved (customer)', `Customer approved proof${label}`);
     setJob((j: any) => ({ ...j, status: nextStatus, customer_action_required: false, customer_action_type: null, customer_action_note: null }));
     setSuccessMsg('✅ Proof approved! We will release to production as soon as remaining holds (if any) are cleared.');
     setActionLoading(false);
+    await fetchJobData();
   };
 
-  const handleRequestChanges = async () => {
-    const note = requestChangesNote.trim();
-    if (!note) return;
+  const handleRequestChanges = async (note: string, itemId?: string) => {
+    const cleanNote = note.trim();
+    if (!cleanNote) return;
     setActionLoading(true);
-    await supabase.from('jobs').update({ status: 'Changes Requested', notes: note, customer_action_required: false }).eq('id', params.id);
+    const item = itemId ? items.find((i) => i.id === itemId) : null;
+    const label = item ? ` [Item: ${item.description || 'Line item'}]` : '';
+    await supabase.from('jobs').update({ status: 'Changes Requested', notes: cleanNote, customer_action_required: false }).eq('id', params.id);
     await supabase.from('messages').insert({
       job_id: params.id,
-      content: `[Changes Requested] ${note}`,
+      content: `[Changes Requested${label}] ${cleanNote}`,
       is_customer_visible: true,
     });
-    await recordAudit('Customer change request', note);
+    await recordAudit('Customer change request', `${cleanNote}${label}`);
     setSuccessMsg('✏️ Change request submitted! Our team will revise the artwork and share the next proof here.');
-    setJob((j: any) => ({ ...j, status: 'Changes Requested', notes: note, customer_action_required: false }));
-    setRequestChangesNote('');
-    setShowChangeForm(false);
+    setJob((j: any) => ({ ...j, status: 'Changes Requested', notes: cleanNote, customer_action_required: false }));
+    if (itemId) {
+      setItemChangeNotes((prev) => ({ ...prev, [itemId]: '' }));
+    } else {
+      setRequestChangesNote('');
+      setShowChangeForm(false);
+    }
     setActionLoading(false);
+    await fetchJobData();
   };
 
   const handleSendMessage = async () => {
@@ -246,15 +267,26 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   );
 
   const brandName = job.orders?.brands?.name || 'PrintHQ';
+  const itemLookup = Object.fromEntries(items.map((i: any) => [i.id, i]));
+  const jobLevelAssets = assets.filter((a) => !a.job_item_id);
+  const itemScopedAssets = assets.filter((a) => !!a.job_item_id);
   const isApproved = job.status === 'In Production' || job.status === 'Shipped' || job.status === 'Complete' || job.status === 'Proof Approved - Waiting Release';
   const isChangesRequested = job.status === 'Changes Requested';
-  const pendingProof = assets.find(a => a.status === 'pending');
+  const jobLevelPendingProof = jobLevelAssets.find(a => a.status === 'pending');
+  const jobLevelApprovedProof = jobLevelAssets.find(a => a.status === 'approved');
+  const pendingProof = jobLevelPendingProof || assets.find(a => a.status === 'pending');
+  const approvedProof = jobLevelApprovedProof || assets.find(a => a.status === 'approved');
+  const currentProof = approvedProof || pendingProof || assets[0];
   const awaitingArtworkItems = items.filter((item: any) => item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art');
   const needsCustomerArtwork = job.customer_action_type === 'upload_artwork' && (job.customer_action_required || awaitingArtworkItems.length > 0);
   const impliedProofAction = pendingProof && (!job.customer_action_required && !job.customer_action_type);
   const customerActionType = job.customer_action_type || (impliedProofAction ? 'approve_proof' : null);
   const customerActionRequired = job.customer_action_required || impliedProofAction || needsCustomerArtwork;
   const customerActionNote = job.customer_action_note;
+  const pendingItemProofs = items.filter((item: any) => itemScopedAssets.some((a) => a.job_item_id === item.id && a.status === 'pending'));
+  const approvedItemProofs = items.filter((item: any) => itemScopedAssets.some((a) => a.job_item_id === item.id && a.status === 'approved'));
+  const uniqueItemProofs = new Set(itemScopedAssets.map((a) => a.job_item_id)).size;
+  const hasItemScopedProofs = uniqueItemProofs > 0;
 
   const customerAction = (() => {
     if (!customerActionType || !customerActionRequired) return { required: false };
@@ -269,8 +301,8 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
     if (customerActionType === 'approve_proof') {
       return {
         required: true,
-        label: 'Review & approve proof',
-        description: customerActionNote || 'Please review the live proof and either approve for print or request changes.',
+        label: hasItemScopedProofs ? 'Approve item proofs' : 'Review & approve proof',
+        description: customerActionNote || (hasItemScopedProofs ? 'Approve each item proof or request changes on the affected item.' : 'Please review the live proof and either approve for print or request changes.'),
         tone: 'blue'
       };
     }
@@ -283,19 +315,23 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
   })();
 
   const actionRequiredLabel = customerAction.required ? customerAction.label : isChangesRequested ? 'PrintHQ is revising your proof' : 'No action required right now';
-  const approvedProof = assets.find(a => a.status === 'approved');
-  const currentProof = approvedProof || pendingProof || assets[0];
   const proofSummaryCards = [
     {
       label: 'Proof status',
-      value: approvedProof ? 'Approved proof on file' : pendingProof ? 'Proof ready for review' : assets.length > 0 ? 'Shared file posted' : 'No proof shared yet',
-      detail: currentProof?.file_name || 'We will post the first customer-safe file here when it is ready.',
-      tone: approvedProof ? 'green' : pendingProof ? 'blue' : assets.length > 0 ? 'gray' : 'gray',
+      value: hasItemScopedProofs
+        ? `${approvedItemProofs.length} approved · ${pendingItemProofs.length} waiting`
+        : approvedProof ? 'Approved proof on file' : pendingProof ? 'Proof ready for review' : assets.length > 0 ? 'Shared file posted' : 'No proof shared yet',
+      detail: hasItemScopedProofs
+        ? `${uniqueItemProofs} item${uniqueItemProofs === 1 ? '' : 's'} have customer-safe proofs. Approve items independently.`
+        : currentProof?.file_name || 'We will post the first customer-safe file here when it is ready.',
+      tone: approvedProof || approvedItemProofs.length > 0 ? 'green' : pendingProof || pendingItemProofs.length > 0 ? 'blue' : assets.length > 0 ? 'gray' : 'gray',
     },
     {
       label: 'What you can see',
       value: assets.length > 0 ? `${assets.length} shared file${assets.length === 1 ? '' : 's'}` : 'Portal shell only',
-      detail: assets.length > 0 ? 'Only customer-safe proofs/files are listed here. Internal shop files stay hidden.' : 'You can still track status and message the team from this page.',
+      detail: hasItemScopedProofs
+        ? 'Proofs are tied to specific line items. Open a proof from the item card below.'
+        : 'Only customer-safe proofs/files are listed here. Internal shop files stay hidden.',
       tone: assets.length > 0 ? 'purple' : 'gray',
     },
     {
@@ -326,7 +362,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
         : pendingProof
           ? {
               label: 'Customer action required',
-              description: 'A proof is live now. Review it carefully, then approve for print or request changes from this page.',
+              description: hasItemScopedProofs ? 'Item proofs are live now. Approve each item or request targeted changes.' : 'A proof is live now. Review it carefully, then approve for print or request changes from this page.',
               className: 'bg-blue-50 border-blue-200 text-blue-800',
             }
           : {
@@ -334,6 +370,8 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
               description: 'Your job is in our system. Files, proofs, and updates will appear here as soon as they are ready to share.',
               className: 'bg-gray-50 border-gray-200 text-gray-700',
             };
+
+  const showJobLevelActionBlock = !!jobLevelPendingProof && !hasItemScopedProofs && !isApproved && !isChangesRequested && !successMsg;
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -388,8 +426,8 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
               <h2 className="mt-1 text-2xl font-bold text-gray-900">{job.title}</h2>
               <p className="text-sm text-gray-500 mt-1">
                 <span className="font-medium">{job.quantity?.toLocaleString()} units</span>
-                {job.size && <> &bull; {job.size}</>}
-                {job.paper_stock && <> &bull; {job.paper_stock}</>}
+                {job.size && <> • {job.size}</>}
+                {job.paper_stock && <> • {job.paper_stock}</>}
               </p>
             </div>
             <span className={`self-start px-3 py-1.5 rounded-full text-xs font-bold uppercase ${
@@ -421,6 +459,118 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
                 <p className="mt-2 text-xs opacity-80">{card.detail}</p>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-gray-500">Line items</p>
+              <h3 className="text-lg font-bold text-gray-900">What’s in this job</h3>
+            </div>
+            <span className="rounded-full bg-gray-100 px-3 py-1 text-[11px] font-black uppercase text-gray-600">{items.length} item{items.length === 1 ? '' : 's'}</span>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {items.length === 0 && (
+              <div className="col-span-2 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-8 text-center text-sm text-gray-400">
+                No line items added yet.
+              </div>
+            )}
+            {items.map((item: any) => {
+              const itemPendingProof = itemScopedAssets.find((a) => a.job_item_id === item.id && a.status === 'pending');
+              const itemApprovedProof = itemScopedAssets.find((a) => a.job_item_id === item.id && a.status === 'approved');
+              const itemProof = itemApprovedProof || itemPendingProof;
+              const changeNote = itemChangeNotes[item.id] || '';
+              const showApprove = !!itemPendingProof;
+              const statusChip = itemPendingProof ? 'Proof ready for review' : itemApprovedProof ? 'Approved' : item.status || 'In progress';
+              const statusClass = itemApprovedProof ? 'bg-green-50 text-green-700 border-green-200' : itemPendingProof ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-gray-50 text-gray-700 border-gray-200';
+              const waitingOnArt = item.waitingOnArt || item.artwork_status === 'Waiting on Art' || item.artworkStatus === 'Waiting on Art';
+              return (
+                <div key={item.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-gray-900 truncate">{item.description || 'Line item'}</p>
+                      <p className="mt-1 text-[11px] text-gray-500 font-semibold flex flex-wrap gap-2">
+                        {item.quantity ? <span>Qty {Number(item.quantity).toLocaleString()}</span> : null}
+                        {item.size ? <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5">{item.size}</span> : null}
+                        {item.paper_stock ? <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5">{item.paper_stock}</span> : null}
+                      </p>
+                    </div>
+                    <span className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${statusClass}`}>
+                      {statusChip}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 text-[11px] text-gray-600">
+                    {waitingOnArt && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 font-bold text-amber-800">
+                        Waiting on art
+                      </span>
+                    )}
+                    {item.job_item_steps && item.job_item_steps.length > 0 && (
+                      <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-1">
+                        Next: {item.job_item_steps.find((s: any) => s.status !== 'Completed')?.step_name || 'Complete'}
+                      </span>
+                    )}
+                    {itemProof && (
+                      <span className="rounded-full border border-purple-200 bg-purple-50 px-2 py-1 text-purple-800 font-semibold">
+                        {itemApprovedProof ? 'Approved proof' : 'Proof live'}
+                      </span>
+                    )}
+                  </div>
+
+                  {itemProof ? (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
+                      <div className="flex items-center justify-between text-sm font-semibold text-gray-800">
+                        <span className="truncate">{itemProof.file_name}</span>
+                        <span className="text-[10px] text-gray-500">{new Date(itemProof.created_at).toLocaleDateString()}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => loadPreview(itemProof)}
+                          className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-bold text-gray-700 hover:border-black"
+                        >
+                          <Eye size={14} /> Open proof
+                        </button>
+                        {showApprove && (
+                          <button
+                            onClick={() => handleApprove(item.id)}
+                            disabled={actionLoading}
+                            className="inline-flex items-center gap-2 rounded-full bg-green-600 px-3 py-1 text-[11px] font-black uppercase tracking-wide text-white hover:bg-green-700"
+                          >
+                            <CheckCircle size={14} /> Approve item
+                          </button>
+                        )}
+                      </div>
+                      {itemPendingProof && (
+                        <div className="space-y-2">
+                          <textarea
+                            placeholder="Request changes for this item..."
+                            value={changeNote}
+                            onChange={(e) => setItemChangeNotes((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                            className="w-full rounded-lg border border-amber-200 bg-white p-2 text-sm focus:outline-none focus:border-amber-400"
+                          />
+                          <button
+                            onClick={() => handleRequestChanges(changeNote, item.id)}
+                            disabled={actionLoading || !changeNote.trim()}
+                            className="w-full rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-amber-800 hover:border-amber-500 disabled:opacity-50"
+                          >
+                            Request changes on this item
+                          </button>
+                        </div>
+                      )}
+                      {itemApprovedProof && (
+                        <p className="text-[11px] text-green-700 font-semibold">Approved. We will keep this approval attached to this item.</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
+                      No item-specific proof yet. We will attach the first proof for this item here.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -518,15 +668,19 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
 
             {assets.length > 1 && (
               <div className="px-6 py-3 border-b border-gray-100 flex gap-2 overflow-x-auto">
-                {assets.map((asset, i) => (
-                  <button key={asset.id} onClick={() => loadPreview(asset)}
-                    className={`flex-shrink-0 px-3 py-1.5 rounded text-xs font-bold border transition-all ${
-                      viewingAssetId === asset.id ? 'border-black bg-black text-white' : 'border-gray-200 text-gray-500 hover:border-black'
-                    }`}>
-                    {asset.status === 'approved' ? 'Approved proof' : `Version ${assets.length - i}`}
-                    {asset.status === 'approved' ? ' ✓' : ''}
-                  </button>
-                ))}
+                {assets.map((asset, i) => {
+                  const linkedItem = asset.job_item_id ? itemLookup[asset.job_item_id] : null;
+                  return (
+                    <button key={asset.id} onClick={() => loadPreview(asset)}
+                      className={`flex-shrink-0 px-3 py-1.5 rounded text-xs font-bold border transition-all ${
+                        viewingAssetId === asset.id ? 'border-black bg-black text-white' : 'border-gray-200 text-gray-500 hover:border-black'
+                      }`}>
+                      {asset.status === 'approved' ? 'Approved proof' : `Version ${assets.length - i}`}
+                      {asset.status === 'approved' ? ' ✓' : ''}
+                      {linkedItem ? ` • ${linkedItem.description || 'Item'}` : ''}
+                    </button>
+                  );
+                })}
               </div>
             )}
 
@@ -550,7 +704,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
           </div>
         )}
 
-        {pendingProof && !isApproved && !isChangesRequested && !successMsg && (
+        {showJobLevelActionBlock && (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
             <div>
               <h3 className="font-semibold text-gray-900 mb-1">Ready to proceed?</h3>
@@ -570,7 +724,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
                 />
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <button
-                    onClick={handleRequestChanges}
+                    onClick={() => handleRequestChanges(requestChangesNote)}
                     disabled={actionLoading || !requestChangesNote.trim()}
                     className="flex-1 py-3 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 disabled:opacity-40"
                   >
@@ -596,7 +750,7 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
                 <XCircle size={18} /> Request Changes
               </button>
               <button
-                onClick={handleApprove}
+                onClick={() => handleApprove()}
                 disabled={actionLoading}
                 className="flex-1 py-4 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 shadow-lg transition-all flex justify-center items-center gap-2 text-sm"
               >
