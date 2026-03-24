@@ -28,6 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard/quotes', label: 'Quotes', icon: FileText, match: ['/dashboard/quotes', '/dashboard/quotes/'] },
   { href: '/dashboard/invoices', label: 'Invoices', icon: Briefcase, match: ['/dashboard/invoices', '/dashboard/invoices/'] },
   { href: '/dashboard/messages', label: 'Messages', icon: MessageSquare, match: ['/dashboard/messages', '/dashboard/messages/'] },
+  { href: '/dashboard/feedback', label: 'Feedback', icon: MessageSquare, match: ['/dashboard/feedback', '/dashboard/feedback/'] },
   { href: '/dashboard/settings', label: 'Settings', icon: Settings, match: ['/dashboard/settings', '/dashboard/settings/'] },
 ];
 

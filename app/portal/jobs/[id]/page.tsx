@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle, XCircle, Download, FileImage, FileText, Clock, Printer, Mail, MessageSquare, Send, AlertTriangle, Palette, UploadCloud, Eye } from 'lucide-react';
 import { normalizePortalVisibility } from '@/lib/customerJobs';
 import { summarizeProofRollup, deriveJobStatusFromProofRollup, type ProofRollup } from '@/lib/proofRollup';
+import PortalFeedbackWidget from '@/components/PortalFeedbackWidget';
 
 export default function PublicJobProofPage({ params }: { params: { id: string } }) {
   const [job, setJob] = useState<any>(null);
@@ -916,6 +917,14 @@ export default function PublicJobProofPage({ params }: { params: { id: string } 
             </a>
           </div>
         </div>
+
+        <PortalFeedbackWidget
+          pageType="job"
+          pageId={params.id}
+          pageTitle={job.title}
+          brandName={brandName}
+          audience="portal"
+        />
 
       </div>
     </div>

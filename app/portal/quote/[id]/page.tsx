@@ -3,6 +3,7 @@
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';
 import { CheckCircle, XCircle, FileText, Printer, Mail } from 'lucide-react';
+import PortalFeedbackWidget from '@/components/PortalFeedbackWidget';
 
 export default function PublicQuotePage({ params }: { params: { id: string } }) {
   const [quote, setQuote] = useState<any>(null);
@@ -217,6 +218,13 @@ export default function PublicQuotePage({ params }: { params: { id: string } }) 
                     <a href="mailto:support@pacificprinting.com" className="hover:text-black flex items-center gap-1"><Mail size={12}/> Contact Us</a>
                 </div>
             </div>
+            <PortalFeedbackWidget
+              pageType="quote"
+              pageId={params.id}
+              pageTitle={quote.title}
+              brandName={quote.customer_name || 'Pacific Printing'}
+              audience="portal"
+            />
         </div>
     </div>
   );
