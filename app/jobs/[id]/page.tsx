@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import ContextualFeedbackWidget from '@/components/ContextualFeedbackWidget';
 
 export default function PublicJobTracker() {
   const params = useParams();
@@ -249,6 +250,15 @@ export default function PublicJobTracker() {
                 <p className="text-sm text-blue-900 mb-4">If you have questions about your order, please contact our support team.</p>
                 <a href="mailto:support@printedunion.com" className="text-sm font-bold text-blue-600 hover:underline">Contact Support &rarr;</a>
             </div>
+        </div>
+
+        <div className="md:col-span-3">
+          <ContextualFeedbackWidget
+            jobId={String(params.id)}
+            audience="customer"
+            jobTitle={job?.title}
+            currentStep={job?.current_step || job?.status}
+          />
         </div>
 
       </main>

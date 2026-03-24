@@ -17,6 +17,7 @@ import { sendOrderConfirmation } from '../server-actions';
 import ItemDetailDrawer from '@/components/ItemDetailDrawer';
 import CustomerPortalShell from '@/components/CustomerPortalShell';
 import ShopFloorBoard from '@/components/ShopFloorBoard';
+import FeedbackTriagePanel from '@/components/FeedbackTriagePanel';
 import { getJobFollowUpState } from '@/lib/jobFollowUp';
 import { applyOverridesToList, parseQuantityList, formatCurrency } from '@/utils/pricing';
 import { PRODUCT_TEMPLATES, getDefaultSizeForTemplate, getTemplate, ProductTemplateKey } from '@/utils/productTemplates';
@@ -409,7 +410,7 @@ export default function Dashboard() {
   const [bulkTargetOwner, setBulkTargetOwner] = useState('');
   const [bulkSourceOwner, setBulkSourceOwner] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
-
+  const [feedbackInbox, setFeedbackInbox] = useState<any[]>([]);
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -684,6 +685,33 @@ export default function Dashboard() {
       // Fetch additional production data
       const { data: qData } = await supabase.from('workflow_queues').select('*').order('rank');
       if (qData) setWorkflowOptions(qData);
+
+      const { data: feedbackLogs } = await supabase
+        .from('job_logs')
+        .select('id, job_id, action, details, created_at, profiles(first_name, email), jobs(title, status, current_step)')
+        .in('action', ['Customer Feedback', 'Internal Feedback'])
+        .order('created_at', { ascending: false })
+        .limit(8);
+
+      if (feedbackLogs) {
+        const parsed = feedbackLogs.map((entry: any) => {
+          let payload = null;
+          try {
+            payload = entry.details ? JSON.parse(entry.details) : null;
+          } catch {
+            payload = { summary: entry.details };
+          }
+          return {
+            ...entry,
+            payload,
+            job: Array.isArray(entry.jobs) ? entry.jobs[0] : entry.jobs,
+            senderName: Array.isArray(entry.profiles)
+              ? (entry.profiles[0]?.first_name || entry.profiles[0]?.email || '')
+              : (entry.profiles?.first_name || entry.profiles?.email || ''),
+          };
+        });
+        setFeedbackInbox(parsed);
+      }
     }
 
     setLoading(false);
@@ -2825,6 +2853,10 @@ export default function Dashboard() {
                 </div>
               </div>
               )}
+
+              <div>
+                <FeedbackTriagePanel items={feedbackInbox} />
+              </div>
 
               {!isCSRDesk && (
               <div className={`rounded-2xl border border-gray-200 bg-white p-5 shadow-sm ${managerExceptionsOrder}`}>

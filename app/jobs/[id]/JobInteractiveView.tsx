@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import ContextualFeedbackWidget from '@/components/ContextualFeedbackWidget';
 // Fix: Use relative path to avoid alias errors
 import { sendProofNotification } from '../../server-actions';
 
@@ -603,6 +604,16 @@ export default function JobInteractiveView({
             </div>
 
         </div>
+      </div>
+
+      <div className="max-w-[1920px] mx-auto w-full px-4 pb-8">
+        <ContextualFeedbackWidget
+          jobId={jobId}
+          userId={user?.id}
+          audience="internal"
+          jobTitle={job?.title}
+          currentStep={job?.current_step || job?.status}
+        />
       </div>
     </div>
   );
