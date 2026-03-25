@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createBrowserClient } from '@supabase/ssr';
-import { Calculator, Save, Plus, ArrowLeft, Loader2, Settings, ClipboardList, ChevronDown } from 'lucide-react';
+import { AlertTriangle, Calculator, Save, Plus, ArrowLeft, Loader2, Settings, ClipboardList, ChevronDown, RefreshCw } from 'lucide-react';
 import { calculateEstimate, EstimateResult, FinishingOp, Markup, Press, ProductTemplate, Stock } from '@/lib/estimator';
-import { deleteFinishing, deleteMarkup, deletePress, deleteStock, deleteTemplate, saveQuote, upsertFinishing, upsertMarkup, upsertPress, upsertStock, upsertTemplate } from '@/app/actions/estimator';
+import { deleteFinishing, deleteMarkup, deletePress, deleteStock, deleteTemplate, fetchEstimatorData, saveQuote, upsertFinishing, upsertMarkup, upsertPress, upsertStock, upsertTemplate } from '@/app/actions/estimator';
 
 const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -14,17 +14,20 @@ const supabase = createBrowserClient(
 );
 
 type Role = 'admin' | 'staff' | 'customer' | string;
+type EstimatorHealth = Awaited<ReturnType<typeof fetchEstimatorData>>['health'];
 
 export default function EstimatorPage() {
   const router = useRouter();
   const [role, setRole] = useState<Role>('customer');
   const [loading, setLoading] = useState(true);
+  const [reloading, setReloading] = useState(false);
 
   const [presses, setPresses] = useState<Press[]>([]);
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [finishingOps, setFinishingOps] = useState<FinishingOp[]>([]);
   const [markups, setMarkups] = useState<Markup[]>([]);
   const [templates, setTemplates] = useState<ProductTemplate[]>([]);
+  const [health, setHealth] = useState<EstimatorHealth | null>(null);
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [selectedPressId, setSelectedPressId] = useState<string>('');
@@ -45,39 +48,46 @@ export default function EstimatorPage() {
         return;
       }
       const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      const detectedRole = profile?.role || 'customer';
-      setRole(detectedRole);
+      setRole(profile?.role || 'customer');
 
       await loadData();
       setLoading(false);
     })();
   }, []);
 
+  const applyLoadedData = (payload: Awaited<ReturnType<typeof fetchEstimatorData>>) => {
+    const pressList = (payload.presses || []) as Press[];
+    const stockList = (payload.stocks || []) as Stock[];
+    const finishList = (payload.finishingOps || []) as FinishingOp[];
+    const markupList = (payload.markups || []) as Markup[];
+    const templateList = (payload.templates || []) as ProductTemplate[];
+
+    setPresses(pressList);
+    setStocks(stockList);
+    setFinishingOps(finishList);
+    setMarkups(markupList);
+    setTemplates(templateList);
+    setHealth(payload.health);
+
+    setSelectedTemplateId((current) => current || templateList[0]?.id || '');
+    setSelectedPressId((current) => current || pressList[0]?.id || '');
+    setSelectedStockId((current) => current || stockList[0]?.id || '');
+    setSelectedMarkupId((current) => current || markupList[0]?.id || '');
+  };
+
   const loadData = async () => {
-    const [pressRes, stockRes, finishRes, markupRes, templateRes] = await Promise.all([
-      supabase.from('presses').select('*').order('name'),
-      supabase.from('stocks').select('*').order('name'),
-      supabase.from('finishing_ops').select('*').order('name'),
-      supabase.from('markups').select('*').order('name'),
-      supabase.from('product_templates').select('*').order('name'),
-    ]);
+    const payload = await fetchEstimatorData();
+    applyLoadedData(payload);
+    return payload;
+  };
 
-    const pressList = pressRes.data || [];
-    const stockList = stockRes.data || [];
-    const finishList = finishRes.data || [];
-    const markupList = markupRes.data || [];
-    const templateList = templateRes.data || [];
-
-    setPresses(pressList as Press[]);
-    setStocks(stockList as Stock[]);
-    setFinishingOps(finishList as FinishingOp[]);
-    setMarkups(markupList as Markup[]);
-    setTemplates(templateList as ProductTemplate[]);
-
-    if (!selectedTemplateId && templateList[0]?.id) setSelectedTemplateId(templateList[0].id);
-    if (!selectedPressId && pressList[0]?.id) setSelectedPressId(pressList[0].id);
-    if (!selectedStockId && stockList[0]?.id) setSelectedStockId(stockList[0].id);
-    if (!selectedMarkupId && markupList[0]?.id) setSelectedMarkupId(markupList[0].id);
+  const reloadData = async () => {
+    setReloading(true);
+    try {
+      await loadData();
+    } finally {
+      setReloading(false);
+    }
   };
 
   const selectedTemplate = useMemo(() => templates.find((t) => t.id === selectedTemplateId) || templates[0], [templates, selectedTemplateId]);
@@ -105,7 +115,18 @@ export default function EstimatorPage() {
     }));
   }, [parsedQuantities, selectedTemplate, selectedPress, selectedStock, selectedFinishing, selectedMarkup]);
 
-  const totalPrice = results.reduce((sum, r) => sum + r.totalPrice, 0);
+  const totals = useMemo(() => {
+    return results.reduce((acc, result) => {
+      acc.cost += result.totalCost;
+      acc.price += result.totalPrice;
+      acc.grossProfit += result.grossProfit;
+      return acc;
+    }, { cost: 0, price: 0, grossProfit: 0 });
+  }, [results]);
+  const totalMarginPercent = totals.price > 0 ? (totals.grossProfit / totals.price) * 100 : 0;
+
+  const hardLoadFailure = Boolean(health && health.loadErrors.length > 0);
+  const readyToEstimate = Boolean(selectedTemplate && selectedPress && selectedStock && !hardLoadFailure);
 
   const handleToggleFinishing = (id: string) => {
     setSelectedFinishingIds((prev) => prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id]);
@@ -115,7 +136,7 @@ export default function EstimatorPage() {
     if (!results.length) return;
     setSaving(true);
     try {
-      const quote = await saveQuote({
+      await saveQuote({
         title: quoteTitle || 'Quote',
         contact,
         templateId: selectedTemplate?.id,
@@ -128,7 +149,6 @@ export default function EstimatorPage() {
       });
       alert('Quote saved');
       router.push('/dashboard/quotes');
-      return quote;
     } catch (err: any) {
       alert(err?.message || 'Failed to save quote');
     } finally {
@@ -157,6 +177,8 @@ export default function EstimatorPage() {
       </div>
 
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-8">
+        <EstimatorDiagnostics health={health} role={role} onRefresh={reloadData} reloading={reloading} />
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-white border border-gray-200 rounded-2xl p-5 space-y-4 shadow-sm">
             <div className="flex items-center gap-2 text-xs font-bold uppercase text-gray-500">
@@ -165,21 +187,22 @@ export default function EstimatorPage() {
 
             <div className="space-y-3">
               <label className="text-xs font-bold text-gray-500">Template</label>
-              <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">
+              <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm" disabled={!templates.length}>
                 {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
+              {!templates.length && <p className="text-xs text-amber-700">No templates loaded yet.</p>}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-bold text-gray-500">Press</label>
-                <select value={selectedPress?.id} onChange={(e) => setSelectedPressId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">
+                <select value={selectedPress?.id || ''} onChange={(e) => setSelectedPressId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm" disabled={!presses.length}>
                   {presses.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
               <div>
                 <label className="text-xs font-bold text-gray-500">Stock</label>
-                <select value={selectedStock?.id} onChange={(e) => setSelectedStockId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">
+                <select value={selectedStock?.id || ''} onChange={(e) => setSelectedStockId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm" disabled={!stocks.length}>
                   {stocks.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
@@ -188,7 +211,7 @@ export default function EstimatorPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-bold text-gray-500">Markup</label>
-                <select value={selectedMarkup?.id || ''} onChange={(e) => setSelectedMarkupId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm">
+                <select value={selectedMarkup?.id || ''} onChange={(e) => setSelectedMarkupId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm" disabled={!markups.length}>
                   <option value="">No markup</option>
                   {markups.map(m => <option key={m.id} value={m.id}>{m.name} ({m.percent}%)</option>)}
                 </select>
@@ -219,27 +242,37 @@ export default function EstimatorPage() {
               <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Contact / Company" className="w-full rounded-lg border px-3 py-2 text-sm" />
             </div>
 
-            <button onClick={handleSaveQuote} disabled={!results.length || saving} className="w-full bg-black text-white rounded-lg py-3 font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+            <button onClick={handleSaveQuote} disabled={!results.length || saving || !readyToEstimate} className="w-full bg-black text-white rounded-lg py-3 font-bold flex items-center justify-center gap-2 disabled:opacity-50">
               {saving ? <Loader2 className="animate-spin" size={16}/> : <Save size={16}/>} Save Quote
             </button>
           </div>
 
           <div className="lg:col-span-2 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <MetricCard label="Combined Cost" value={`$${totals.cost.toFixed(2)}`} tone="slate" />
+              <MetricCard label="Combined Price" value={`$${totals.price.toFixed(2)}`} tone="green" />
+              <MetricCard label="Gross Profit" value={`$${totals.grossProfit.toFixed(2)}`} tone={totals.grossProfit >= 0 ? 'emerald' : 'rose'} />
+              <MetricCard label="Gross Margin" value={`${totalMarginPercent.toFixed(1)}%`} tone={totalMarginPercent >= 0 ? 'blue' : 'rose'} />
+            </div>
+
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
               <div className="px-6 py-4 border-b flex items-center justify-between">
                 <div>
                   <div className="text-xs uppercase text-gray-400 font-bold">Estimate</div>
                   <h2 className="text-lg font-bold text-gray-900">Breakdown by quantity</h2>
                 </div>
-                <div className="text-sm font-bold text-gray-800">Total ${totalPrice.toFixed(2)}</div>
+                <div className="text-sm font-bold text-gray-800">Total ${totals.price.toFixed(2)}</div>
               </div>
               <div className="divide-y">
-                {results.length === 0 && (
+                {!readyToEstimate && (
+                  <div className="p-6 text-sm text-amber-700 bg-amber-50">Estimator inputs are unavailable. Resolve the diagnostics above before calculating or saving quotes.</div>
+                )}
+                {readyToEstimate && results.length === 0 && (
                   <div className="p-6 text-gray-500 text-sm">Add a quantity to see pricing.</div>
                 )}
-                {results.map((res) => (
+                {readyToEstimate && results.map((res) => (
                   <div key={res.quantity} className="p-6 flex flex-col gap-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-4">
                       <div>
                         <div className="text-xs uppercase text-gray-400 font-bold">Quantity</div>
                         <div className="text-xl font-bold text-gray-900">{res.quantity.toLocaleString()}</div>
@@ -251,6 +284,13 @@ export default function EstimatorPage() {
                         <div className="text-xs text-gray-500">Cost ${res.totalCost.toFixed(2)}</div>
                       </div>
                     </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <MetricChip label="Cost" value={`$${res.totalCost.toFixed(2)}`} />
+                      <MetricChip label="Gross Profit" value={`$${res.grossProfit.toFixed(2)}`} positive={res.grossProfit >= 0} />
+                      <MetricChip label="Gross Margin" value={`${res.grossMarginPercent.toFixed(1)}%`} positive={res.grossMarginPercent >= 0} />
+                    </div>
+
                     <div className="bg-gray-50 rounded-lg border text-sm divide-y">
                       {res.breakdown.map((b, i) => (
                         <div key={i} className="px-4 py-2 flex items-center justify-between">
@@ -278,6 +318,7 @@ export default function EstimatorPage() {
                 markups={markups}
                 templates={templates}
                 onRefresh={loadData}
+                blocked={hardLoadFailure}
               />
             )}
           </div>
@@ -287,13 +328,71 @@ export default function EstimatorPage() {
   );
 }
 
-function AdminRates({ presses, stocks, finishingOps, markups, templates, onRefresh }: {
+function EstimatorDiagnostics({ health, role, onRefresh, reloading }: {
+  health: EstimatorHealth | null;
+  role: Role;
+  onRefresh: () => Promise<void>;
+  reloading: boolean;
+}) {
+  if (!health) return null;
+
+  const showBootstrapHint = role !== 'customer' && (health.missingTables.length > 0 || health.emptyTables.length > 0);
+
+  return (
+    <div className="space-y-3">
+      {health.loadErrors.length > 0 && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex gap-3">
+              <AlertTriangle className="mt-0.5" size={18} />
+              <div>
+                <div className="font-bold">Estimator pricing tables failed to load</div>
+                <ul className="mt-2 list-disc pl-5 space-y-1 text-red-800">
+                  {health.loadErrors.map((error) => <li key={error.table}>{error.message}</li>)}
+                </ul>
+                {showBootstrapHint && (
+                  <p className="mt-3 text-red-800">Bootstrap path: run <span className="font-mono">{health.bootstrapSqlPath}</span> in Supabase SQL editor, then refresh.</p>
+                )}
+              </div>
+            </div>
+            <button onClick={onRefresh} disabled={reloading} className="shrink-0 px-3 py-2 rounded-lg border border-red-200 bg-white text-red-800 font-semibold flex items-center gap-2 disabled:opacity-60">
+              {reloading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />} Refresh
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(health.emptyTables.length > 0 && health.loadErrors.length === 0) && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="font-bold">Estimator tables are reachable but incomplete</div>
+          <p className="mt-1">Empty tables: {health.emptyTables.join(', ')}.</p>
+          {showBootstrapHint && <p className="mt-2">Seed baseline data with <span className="font-mono">{health.bootstrapSqlPath}</span> if this environment has not been initialized yet.</p>}
+        </div>
+      )}
+
+      <div className="rounded-2xl border border-gray-200 bg-white p-4">
+        <div className="text-xs font-bold uppercase text-gray-500 mb-3">Estimator health</div>
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-sm">
+          {health.checks.map((check) => (
+            <div key={check.table} className={`rounded-xl border px-3 py-2 ${check.ok ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}>
+              <div className="font-semibold text-gray-900">{check.table}</div>
+              <div className="text-xs text-gray-600 mt-1">{check.ok ? `${check.count} row(s)` : check.code || 'error'}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminRates({ presses, stocks, finishingOps, markups, templates, onRefresh, blocked }: {
   presses: Press[];
   stocks: Stock[];
   finishingOps: FinishingOp[];
   markups: Markup[];
   templates: ProductTemplate[];
-  onRefresh: () => Promise<void>;
+  onRefresh: () => Promise<any>;
+  blocked: boolean;
 }) {
   const [open, setOpen] = useState(true);
 
@@ -331,22 +430,26 @@ function AdminRates({ presses, stocks, finishingOps, markups, templates, onRefre
         <ChevronDown className={`transition ${open ? 'rotate-180' : ''}`} size={16} />
       </button>
       {open && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-6">
-          <SimpleTable title="Presses" columns={['name','type','impressions_per_hour']} rows={presses} onSave={(row) => handleUpsert('presses', row)} onDelete={(id) => handleDelete('presses', id)} />
-          <SimpleTable title="Stocks" columns={['name','sheet_width','sheet_height','cost_per_sheet']} rows={stocks} onSave={(row) => handleUpsert('stocks', row)} onDelete={(id) => handleDelete('stocks', id)} />
-          <SimpleTable title="Finishing" columns={['name','setup_minutes','run_minutes_per_thousand','cost_per_hour']} rows={finishingOps} onSave={(row) => handleUpsert('finishing_ops', row)} onDelete={(id) => handleDelete('finishing_ops', id)} />
-          <SimpleTable title="Markups" columns={['name','percent']} rows={markups} onSave={(row) => handleUpsert('markups', row)} onDelete={(id) => handleDelete('markups', id)} />
-          <SimpleTable title="Templates" columns={['name','finished_width','finished_height','default_press_id','default_stock_id','default_markup_id','setup_waste_sheets']} rows={templates} onSave={(row) => handleUpsert('product_templates', row)} onDelete={(id) => handleDelete('product_templates', id)} />
+        <div className="p-6 space-y-4">
+          {blocked && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">Estimator admin writes are blocked until the missing pricing tables are restored.</div>}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <SimpleTable title="Presses" columns={['name','type','impressions_per_hour']} rows={presses} onSave={(row) => handleUpsert('presses', row)} onDelete={(id) => handleDelete('presses', id)} disabled={blocked} />
+            <SimpleTable title="Stocks" columns={['name','sheet_width','sheet_height','cost_per_sheet']} rows={stocks} onSave={(row) => handleUpsert('stocks', row)} onDelete={(id) => handleDelete('stocks', id)} disabled={blocked} />
+            <SimpleTable title="Finishing" columns={['name','setup_minutes','run_minutes_per_thousand','cost_per_hour']} rows={finishingOps} onSave={(row) => handleUpsert('finishing_ops', row)} onDelete={(id) => handleDelete('finishing_ops', id)} disabled={blocked} />
+            <SimpleTable title="Markups" columns={['name','percent']} rows={markups} onSave={(row) => handleUpsert('markups', row)} onDelete={(id) => handleDelete('markups', id)} disabled={blocked} />
+            <SimpleTable title="Templates" columns={['name','finished_width','finished_height','default_press_id','default_stock_id','default_markup_id','setup_waste_sheets']} rows={templates} onSave={(row) => handleUpsert('product_templates', row)} onDelete={(id) => handleDelete('product_templates', id)} disabled={blocked} />
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function SimpleTable({ title, columns, rows, onSave, onDelete }: { title: string; columns: string[]; rows: any[]; onSave: (row: any) => void; onDelete: (id: string) => void; }) {
+function SimpleTable({ title, columns, rows, onSave, onDelete, disabled }: { title: string; columns: string[]; rows: any[]; onSave: (row: any) => Promise<void>; onDelete: (id: string) => Promise<void>; disabled?: boolean; }) {
   const [editing, setEditing] = useState<any | null>(null);
 
   const handleEdit = (row?: any) => {
+    if (disabled) return;
     setEditing(row || { id: undefined });
   };
 
@@ -363,18 +466,18 @@ function SimpleTable({ title, columns, rows, onSave, onDelete }: { title: string
     <div className="border border-gray-100 rounded-xl overflow-hidden">
       <div className="px-4 py-3 bg-gray-50 flex items-center justify-between">
         <div className="text-sm font-bold text-gray-800">{title}</div>
-        <button onClick={() => handleEdit()} className="text-xs px-2 py-1 border rounded-lg flex items-center gap-1 hover:bg-white"><Plus size={12}/> New</button>
+        <button onClick={() => handleEdit()} disabled={disabled} className="text-xs px-2 py-1 border rounded-lg flex items-center gap-1 hover:bg-white disabled:opacity-50"><Plus size={12}/> New</button>
       </div>
       <div className="divide-y text-sm">
         {rows.map((row) => (
-          <div key={row.id} className="px-4 py-2 flex items-center justify-between hover:bg-gray-50">
-            <div className="flex-1">
-              <div className="font-semibold text-gray-800">{row.name || row.id}</div>
-              <div className="text-[11px] text-gray-500 truncate">{columns.map((c) => `${c}: ${row[c] ?? '--'}`).join(' • ')}</div>
+          <div key={row.id} className="px-4 py-3 flex items-start justify-between gap-3 hover:bg-gray-50">
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-gray-800 truncate">{row.name || row.id}</div>
+              <div className="text-[11px] text-gray-500 break-words">{columns.map((c) => `${c}: ${row[c] ?? '--'}`).join(' • ')}</div>
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => handleEdit(row)} className="text-xs text-blue-600">Edit</button>
-              <button onClick={() => onDelete(row.id)} className="text-xs text-red-600">Delete</button>
+            <div className="shrink-0 flex items-center gap-3 whitespace-nowrap">
+              <button onClick={() => handleEdit(row)} disabled={disabled} className="text-xs font-semibold text-blue-600 disabled:opacity-50">Edit</button>
+              <button onClick={() => onDelete(row.id)} disabled={disabled} className="text-xs font-semibold text-red-600 disabled:opacity-50">Delete</button>
             </div>
           </div>
         ))}
@@ -396,6 +499,32 @@ function SimpleTable({ title, columns, rows, onSave, onDelete }: { title: string
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function MetricCard({ label, value, tone }: { label: string; value: string; tone: 'slate' | 'green' | 'emerald' | 'blue' | 'rose' }) {
+  const tones = {
+    slate: 'border-gray-200 bg-white text-gray-900',
+    green: 'border-green-200 bg-green-50 text-green-950',
+    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-950',
+    blue: 'border-blue-200 bg-blue-50 text-blue-950',
+    rose: 'border-rose-200 bg-rose-50 text-rose-950',
+  };
+
+  return (
+    <div className={`rounded-2xl border px-4 py-4 shadow-sm ${tones[tone]}`}>
+      <div className="text-xs uppercase font-bold opacity-70">{label}</div>
+      <div className="mt-2 text-2xl font-black">{value}</div>
+    </div>
+  );
+}
+
+function MetricChip({ label, value, positive = true }: { label: string; value: string; positive?: boolean }) {
+  return (
+    <div className={`rounded-xl border px-3 py-2 ${positive ? 'border-emerald-200 bg-emerald-50 text-emerald-950' : 'border-rose-200 bg-rose-50 text-rose-950'}`}>
+      <div className="text-[11px] uppercase font-bold opacity-70">{label}</div>
+      <div className="mt-1 text-lg font-black">{value}</div>
     </div>
   );
 }

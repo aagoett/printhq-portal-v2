@@ -77,6 +77,8 @@ export type EstimateResult = {
   markupAmount: number;
   totalCost: number;
   totalPrice: number;
+  grossProfit: number;
+  grossMarginPercent: number;
   breakdown: EstimateBreakdown[];
 };
 
@@ -126,7 +128,7 @@ export function calculateEstimate(input: EstimateInput): EstimateResult {
   } else {
     pressCost = pressHours * pressHourlyRate;
   }
-  const pressPrice = pressCost * 1.35; // simple uplift if no explicit price fields
+  const pressPrice = pressCost * 1.35;
 
   let finishingCost = 0;
   let finishingPrice = 0;
@@ -152,6 +154,8 @@ export function calculateEstimate(input: EstimateInput): EstimateResult {
   const markupPercent = safeNum(markup?.percent, 0) / 100;
   const markupAmount = preMarkupPrice * markupPercent;
   const totalPrice = preMarkupPrice + markupAmount;
+  const grossProfit = totalPrice - totalCost;
+  const grossMarginPercent = totalPrice > 0 ? (grossProfit / totalPrice) * 100 : 0;
 
   const breakdown: EstimateBreakdown[] = [
     { label: 'Stock', cost: stockCost, price: stockPrice, detail: `${totalSheets} sheets (${nUp}-up)` },
@@ -172,6 +176,8 @@ export function calculateEstimate(input: EstimateInput): EstimateResult {
     markupAmount,
     totalCost,
     totalPrice,
+    grossProfit,
+    grossMarginPercent,
     breakdown,
   };
 }
