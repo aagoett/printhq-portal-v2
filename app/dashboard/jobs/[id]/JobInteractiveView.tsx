@@ -280,6 +280,81 @@ function JobItemsTable({
   );
 }
 
+// --- PRODUCTION OVERVIEW STRIP ---
+function ProductionOverview({ items, assets, jobStatus }: { items: any[]; assets: any[]; jobStatus?: string }) {
+  const safeItems = items || [];
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-black uppercase tracking-widest text-gray-600 flex items-center gap-2">
+          <Layers size={14}/> Production Overview
+        </h3>
+        <span className="text-[10px] font-mono bg-gray-900 text-white px-2 py-1 rounded">{safeItems.length} items</span>
+      </div>
+
+      {safeItems.length === 0 ? (
+        <div className="text-sm text-gray-500">Add items to see production readiness.</div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {safeItems.map((item) => {
+            const steps = [...(item.job_item_steps || [])].sort((a: any, b: any) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime());
+            const pendingSteps = steps.filter((s: any) => s.status !== 'Completed');
+            const blockers = pendingSteps.map((s: any) => s.step_name).filter(Boolean);
+            const nextStep = pendingSteps[0]?.step_name || 'Completed';
+            const itemAssets = assets.filter((a: any) => a.job_item_id === item.id && a.asset_type === 'proof');
+            const hasApprovedProof = itemAssets.some((a: any) => a.status === 'approved');
+            const proofState = hasApprovedProof ? 'Approved proof' : itemAssets.length > 0 ? 'Proof sent' : 'No proof yet';
+            const stage = item.status || 'Pending';
+            const qty = item.quantity ? item.quantity.toLocaleString() : '0';
+
+            return (
+              <div key={item.id} className="p-4 border border-gray-100 rounded-lg bg-gray-50/60 hover:border-gray-200 transition-all shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-black text-blue-700 uppercase tracking-[0.14em]">{item.size || 'Size TBD'}</p>
+                    <h4 className="text-base font-black text-gray-900 leading-tight truncate">{item.description || 'Line Item'}</h4>
+                    <p className="text-[11px] text-gray-500 font-bold truncate">{item.paper_stock || 'Stock TBD'}</p>
+                  </div>
+                  <span className={`text-[10px] font-black px-2 py-1 rounded uppercase tracking-widest whitespace-nowrap ${stage === 'Completed' ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-gray-900 text-white'}`}>{stage}</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 mt-3 text-[11px] font-bold text-gray-600">
+                  <div className="bg-white rounded border border-gray-100 px-2 py-1 flex items-center justify-between">
+                    <span>Qty</span>
+                    <span className="text-gray-900 font-black">{qty}</span>
+                  </div>
+                  <div className="bg-white rounded border border-gray-100 px-2 py-1 flex items-center justify-between">
+                    <span>Dept</span>
+                    <span className="text-gray-900">{jobStatus || 'Unassigned'}</span>
+                  </div>
+                  <div className="bg-white rounded border border-gray-100 px-2 py-1 flex items-center justify-between">
+                    <span>Next</span>
+                    <span className="text-gray-900 truncate">{nextStep}</span>
+                  </div>
+                  <div className="bg-white rounded border border-gray-100 px-2 py-1 flex items-center justify-between">
+                    <span>Proof</span>
+                    <span className={`text-gray-900 truncate ${hasApprovedProof ? 'text-green-700' : ''}`}>{proofState}</span>
+                  </div>
+                </div>
+
+                <div className="mt-2 text-[11px] text-gray-600 flex items-start gap-2">
+                  <XCircle size={14} className={`mt-0.5 ${blockers.length ? 'text-amber-500' : 'text-gray-300'}`}/>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Blockers</p>
+                    <p className="font-semibold text-gray-800 truncate" title={blockers.join(', ')}>
+                      {blockers.length ? blockers.join(', ') : 'No open blockers'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- MAIN COMPONENT ---
 interface JobViewProps {
   user: any;
@@ -773,155 +848,156 @@ export default function JobInteractiveView({
       </div>
 
       {/* MAIN LAYOUT */}
-      <div className="flex-1 max-w-[1920px] mx-auto w-full p-4 grid grid-cols-12 gap-4">
-             {/* LEFT COL: ASSETS & INFO */}
-        <div className="col-span-12 lg:col-span-2 space-y-4">
-             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-                <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-4 tracking-widest flex items-center gap-2"><Layers size={14}/> SUMMARY</h3>
-                <div className="space-y-4">
-                    <div>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Customer</p>
-                        <p className="text-sm font-bold text-gray-900 truncate">{job.profiles?.email?.split('@')[0] || 'Guest'}</p>
-                    </div>
-                    <div>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Timeline</p>
-                        <div className="mt-1 flex flex-col gap-1.5">
-                            <div className={`text-[10px] px-2 py-1 rounded font-bold inline-block w-max ${countdown.color} text-white`}>{countdown.text}</div>
-                            <input 
-                              type="date" 
-                              value={job.due_date ? job.due_date.substring(0, 10) : ''} 
-                              onChange={(e) => handleUpdateJob(job.id, { due_date: e.target.value })}
-                              className="text-[10px] font-bold border rounded p-1 w-full bg-white focus:outline-none focus:border-black"
-                            />
-                        </div>
-                    </div>
-                </div>
+      <div className="flex-1 max-w-[1920px] mx-auto w-full p-4 space-y-4">
+        <ProductionOverview items={items} assets={assets} jobStatus={job.status} />
+
+        <JobItemsTable 
+          items={items} 
+          assets={assets}
+          workflowOptions={workflowOptions}
+          onAddItem={handleAddItem} onUpdateItem={handleUpdateItem} onItemUpload={handleItemUpload}
+          onAddStep={handleAddStep}
+          onToggleStep={handleToggleStep}
+          onDeleteStep={handleDeleteStep}
+          onMoveStep={handleMoveStep}
+          onReorderSteps={handleReorderSteps}
+          onOpenProofModal={(itemId) => { setProofItemId(itemId); setShowUploadModal(true); }}
+          onLogActivity={logActivity}
+          logs={logs}
+          userRole={userRole} 
+        />
+
+        <div className="grid grid-cols-12 gap-4 items-start">
+          <div className="col-span-12 lg:col-span-4 space-y-4">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+              <h3 className="text-[10px] font-bold uppercase text-gray-400 mb-4 tracking-widest flex items-center gap-2"><Layers size={14}/> SUMMARY</h3>
+              <div className="space-y-4">
+                  <div>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Customer</p>
+                      <p className="text-sm font-bold text-gray-900 truncate">{job.profiles?.email?.split('@')[0] || 'Guest'}</p>
+                  </div>
+                  <div>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">Timeline</p>
+                      <div className="mt-1 flex flex-col gap-1.5">
+                          <div className={`text-[10px] px-2 py-1 rounded font-bold inline-block w-max ${countdown.color} text-white`}>{countdown.text}</div>
+                          <input 
+                            type="date" 
+                            value={job.due_date ? job.due_date.substring(0, 10) : ''} 
+                            onChange={(e) => handleUpdateJob(job.id, { due_date: e.target.value })}
+                            className="text-[10px] font-bold border rounded p-1 w-full bg-white focus:outline-none focus:border-black"
+                          />
+                      </div>
+                  </div>
+              </div>
             </div>
 
-             <div className="bg-blue-50 rounded-xl border border-blue-100 p-4">
-                <h3 className="text-[10px] font-bold uppercase text-blue-800 mb-2 flex items-center gap-2 tracking-widest"><FileText size={14}/> SOURCE</h3>
-                {originalAsset ? (
-                    <div onClick={() => loadPreview(originalAsset)} className="flex items-center gap-3 p-2 bg-white rounded-lg border border-blue-200 cursor-pointer hover:border-blue-400 transition-all shadow-sm">
-                        <div className="bg-blue-100 p-2 rounded text-blue-600"><FileImage size={20}/></div>
-                        <div className="overflow-hidden">
-                            <p className="text-[10px] font-bold text-gray-900 truncate w-32">{originalAsset.file_name}</p>
-                            <p className="text-[9px] text-blue-400 font-bold uppercase">View File</p>
-                        </div>
-                    </div>
-                ) : <p className="text-[10px] text-blue-400 italic">No source file.</p>}
-            </div>
-        </div>
-
-        {/* MIDDLE COL: MAIN PRODUCTION HUB */}
-        <div className="col-span-12 lg:col-span-7 flex flex-col gap-4">
-             <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-6">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-xs font-bold uppercase text-yellow-700 flex items-center gap-2"><Lock size={16}/> Global Job Notes</h3>
-                    <button onClick={handleSaveNotes} disabled={isSaving} className="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-3 py-1.5 rounded hover:bg-yellow-500 flex items-center gap-2 shadow-sm uppercase tracking-wider"><Save size={12}/> Save Global Notes</button>
-                </div>
-                <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private production notes for the whole job..." className="w-full h-24 bg-white border border-yellow-300 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 transition-all"/>
-             </div>
-
-             <JobItemsTable 
-               items={items} 
-               assets={assets}
-               workflowOptions={workflowOptions}
-               onAddItem={handleAddItem} onUpdateItem={handleUpdateItem} onItemUpload={handleItemUpload}
-               onAddStep={handleAddStep}
-            onToggleStep={handleToggleStep}
-            onDeleteStep={handleDeleteStep}
-            onMoveStep={handleMoveStep}
-            onReorderSteps={handleReorderSteps}
-            onOpenProofModal={(itemId) => { setProofItemId(itemId); setShowUploadModal(true); }}
-            onLogActivity={logActivity}
-            logs={logs}
-            userRole={userRole} 
-          />
-
-             <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden min-h-[500px] relative ${isApprovedAsset ? 'border-green-400 ring-2 ring-green-100' : 'border-gray-200'}`}>
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                        {isApprovedAsset ? <span className="bg-green-600 text-white text-xs font-bold px-2 py-1 rounded flex items-center gap-1"><CheckCircle size={12}/> PRODUCTION FILE</span> : <span className="text-xs font-bold uppercase text-gray-500">Preview Mode</span>}
-                        <span className="text-xs text-gray-400">| {currentAsset?.file_name}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        {currentAsset?.asset_type === 'proof' && currentAsset.status === 'pending' && <button onClick={() => handleApproveProof(currentAsset.id)} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-green-500 shadow-sm flex items-center gap-1"><ThumbsUp size={12}/> Approve</button>}
-                        {previewUrl && <a href={previewUrl} target="_blank" className="text-xs font-bold text-gray-600 hover:text-black border border-gray-300 px-2 py-1 rounded bg-white"><Download size={12}/></a>}
-                    </div>
-                </div>
-                <div className="flex-1 bg-gray-100 flex items-center justify-center p-6 relative">
-                    {!previewUrl ? <div className="text-gray-400 text-sm">Select a file to preview</div> : previewType === 'image' ? <img src={previewUrl} className="max-w-full max-h-[70vh] shadow-lg border border-gray-300 bg-white" /> : <iframe src={`${previewUrl}#toolbar=0`} className="w-full h-full shadow-lg bg-white" />}
-                </div>
-             </div>
-        </div>
-
-        {/* RIGHT COL: FILE VAULT & CHAT */}
-        <div className="col-span-12 lg:col-span-3 flex flex-col gap-4 h-[calc(100vh-100px)]">
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-1/3">
-                <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
-                     <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File Vault</h3>
-                     <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                    {assets.map((asset) => {
-                        const isCurrent = viewingAssetId === asset.id;
-                        const linkedItem = asset.job_item_id ? items.find(i => i.id === asset.job_item_id) : null;
-                        return (
-                        <div key={asset.id} onClick={() => loadPreview(asset)} className={`p-2 rounded border cursor-pointer transition-all flex flex-col gap-2 group ${isCurrent ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
-                            <div className="flex items-center gap-2 overflow-hidden">
-                                {asset.asset_type === 'source' ? <FileText size={16} className="text-gray-400"/> : <FileImage size={16} className="text-purple-500"/>}
-                                <div><p className="text-xs font-bold text-gray-700 truncate w-32">{asset.file_name}</p><p className="text-[10px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</p></div>
-                            </div>
-                            <div className="flex flex-wrap gap-1">
-                                {asset.status === 'approved' && <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1.5 rounded flex items-center gap-1">APPROVED</span>}
-                                {linkedItem && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 rounded flex items-center gap-1 border border-blue-200 truncate max-w-full">LINKED: {linkedItem.description}</span>}
-                            </div>
-                        </div>
-                        );
-                    })}
-                </div>
+            <div className="bg-blue-50 rounded-xl border border-blue-100 p-4">
+              <h3 className="text-[10px] font-bold uppercase text-blue-800 mb-2 flex items-center gap-2 tracking-widest"><FileText size={14}/> SOURCE</h3>
+              {originalAsset ? (
+                  <div onClick={() => loadPreview(originalAsset)} className="flex items-center gap-3 p-2 bg-white rounded-lg border border-blue-200 cursor-pointer hover:border-blue-400 transition-all shadow-sm">
+                      <div className="bg-blue-100 p-2 rounded text-blue-600"><FileImage size={20}/></div>
+                      <div className="overflow-hidden">
+                          <p className="text-[10px] font-bold text-gray-900 truncate w-32">{originalAsset.file_name}</p>
+                          <p className="text-[9px] text-blue-400 font-bold uppercase">View File</p>
+                      </div>
+                  </div>
+              ) : <p className="text-[10px] text-blue-400 italic">No source file.</p>}
             </div>
 
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col h-2/3 overflow-hidden">
-                <div className="flex border-b border-gray-200">
-                    <button onClick={() => setRightTab('chat')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><MessageSquare size={14}/> Discussion</button>
-                    <button onClick={() => setRightTab('activity')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><Activity size={14}/> Activity Log</button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
-                    {rightTab === 'chat' && (
-                        <>
-                            {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
-                            {messages.map((msg) => (
-                                <div key={msg.id} className={`flex flex-col ${msg.user_id === user?.id ? 'items-end' : 'items-start'}`}>
-                                    <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${msg.user_id === user?.id ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
-                                    <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.email?.split('@')[0]}</span>
-                                </div>
-                            ))}
-                            <div ref={messagesEndRef} />
-                        </>
-                    )}
-                    {rightTab === 'activity' && (
-                        <>
-                            {logs.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No activity recorded yet.</div>}
-                            {logs.map((log) => (
-                                <div key={log.id} className="flex gap-3 text-xs pb-3 border-b border-gray-50 last:border-0">
-                                    <div className="mt-0.5 min-w-[30px] text-gray-400 font-mono text-[9px]">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
-                                    <div><p className="font-bold text-gray-900">{log.action}</p><p className="text-gray-500">{log.details}</p></div>
-                                </div>
-                            ))}
-                            <div ref={logsEndRef} />
-                        </>
-                    )}
-                </div>
-                {rightTab === 'chat' && (
-                    <div className="p-2 border-t border-gray-100 bg-gray-50">
-                        <div className="flex gap-2">
-                            <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-200 text-xs focus:outline-none focus:border-black" placeholder="Type here..." />
-                            <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
-                        </div>
-                    </div>
-                )}
+            <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-6">
+              <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xs font-bold uppercase text-yellow-700 flex items-center gap-2"><Lock size={16}/> Global Job Notes</h3>
+                  <button onClick={handleSaveNotes} disabled={isSaving} className="bg-yellow-400 text-yellow-900 text-[10px] font-bold px-3 py-1.5 rounded hover:bg-yellow-500 flex items-center gap-2 shadow-sm uppercase tracking-wider"><Save size={12}/> Save Global Notes</button>
+              </div>
+              <textarea value={internalNotes} onChange={(e) => setInternalNotes(e.target.value)} placeholder="Private production notes for the whole job..." className="w-full h-24 bg-white border border-yellow-300 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 transition-all"/>
             </div>
+          </div>
+
+          <div className="col-span-12 lg:col-span-5 space-y-4">
+            <div className={`bg-white rounded-lg shadow-sm border flex-1 flex flex-col overflow-hidden min-h-[420px] relative ${isApprovedAsset ? 'border-green-400 ring-2 ring-green-100' : 'border-gray-200'}`}>
+              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                      {isApprovedAsset ? <span className="bg-green-600 text-white text-xs font-bold px-2 py-1 rounded flex items-center gap-1"><CheckCircle size={12}/> PRODUCTION FILE</span> : <span className="text-xs font-bold uppercase text-gray-500">Preview Mode</span>}
+                      <span className="text-xs text-gray-400">| {currentAsset?.file_name}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                      {currentAsset?.asset_type === 'proof' && currentAsset.status === 'pending' && <button onClick={() => handleApproveProof(currentAsset.id)} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold hover:bg-green-500 shadow-sm flex items-center gap-1"><ThumbsUp size={12}/> Approve</button>}
+                      {previewUrl && <a href={previewUrl} target="_blank" className="text-xs font-bold text-gray-600 hover:text-black border border-gray-300 px-2 py-1 rounded bg-white"><Download size={12}/></a>}
+                  </div>
+              </div>
+              <div className="flex-1 bg-gray-100 flex items-center justify-center p-6 relative">
+                  {!previewUrl ? <div className="text-gray-400 text-sm">Select a file to preview</div> : previewType === 'image' ? <img src={previewUrl} className="max-w-full max-h-[70vh] shadow-lg border border-gray-300 bg-white" /> : <iframe src={`${previewUrl}#toolbar=0`} className="w-full h-full shadow-lg bg-white" />}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col max-h-[360px]">
+              <div className="px-4 py-2 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                   <h3 className="text-xs font-bold uppercase text-gray-500 flex items-center gap-2"><History size={14}/> File Vault</h3>
+                   <button onClick={() => setShowUploadModal(true)} className="text-[10px] bg-black text-white px-2 py-1 rounded font-bold hover:bg-gray-800">+ New Proof</button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                  {assets.map((asset) => {
+                      const isCurrent = viewingAssetId === asset.id;
+                      const linkedItem = asset.job_item_id ? items.find(i => i.id === asset.job_item_id) : null;
+                      return (
+                      <div key={asset.id} onClick={() => loadPreview(asset)} className={`p-2 rounded border cursor-pointer transition-all flex flex-col gap-2 group ${isCurrent ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'bg-white border-gray-100 hover:border-gray-300'}`}>
+                          <div className="flex items-center gap-2 overflow-hidden">
+                              {asset.asset_type === 'source' ? <FileText size={16} className="text-gray-400"/> : <FileImage size={16} className="text-purple-500"/>}
+                              <div><p className="text-xs font-bold text-gray-700 truncate w-32">{asset.file_name}</p><p className="text-[10px] text-gray-400">{new Date(asset.created_at).toLocaleDateString()}</p></div>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                              {asset.status === 'approved' && <span className="text-[9px] font-bold bg-green-100 text-green-700 px-1.5 rounded flex items-center gap-1">APPROVED</span>}
+                              {linkedItem && <span className="text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 rounded flex items-center gap-1 border border-blue-200 truncate max-w-full">LINKED: {linkedItem.description}</span>}
+                          </div>
+                      </div>
+                      );
+                  })}
+              </div>
+            </div>
+          </div>
+
+          <div className="col-span-12 lg:col-span-3 space-y-4">
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col overflow-hidden min-h-[360px]">
+              <div className="flex border-b border-gray-200">
+                  <button onClick={() => setRightTab('chat')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'chat' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><MessageSquare size={14}/> Discussion</button>
+                  <button onClick={() => setRightTab('activity')} className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide flex items-center justify-center gap-2 ${rightTab === 'activity' ? 'bg-white text-black border-b-2 border-black' : 'bg-gray-50 text-gray-400'}`}><Activity size={14}/> Activity Log</button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-3 relative">
+                  {rightTab === 'chat' && (
+                      <>
+                          {messages.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No messages yet.</div>}
+                          {messages.map((msg) => (
+                              <div key={msg.id} className={`flex flex-col ${msg.user_id === user?.id ? 'items-end' : 'items-start'}`}>
+                                  <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs ${msg.user_id === user?.id ? 'bg-black text-white' : 'bg-gray-100 text-gray-800'}`}>{msg.content}</div>
+                                  <span className="text-[9px] text-gray-400 mt-0.5">{msg.profiles?.email?.split('@')[0]}</span>
+                              </div>
+                          ))}
+                          <div ref={messagesEndRef} />
+                      </>
+                  )}
+                  {rightTab === 'activity' && (
+                      <>
+                          {logs.length === 0 && <div className="text-center text-gray-300 text-xs mt-4">No activity recorded yet.</div>}
+                          {logs.map((log) => (
+                              <div key={log.id} className="flex gap-3 text-xs pb-3 border-b border-gray-50 last:border-0">
+                                  <div className="mt-0.5 min-w-[30px] text-gray-400 font-mono text-[9px]">{new Date(log.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                                  <div><p className="font-bold text-gray-900">{log.action}</p><p className="text-gray-500">{log.details}</p></div>
+                              </div>
+                          ))}
+                          <div ref={logsEndRef} />
+                      </>
+                  )}
+              </div>
+              {rightTab === 'chat' && (
+                  <div className="p-2 border-t border-gray-100 bg-gray-50">
+                      <div className="flex gap-2">
+                          <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()} className="flex-1 px-3 py-2 rounded border border-gray-200 text-xs focus:outline-none focus:border-black" placeholder="Type here..." />
+                          <button onClick={handleSendMessage} className="bg-black text-white p-2 rounded hover:bg-gray-800"><Send size={14} /></button>
+                      </div>
+                  </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
