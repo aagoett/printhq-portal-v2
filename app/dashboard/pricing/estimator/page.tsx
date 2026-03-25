@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createBrowserClient } from '@supabase/ssr';
-import { AlertTriangle, Calculator, Save, Plus, ArrowLeft, Loader2, Settings, ClipboardList, ChevronDown, RefreshCw } from 'lucide-react';
-import { calculateEstimate, EstimateResult, FinishingOp, Markup, Press, ProductTemplate, Stock } from '@/lib/estimator';
+import { AlertTriangle, Calculator, Save, Plus, ArrowLeft, Loader2, Settings, ClipboardList, ChevronDown, RefreshCw, GitCompareArrows, Wand2 } from 'lucide-react';
+import { calculateEstimate, EstimateResult, evaluatePressRoutes, FinishingOp, Markup, Press, ProductTemplate, Stock } from '@/lib/estimator';
+import type { QuantityRouteEvaluation } from '@/lib/estimator';
 import { deleteFinishing, deleteMarkup, deletePress, deleteStock, deleteTemplate, fetchEstimatorData, saveQuote, upsertFinishing, upsertMarkup, upsertPress, upsertStock, upsertTemplate } from '@/app/actions/estimator';
 
 const supabase = createBrowserClient(
@@ -15,6 +16,7 @@ const supabase = createBrowserClient(
 
 type Role = 'admin' | 'staff' | 'customer' | string;
 type EstimatorHealth = Awaited<ReturnType<typeof fetchEstimatorData>>['health'];
+type PressMode = 'auto' | 'manual';
 
 export default function EstimatorPage() {
   const router = useRouter();
@@ -34,6 +36,7 @@ export default function EstimatorPage() {
   const [selectedStockId, setSelectedStockId] = useState<string>('');
   const [selectedMarkupId, setSelectedMarkupId] = useState<string>('');
   const [selectedFinishingIds, setSelectedFinishingIds] = useState<string[]>([]);
+  const [pressMode, setPressMode] = useState<PressMode>('auto');
 
   const [quantities, setQuantities] = useState<string>('500,1000');
   const [quoteTitle, setQuoteTitle] = useState('Quick Quote');
@@ -91,7 +94,8 @@ export default function EstimatorPage() {
   };
 
   const selectedTemplate = useMemo(() => templates.find((t) => t.id === selectedTemplateId) || templates[0], [templates, selectedTemplateId]);
-  const selectedPress = useMemo(() => presses.find((p) => p.id === (selectedTemplate?.default_press_id || selectedPressId)) || presses.find((p) => p.id === selectedPressId) || presses[0], [presses, selectedPressId, selectedTemplate]);
+  const templateDefaultPress = useMemo(() => presses.find((p) => p.id === selectedTemplate?.default_press_id), [presses, selectedTemplate]);
+  const selectedPress = useMemo(() => presses.find((p) => p.id === selectedPressId) || templateDefaultPress || presses[0], [presses, selectedPressId, templateDefaultPress]);
   const selectedStock = useMemo(() => stocks.find((s) => s.id === (selectedTemplate?.default_stock_id || selectedStockId)) || stocks.find((s) => s.id === selectedStockId) || stocks[0], [stocks, selectedStockId, selectedTemplate]);
   const selectedMarkup = useMemo(() => markups.find((m) => m.id === (selectedTemplate?.default_markup_id || selectedMarkupId)) || markups.find((m) => m.id === selectedMarkupId) || null, [markups, selectedMarkupId, selectedTemplate]);
   const selectedFinishing = useMemo(() => {
@@ -103,7 +107,25 @@ export default function EstimatorPage() {
     return quantities.split(',').map((q) => parseInt(q.trim(), 10)).filter((q) => !isNaN(q) && q > 0);
   }, [quantities]);
 
-  const results: EstimateResult[] = useMemo(() => {
+  const routeSummary = useMemo(() => {
+    if (!selectedTemplate || !selectedStock || presses.length === 0) return null;
+    return evaluatePressRoutes({
+      quantities: parsedQuantities,
+      presses,
+      template: selectedTemplate,
+      stock: selectedStock,
+      finishingOps: selectedFinishing,
+      markup: selectedMarkup,
+    });
+  }, [parsedQuantities, presses, selectedTemplate, selectedStock, selectedFinishing, selectedMarkup]);
+
+  const autoResults = useMemo(() => {
+    return routeSummary?.evaluations
+      .map((evaluation) => evaluation.recommended?.result)
+      .filter((result): result is EstimateResult => Boolean(result)) || [];
+  }, [routeSummary]);
+
+  const manualResults = useMemo(() => {
     if (!selectedTemplate || !selectedPress || !selectedStock) return [];
     return parsedQuantities.map((qty) => calculateEstimate({
       quantity: qty,
@@ -114,6 +136,16 @@ export default function EstimatorPage() {
       markup: selectedMarkup,
     }));
   }, [parsedQuantities, selectedTemplate, selectedPress, selectedStock, selectedFinishing, selectedMarkup]);
+
+  const results: EstimateResult[] = pressMode === 'manual' ? manualResults : autoResults;
+
+  const effectiveQuotePress = useMemo(() => {
+    if (pressMode === 'manual') return selectedPress || null;
+    return routeSummary?.evaluations[0]?.recommended?.press || null;
+  }, [pressMode, routeSummary, selectedPress]);
+
+  const firstQuantityEvaluation = routeSummary?.evaluations[0] || null;
+  const ineligibleCount = routeSummary?.evaluations[0]?.ineligiblePresses.length || 0;
 
   const totals = useMemo(() => {
     return results.reduce((acc, result) => {
@@ -126,22 +158,22 @@ export default function EstimatorPage() {
   const totalMarginPercent = totals.price > 0 ? (totals.grossProfit / totals.price) * 100 : 0;
 
   const hardLoadFailure = Boolean(health && health.loadErrors.length > 0);
-  const readyToEstimate = Boolean(selectedTemplate && selectedPress && selectedStock && !hardLoadFailure);
+  const readyToEstimate = Boolean(selectedTemplate && selectedStock && !hardLoadFailure && (pressMode === 'auto' ? routeSummary : selectedPress));
 
   const handleToggleFinishing = (id: string) => {
     setSelectedFinishingIds((prev) => prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id]);
   };
 
   const handleSaveQuote = async () => {
-    if (!results.length) return;
+    if (!results.length || !effectiveQuotePress || !selectedStock) return;
     setSaving(true);
     try {
       await saveQuote({
         title: quoteTitle || 'Quote',
         contact,
         templateId: selectedTemplate?.id,
-        pressId: selectedPress?.id,
-        stockId: selectedStock?.id,
+        pressId: effectiveQuotePress.id,
+        stockId: selectedStock.id,
         markupId: selectedMarkup?.id,
         quantities: parsedQuantities,
         results,
@@ -193,12 +225,32 @@ export default function EstimatorPage() {
               {!templates.length && <p className="text-xs text-amber-700">No templates loaded yet.</p>}
             </div>
 
+            <div className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <div>
+                <label className="text-xs font-bold text-gray-500">Routing mode</label>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setPressMode('auto')} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${pressMode === 'auto' ? 'border-black bg-black text-white' : 'border-gray-200 bg-white text-gray-700'}`}>
+                    Auto / Best Route
+                  </button>
+                  <button type="button" onClick={() => setPressMode('manual')} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${pressMode === 'manual' ? 'border-black bg-black text-white' : 'border-gray-200 bg-white text-gray-700'}`}>
+                    Manual Override
+                  </button>
+                </div>
+              </div>
+              <div className="text-xs text-gray-500">
+                {pressMode === 'auto'
+                  ? 'Quote uses the lowest-cost eligible press per quantity break.'
+                  : 'Quote stays on the manually selected press for all quantities.'}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-bold text-gray-500">Press</label>
-                <select value={selectedPress?.id || ''} onChange={(e) => setSelectedPressId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm" disabled={!presses.length}>
+                <select value={selectedPress?.id || ''} onChange={(e) => setSelectedPressId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm" disabled={!presses.length || pressMode !== 'manual'}>
                   {presses.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
+                {pressMode === 'auto' && <p className="mt-1 text-[11px] text-gray-500">Manual press stays available as an override.</p>}
               </div>
               <div>
                 <label className="text-xs font-bold text-gray-500">Stock</label>
@@ -242,7 +294,7 @@ export default function EstimatorPage() {
               <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Contact / Company" className="w-full rounded-lg border px-3 py-2 text-sm" />
             </div>
 
-            <button onClick={handleSaveQuote} disabled={!results.length || saving || !readyToEstimate} className="w-full bg-black text-white rounded-lg py-3 font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+            <button onClick={handleSaveQuote} disabled={!results.length || saving || !readyToEstimate || !effectiveQuotePress} className="w-full bg-black text-white rounded-lg py-3 font-bold flex items-center justify-center gap-2 disabled:opacity-50">
               {saving ? <Loader2 className="animate-spin" size={16}/> : <Save size={16}/>} Save Quote
             </button>
           </div>
@@ -254,6 +306,20 @@ export default function EstimatorPage() {
               <MetricCard label="Gross Profit" value={`$${totals.grossProfit.toFixed(2)}`} tone={totals.grossProfit >= 0 ? 'emerald' : 'rose'} />
               <MetricCard label="Gross Margin" value={`${totalMarginPercent.toFixed(1)}%`} tone={totalMarginPercent >= 0 ? 'blue' : 'rose'} />
             </div>
+
+            {readyToEstimate && routeSummary && (
+              <>
+                <RecommendedRouteCard
+                  pressMode={pressMode}
+                  effectiveQuotePress={effectiveQuotePress}
+                  routeSummary={routeSummary}
+                  firstQuantityEvaluation={firstQuantityEvaluation}
+                  ineligibleCount={ineligibleCount}
+                />
+                <CrossoverSummaryCard routeSummary={routeSummary} />
+                <AlternatesCard evaluation={firstQuantityEvaluation} />
+              </>
+            )}
 
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm">
               <div className="px-6 py-4 border-b flex items-center justify-between">
@@ -270,43 +336,86 @@ export default function EstimatorPage() {
                 {readyToEstimate && results.length === 0 && (
                   <div className="p-6 text-gray-500 text-sm">Add a quantity to see pricing.</div>
                 )}
-                {readyToEstimate && results.map((res) => (
-                  <div key={res.quantity} className="p-6 flex flex-col gap-3">
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <div className="text-xs uppercase text-gray-400 font-bold">Quantity</div>
-                        <div className="text-xl font-bold text-gray-900">{res.quantity.toLocaleString()}</div>
-                        <div className="text-xs text-gray-500">{res.sheets.toLocaleString()} sheets • {res.pressHours.toFixed(2)} hrs press</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xs uppercase text-gray-400 font-bold">Price</div>
-                        <div className="text-3xl font-black text-gray-900">${res.totalPrice.toFixed(2)}</div>
-                        <div className="text-xs text-gray-500">Cost ${res.totalCost.toFixed(2)}</div>
-                      </div>
-                    </div>
+                {readyToEstimate && results.map((res, index) => {
+                  const evaluation = routeSummary?.evaluations.find((item) => item.quantity === res.quantity) || null;
+                  const autoRoute = evaluation?.recommended || null;
+                  const isManualOverride = pressMode === 'manual' && selectedPress && autoRoute && selectedPress.id !== autoRoute.press.id;
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <MetricChip label="Cost" value={`$${res.totalCost.toFixed(2)}`} />
-                      <MetricChip label="Gross Profit" value={`$${res.grossProfit.toFixed(2)}`} positive={res.grossProfit >= 0} />
-                      <MetricChip label="Gross Margin" value={`${res.grossMarginPercent.toFixed(1)}%`} positive={res.grossMarginPercent >= 0} />
-                    </div>
+                  return (
+                    <div key={res.quantity} className="p-6 flex flex-col gap-3">
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <div className="text-xs uppercase text-gray-400 font-bold">Quantity</div>
+                          <div className="text-xl font-bold text-gray-900">{res.quantity.toLocaleString()}</div>
+                          <div className="text-xs text-gray-500">{res.sheets.toLocaleString()} sheets • {res.pressHours.toFixed(2)} hrs press</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xs uppercase text-gray-400 font-bold">Price</div>
+                          <div className="text-3xl font-black text-gray-900">${res.totalPrice.toFixed(2)}</div>
+                          <div className="text-xs text-gray-500">Cost ${res.totalCost.toFixed(2)}</div>
+                        </div>
+                      </div>
 
-                    <div className="bg-gray-50 rounded-lg border text-sm divide-y">
-                      {res.breakdown.map((b, i) => (
-                        <div key={i} className="px-4 py-2 flex items-center justify-between">
-                          <div>
-                            <div className="font-semibold text-gray-800">{b.label}</div>
-                            {b.detail && <div className="text-xs text-gray-500">{b.detail}</div>}
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 font-semibold ${pressMode === 'auto' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>
+                          {pressMode === 'auto' ? <Wand2 size={12} /> : <GitCompareArrows size={12} />}
+                          {pressMode === 'auto' ? `Best route: ${evaluation?.recommended?.press.name || 'N/A'}` : `Manual route: ${selectedPress?.name || 'N/A'}`}
+                        </span>
+                        {autoRoute && pressMode === 'manual' && (
+                          <span className="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 font-semibold text-amber-700">
+                            Auto winner: {autoRoute.press.name}
+                          </span>
+                        )}
+                        {isManualOverride && autoRoute && (
+                          <span className="inline-flex items-center rounded-full bg-rose-50 px-3 py-1 font-semibold text-rose-700">
+                            Override delta +${(res.totalCost - autoRoute.result.totalCost).toFixed(2)} cost
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <MetricChip label="Cost" value={`$${res.totalCost.toFixed(2)}`} />
+                        <MetricChip label="Gross Profit" value={`$${res.grossProfit.toFixed(2)}`} positive={res.grossProfit >= 0} />
+                        <MetricChip label="Gross Margin" value={`${res.grossMarginPercent.toFixed(1)}%`} positive={res.grossMarginPercent >= 0} />
+                      </div>
+
+                      <div className="bg-gray-50 rounded-lg border text-sm divide-y">
+                        {res.breakdown.map((b, i) => (
+                          <div key={i} className="px-4 py-2 flex items-center justify-between">
+                            <div>
+                              <div className="font-semibold text-gray-800">{b.label}</div>
+                              {b.detail && <div className="text-xs text-gray-500">{b.detail}</div>}
+                            </div>
+                            <div className="text-right">
+                              <div className="font-mono text-gray-800">${b.price.toFixed(2)}</div>
+                              <div className="text-[10px] text-gray-500">Cost ${b.cost.toFixed(2)}</div>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <div className="font-mono text-gray-800">${b.price.toFixed(2)}</div>
-                            <div className="text-[10px] text-gray-500">Cost ${b.cost.toFixed(2)}</div>
+                        ))}
+                      </div>
+
+                      {pressMode === 'auto' && evaluation && evaluation.alternates.length > 0 && index === 0 && (
+                        <div className="rounded-xl border border-gray-200 bg-white p-4">
+                          <div className="text-xs font-bold uppercase text-gray-500">Alternate routes for {evaluation.quantity.toLocaleString()}</div>
+                          <div className="mt-3 space-y-2">
+                            {evaluation.alternates.slice(0, 3).map((route) => (
+                              <div key={route.press.id} className="flex items-center justify-between text-sm">
+                                <div>
+                                  <div className="font-semibold text-gray-900">#{route.rank} {route.press.name}</div>
+                                  <div className="text-xs text-gray-500">{route.result.pressHours.toFixed(2)} hrs • {route.result.sheets.toLocaleString()} sheets</div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="font-semibold text-gray-900">${route.result.totalPrice.toFixed(2)}</div>
+                                  <div className="text-xs text-gray-500">Cost ${route.result.totalCost.toFixed(2)}</div>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
-                      ))}
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -324,6 +433,118 @@ export default function EstimatorPage() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RecommendedRouteCard({
+  pressMode,
+  effectiveQuotePress,
+  routeSummary,
+  firstQuantityEvaluation,
+  ineligibleCount,
+}: {
+  pressMode: PressMode;
+  effectiveQuotePress: Press | null;
+  routeSummary: ReturnType<typeof evaluatePressRoutes>;
+  firstQuantityEvaluation: QuantityRouteEvaluation | null;
+  ineligibleCount: number;
+}) {
+  const recommendedCount = routeSummary.evaluations.filter((evaluation) => evaluation.recommended).length;
+
+  return (
+    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase font-bold text-emerald-700">Recommended route</div>
+          <h2 className="mt-1 text-lg font-bold text-emerald-950">
+            {pressMode === 'manual' ? `Manual override on ${effectiveQuotePress?.name || 'selected press'}` : effectiveQuotePress?.name || 'No eligible route'}
+          </h2>
+          <p className="mt-2 text-sm text-emerald-900">
+            {pressMode === 'manual'
+              ? 'Manual mode keeps the quote on your selected press, while auto recommendations stay visible for comparison.'
+              : `${recommendedCount} quantity break${recommendedCount === 1 ? '' : 's'} routed automatically to the lowest-cost eligible press.`}
+          </p>
+        </div>
+        <div className="rounded-xl bg-white px-4 py-3 text-right shadow-sm">
+          <div className="text-[11px] font-bold uppercase text-gray-500">First quantity</div>
+          <div className="text-lg font-black text-gray-900">{firstQuantityEvaluation?.quantity.toLocaleString() || '—'}</div>
+          <div className="text-xs text-gray-500">{firstQuantityEvaluation?.recommended?.press.name || effectiveQuotePress?.name || 'No route'}</div>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        {routeSummary.evaluations.slice(0, 3).map((evaluation) => (
+          <div key={evaluation.quantity} className="rounded-xl border border-emerald-100 bg-white px-4 py-3">
+            <div className="text-[11px] uppercase font-bold text-gray-500">Qty {evaluation.quantity.toLocaleString()}</div>
+            <div className="mt-1 font-semibold text-gray-900">{evaluation.recommended?.press.name || 'No eligible press'}</div>
+            {evaluation.recommended && (
+              <div className="text-xs text-gray-500">Cost ${evaluation.recommended.result.totalCost.toFixed(2)} • Price ${evaluation.recommended.result.totalPrice.toFixed(2)}</div>
+            )}
+          </div>
+        ))}
+      </div>
+      {ineligibleCount > 0 && (
+        <div className="mt-4 text-xs text-emerald-800">Excluded {ineligibleCount} ineligible press{ineligibleCount === 1 ? '' : 'es'} based on current size-fit rules.</div>
+      )}
+    </div>
+  );
+}
+
+function CrossoverSummaryCard({ routeSummary }: { routeSummary: ReturnType<typeof evaluatePressRoutes> }) {
+  return (
+    <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
+      <div className="text-xs uppercase font-bold text-blue-700">Crossover summary</div>
+      <div className="mt-1 text-lg font-bold text-blue-950">{routeSummary.crossoverNote}</div>
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+        {routeSummary.evaluations.map((evaluation) => (
+          <div key={evaluation.quantity} className="rounded-xl border border-blue-100 bg-white px-4 py-3">
+            <div className="font-semibold text-gray-900">{evaluation.quantity.toLocaleString()}</div>
+            <div className="text-xs text-gray-500">Winner: {evaluation.recommended?.press.name || 'No eligible press'}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AlternatesCard({ evaluation }: { evaluation: QuantityRouteEvaluation | null }) {
+  if (!evaluation) return null;
+
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase font-bold text-gray-500">Route comparison</div>
+          <h2 className="mt-1 text-lg font-bold text-gray-900">Top routes for {evaluation.quantity.toLocaleString()}</h2>
+        </div>
+        <div className="text-xs text-gray-500">Ranked by lowest total cost</div>
+      </div>
+      <div className="mt-4 space-y-3">
+        {evaluation.routes.slice(0, 4).map((route) => (
+          <div key={route.press.id} className={`rounded-xl border px-4 py-3 ${route.rank === 1 ? 'border-emerald-200 bg-emerald-50' : 'border-gray-200 bg-gray-50'}`}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="font-semibold text-gray-900">#{route.rank} {route.press.name}</div>
+                <div className="text-xs text-gray-500">{route.result.sheets.toLocaleString()} sheets • {route.result.pressHours.toFixed(2)} hrs • {route.press.type}</div>
+              </div>
+              <div className="text-right">
+                <div className="font-semibold text-gray-900">${route.result.totalPrice.toFixed(2)}</div>
+                <div className="text-xs text-gray-500">Cost ${route.result.totalCost.toFixed(2)}</div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {evaluation.ineligiblePresses.length > 0 && (
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="text-xs uppercase font-bold text-amber-700">Excluded presses</div>
+          <div className="mt-2 space-y-1 text-sm text-amber-900">
+            {evaluation.ineligiblePresses.slice(0, 3).map(({ press, reason }) => (
+              <div key={press.id}><span className="font-semibold">{press.name}:</span> {reason}</div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

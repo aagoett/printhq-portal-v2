@@ -82,6 +82,28 @@ export type EstimateResult = {
   breakdown: EstimateBreakdown[];
 };
 
+export type RouteEstimate = {
+  press: Press;
+  result: EstimateResult;
+  eligible: boolean;
+  reason?: string;
+  rank: number;
+};
+
+export type QuantityRouteEvaluation = {
+  quantity: number;
+  recommended: RouteEstimate | null;
+  alternates: RouteEstimate[];
+  routes: RouteEstimate[];
+  ineligiblePresses: Array<{ press: Press; reason: string }>;
+};
+
+export type RouteSummary = {
+  quantities: number[];
+  evaluations: QuantityRouteEvaluation[];
+  crossoverNote: string;
+};
+
 function safeNum(value?: number | null, fallback = 0) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return fallback;
   return Number(value);
@@ -92,6 +114,48 @@ export function calculateNUp(sheetW = 0, sheetH = 0, finishW = 0, finishH = 0) {
   const fitNormal = Math.floor(sheetW / finishW) * Math.floor(sheetH / finishH);
   const fitRotated = Math.floor(sheetW / finishH) * Math.floor(sheetH / finishW);
   return Math.max(fitNormal, fitRotated, 1);
+}
+
+export function pressCanFitTemplate(press: Press, template: ProductTemplate) {
+  const finishW = safeNum(template.finished_width, 0);
+  const finishH = safeNum(template.finished_height, 0);
+  const maxW = safeNum(press.max_sheet_width, 0);
+  const maxH = safeNum(press.max_sheet_height, 0);
+
+  if (!finishW || !finishH) {
+    return { eligible: true as const };
+  }
+
+  if (!maxW || !maxH) {
+    return { eligible: true as const };
+  }
+
+  const fitsNormal = finishW <= maxW && finishH <= maxH;
+  const fitsRotated = finishH <= maxW && finishW <= maxH;
+
+  if (fitsNormal || fitsRotated) {
+    return { eligible: true as const };
+  }
+
+  return {
+    eligible: false as const,
+    reason: `Finished size ${finishW} × ${finishH} exceeds ${press.name} max sheet ${maxW} × ${maxH}`,
+  };
+}
+
+export function getEligiblePresses(presses: Press[], template: ProductTemplate) {
+  return presses.reduce<{
+    eligiblePresses: Press[];
+    ineligiblePresses: Array<{ press: Press; reason: string }>;
+  }>((acc, press) => {
+    const fit = pressCanFitTemplate(press, template);
+    if (fit.eligible) {
+      acc.eligiblePresses.push(press);
+    } else {
+      acc.ineligiblePresses.push({ press, reason: fit.reason || 'Ineligible' });
+    }
+    return acc;
+  }, { eligiblePresses: [], ineligiblePresses: [] });
 }
 
 export function calculateEstimate(input: EstimateInput): EstimateResult {
@@ -179,6 +243,84 @@ export function calculateEstimate(input: EstimateInput): EstimateResult {
     grossProfit,
     grossMarginPercent,
     breakdown,
+  };
+}
+
+export function evaluatePressRoutesForQuantity(input: Omit<EstimateInput, 'quantity' | 'press'> & { quantity: number; presses: Press[] }): QuantityRouteEvaluation {
+  const { quantity, presses, template, stock, finishingOps, markup } = input;
+  const { eligiblePresses, ineligiblePresses } = getEligiblePresses(presses, template);
+
+  const routes = eligiblePresses
+    .map((press) => ({
+      press,
+      result: calculateEstimate({ quantity, template, press, stock, finishingOps, markup }),
+      eligible: true,
+      rank: 0,
+    }))
+    .sort((a, b) => a.result.totalCost - b.result.totalCost)
+    .map((route, index) => ({ ...route, rank: index + 1 }));
+
+  return {
+    quantity,
+    recommended: routes[0] || null,
+    alternates: routes.slice(1),
+    routes,
+    ineligiblePresses,
+  };
+}
+
+export function summarizeRouteCrossovers(evaluations: QuantityRouteEvaluation[]) {
+  const winners = evaluations
+    .filter((evaluation) => evaluation.recommended)
+    .map((evaluation) => ({
+      quantity: evaluation.quantity,
+      pressName: evaluation.recommended!.press.name,
+    }));
+
+  if (winners.length === 0) return 'No eligible press routes found for the selected quantities.';
+  if (winners.length === 1) return `${winners[0].pressName} is the only recommended route for the selected quantity.`;
+
+  const segments: Array<{ pressName: string; start: number; end: number }> = [];
+
+  winners.forEach((winner) => {
+    const currentSegment = segments[segments.length - 1];
+    if (!currentSegment || currentSegment.pressName !== winner.pressName) {
+      segments.push({ pressName: winner.pressName, start: winner.quantity, end: winner.quantity });
+      return;
+    }
+    currentSegment.end = winner.quantity;
+  });
+
+  if (segments.length === 1) {
+    return `${segments[0].pressName} is recommended across all selected quantity breaks.`;
+  }
+
+  return segments
+    .map((segment, index) => {
+      const quantityRange = segment.start === segment.end
+        ? `${segment.start.toLocaleString()}`
+        : `${segment.start.toLocaleString()}–${segment.end.toLocaleString()}`;
+      const prefix = index === 0 ? 'Recommended crossover' : 'then';
+      return `${prefix} ${quantityRange}: ${segment.pressName}`;
+    })
+    .join(' • ');
+}
+
+export function evaluatePressRoutes(input: Omit<EstimateInput, 'quantity' | 'press'> & { quantities: number[]; presses: Press[] }): RouteSummary {
+  const quantities = Array.from(new Set(input.quantities.filter((quantity) => quantity > 0))).sort((a, b) => a - b);
+  const evaluations = quantities.map((quantity) => evaluatePressRoutesForQuantity({
+    quantity,
+    presses: input.presses,
+    template: input.template,
+    stock: input.stock,
+    finishingOps: input.finishingOps,
+    markup: input.markup,
+  }));
+
+  return {
+    quantities,
+    evaluations,
+    crossoverNote: summarizeRouteCrossovers(evaluations),
   };
 }
 
