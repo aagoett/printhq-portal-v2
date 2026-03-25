@@ -5,6 +5,7 @@ import { Loader2, AlertCircle, ArrowRight } from 'lucide-react';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { normalizeRole, resolveLandingPath } from '@/lib/auth/roles';
 
 // Supabase Helper
 function createClient() {
@@ -23,6 +24,15 @@ export default function LoginPage() {
   const [message, setMessage] = useState<{ text: string; type: 'error' | 'success' } | null>(null);
 
   const supabase = createClient();
+
+  const resolveLanding = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return '/dashboard';
+
+    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+    const role = normalizeRole((profile as any)?.role, user.email);
+    return resolveLandingPath(role);
+  };
 
   const handleGoogleLogin = async () => {
     setIsLoading(true);
@@ -50,8 +60,8 @@ export default function LoginPage() {
           setMessage({ text: error.message, type: 'error' });
           setIsLoading(false);
         } else {
-          // Success! Redirect to dashboard
-          router.push('/dashboard');
+          const landing = await resolveLanding();
+          router.push(landing);
           router.refresh();
         }
       } else {
@@ -81,7 +91,8 @@ export default function LoginPage() {
           // If email verification is OFF (Dev Mode), they are logged in immediately
           if (data.session) {
              setMessage({ text: 'Account created! Logging you in...', type: 'success' });
-             router.push('/dashboard');
+             const landing = await resolveLanding();
+             router.push(landing);
              router.refresh();
           } else {
              // If email verification is ON

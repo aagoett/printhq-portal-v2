@@ -1,7 +1,8 @@
-import { createClient } from './server';
 import { redirect } from 'next/navigation';
+import { normalizeRole, isInternalRole, type NormalizedRole } from '@/lib/auth/roles';
+import { createClient } from './server';
 
-export type UserRole = 'admin' | 'staff' | 'customer';
+export type UserRole = NormalizedRole;
 
 /**
  * Fetches the current user + their profile role from the server.
@@ -21,18 +22,18 @@ export async function getAuthUser() {
     .eq('id', user.id)
     .single();
 
-  const role: UserRole = profile?.role ?? 'customer';
+  const role: UserRole = normalizeRole((profile as any)?.role, user.email);
 
   return { user, profile, role };
 }
 
 /**
- * Requires the user to be admin or staff.
+ * Requires the user to be admin, staff, or csr/bindery.
  * Redirects to /dashboard if they are only a customer.
  */
 export async function requireInternal() {
   const auth = await getAuthUser();
-  if (auth.role !== 'admin' && auth.role !== 'staff') {
+  if (!isInternalRole(auth.role)) {
     redirect('/dashboard');
   }
   return auth;
@@ -40,7 +41,7 @@ export async function requireInternal() {
 
 /**
  * Requires the user to be an admin specifically.
- * Redirects to /dashboard for staff and customers.
+ * Redirects to /dashboard for staff/customers.
  */
 export async function requireAdmin() {
   const auth = await getAuthUser();
@@ -51,5 +52,5 @@ export async function requireAdmin() {
 }
 
 export function isInternal(role: UserRole) {
-  return role === 'admin' || role === 'staff';
+  return isInternalRole(role);
 }

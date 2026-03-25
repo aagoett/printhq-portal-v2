@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable react/no-unescaped-entities */
 
 import { createBrowserClient } from '@supabase/ssr';
 import { useEffect, useState } from 'react';

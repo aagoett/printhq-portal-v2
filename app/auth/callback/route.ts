@@ -1,12 +1,12 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { normalizeRole, resolveLandingPath } from '@/lib/auth/roles';
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get('code');
-  // if "next" is in param, use it as the redirect URL
-  const next = searchParams.get('next') ?? '/dashboard';
+  const requestedNext = searchParams.get('next');
 
   if (code) {
     const cookieStore = await cookies();
@@ -29,7 +29,12 @@ export async function GET(request: Request) {
     );
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
-      return NextResponse.redirect(`${origin}${next}`);
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: profile } = user ? await supabase.from('profiles').select('role').eq('id', user.id).single() : { data: null } as any;
+      const role = normalizeRole((profile as any)?.role, user?.email);
+      const landing = resolveLandingPath(role);
+      const target = requestedNext || landing;
+      return NextResponse.redirect(`${origin}${target}`);
     }
   }
 

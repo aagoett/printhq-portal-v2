@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable react/no-unescaped-entities */
 
 import { createBrowserClient } from '@supabase/ssr';
 import { Search, User, Calendar, ArrowRight, Building2, ArrowLeft, Shield } from 'lucide-react';

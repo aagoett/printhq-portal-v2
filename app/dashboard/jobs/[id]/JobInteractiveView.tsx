@@ -1,4 +1,5 @@
 'use client';
+/* eslint-disable react/no-unescaped-entities */
 
 import { createBrowserClient } from '@supabase/ssr';
 import { 
@@ -365,6 +366,7 @@ interface JobViewProps {
   initialMessages: any[];
   initialLogs: any[];
   jobId: string;
+  loadWarnings?: string[];
 }
 
 export default function JobInteractiveView({ 
@@ -375,7 +377,8 @@ export default function JobInteractiveView({
   initialAssets, 
   initialMessages, 
   initialLogs, 
-  jobId 
+  jobId,
+  loadWarnings = [],
 }: JobViewProps) {
 
   // --- STATE ---
@@ -827,6 +830,17 @@ export default function JobInteractiveView({
           </div>
         </div>
       </div>
+
+      {loadWarnings.length > 0 && (
+        <div className="max-w-[1920px] mx-auto w-full px-4 py-3">
+          <div className="rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm p-3">
+            <p className="font-bold text-[10px] uppercase tracking-[0.2em] mb-1">Data warnings</p>
+            <ul className="list-disc ml-5 space-y-1">
+              {loadWarnings.map((msg, idx) => (<li key={idx}>{msg}</li>))}
+            </ul>
+          </div>
+        </div>
+      )}
 
        {/* STAGE COMMANDER */}
        <div className={`bg-gray-900 text-white shadow-xl`}>

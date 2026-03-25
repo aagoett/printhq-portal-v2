@@ -11,6 +11,7 @@ import { useRouter } from 'next/navigation';
 import { useRef, useState, useEffect } from 'react';
 import React from 'react';
 import Link from 'next/link';
+import { normalizeRole, isInternalRole } from '@/lib/auth/roles';
 // Use the new name and the @ alias so it always finds the right spot
 import { sendOrderConfirmation } from '../server-actions';
 import ItemDetailDrawer from '@/components/ItemDetailDrawer';
@@ -139,7 +140,7 @@ export default function Dashboard() {
       .eq('id', user.id)
       .single();
       
-    const userRole = profile?.role || 'customer';
+    const userRole = normalizeRole((profile as any)?.role, user.email);
     setRole(userRole);
 
     // Redirect Bindery users to their specialized dashboard
@@ -148,7 +149,7 @@ export default function Dashboard() {
       return;
     }
 
-    const isInternal = userRole === 'admin' || userRole === 'staff';
+    const isInternal = isInternalRole(userRole);
 
     let jobQuery = supabase
         .from('jobs')
@@ -191,7 +192,7 @@ export default function Dashboard() {
       const { data: allProfiles } = await supabase.from('profiles').select('*');
       if (allProfiles) {
         setCustomers(allProfiles);
-        setStaff(allProfiles.filter(p => p.role === 'admin' || p.role === 'staff'));
+        setStaff(allProfiles.filter(p => isInternalRole(normalizeRole((p as any)?.role, p.email))));
       }
       setSelectedCustomerId(user.id);
       
@@ -408,7 +409,7 @@ export default function Dashboard() {
       // 1. Determine the REAL User
       let targetUserId = user?.id; 
       let targetEmail = user?.email;
-      const isInternal = role === 'admin' || role === 'staff';
+      const isInternal = isInternalRole(role);
 
       // 2. ADMIN OVERRIDE LOGIC
       if (isInternal) {
@@ -603,7 +604,7 @@ export default function Dashboard() {
 
   if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
 
-  const isInternal = role === 'admin' || role === 'staff';
+  const isInternal = isInternalRole(role);
 
   const filteredJobs = jobs.filter(job => {
     if (activeTab === 'All') return true;
