@@ -15,6 +15,7 @@ import { normalizeRole, isInternalRole } from '@/lib/auth/roles';
 // Use the new name and the @ alias so it always finds the right spot
 import { sendOrderConfirmation } from '../server-actions';
 import ItemDetailDrawer from '@/components/ItemDetailDrawer';
+import NewOrderModal from '@/components/NewOrderModal';
 
 
 // --- TYPES ---
@@ -649,49 +650,15 @@ export default function Dashboard() {
       })()}
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 my-8 flex flex-col max-h-[90vh]">
-              <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 flex-shrink-0">
-              <div>
-                <h3 className="font-bold text-lg text-gray-900">New Production Order</h3>
-                <p className="text-xs text-gray-500">Group multiple jobs into one ticket.</p>
-              </div>
-              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-black"><X size={20} /></button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {isInternal && (
-                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
-                    <div className="flex justify-between items-center mb-2">
-                      <label className="text-xs font-bold uppercase text-yellow-800 flex items-center">
-                        <User size={14} className="mr-1"/> Customer
-                      </label>
-                      <button type="button" onClick={() => setIsNewCustomer(!isNewCustomer)} className="text-xs font-bold text-blue-600 hover:underline">
-                        {isNewCustomer ? 'Select Existing' : '+ New Guest'}
-                      </button>
-                    </div>
-                    {isNewCustomer ? (
-                        <input type="email" placeholder="client@email.com" value={newCustomerEmail} onChange={(e) => setNewCustomerEmail(e.target.value)} className="w-full rounded-lg border border-yellow-300 px-3 py-2 bg-white text-sm outline-none" />
-                    ) : (
-                      <select value={selectedCustomerId} onChange={(e) => setSelectedCustomerId(e.target.value)} className="w-full rounded-lg border border-yellow-300 px-3 py-2 bg-white text-sm outline-none">
-                        {customers.map((c) => <option key={c.id} value={c.id}>{c.email} {c.role !== 'customer' ? `(${c.role.toUpperCase()})` : ''}</option>)}
-                      </select>
-                    )}
-                  </div>
-                )}
-                  
-                <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
-                  <label className="block text-xs font-bold uppercase text-gray-500 mb-2">Company / Brand</label>
-                  <select value={selectedBrandId} onChange={(e) => setSelectedBrandId(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 bg-white text-sm outline-none font-bold">
-                    {brandList.length > 0 ? (
-                        brandList.map(b => <option key={b.id} value={b.id}>{b.name}</option>)
-                    ) : (
-                        <option>No Brands Found</option>
-                    )}
-                  </select>
-                </div>
-              </div>
+  <NewOrderModal
+    user={user}
+    role={role}
+    customers={customers}
+    brandList={brandList}
+    onClose={() => setShowModal(false)}
+    onSubmitted={() => fetchDashboardData()}
+  />
+)}
 
               {cart.length > 0 && (
                 <div className="border border-gray-200 rounded-xl overflow-hidden">
