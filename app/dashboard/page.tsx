@@ -756,15 +756,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="p-6 border-t border-gray-100 bg-gray-50 flex justify-end">
-              <button onClick={handleSubmitOrder} disabled={isUploading || cart.length === 0} className="px-8 py-3 bg-black text-white rounded-xl font-bold hover:bg-gray-800 disabled:opacity-50 flex items-center shadow-lg">
-                {isUploading ? <Loader2 className="animate-spin mr-2" /> : <ShoppingCart className="mr-2" size={18} />} 
-                Submit Order ({cart.length} Items)
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          
 
       {/* SIDEBAR */}
       <div className="hidden w-64 flex-col bg-white border-r border-gray-200 md:flex">
