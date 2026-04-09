@@ -12,7 +12,6 @@ import { useRef, useState, useEffect } from 'react';
 import React from 'react';
 import Link from 'next/link';
 import { normalizeRole, isInternalRole } from '@/lib/auth/roles';
-// Use the new name and the @ alias so it always finds the right spot
 import { sendOrderConfirmation } from '../server-actions';
 import ItemDetailDrawer from '@/components/ItemDetailDrawer';
 import NewOrderModal from '@/components/NewOrderModal';
@@ -56,16 +55,6 @@ type Brand = {
     name: string;
 };
 
-type CartItem = {
-  id: string; 
-  file: File;
-  title: string;
-  quantity: number;
-  size: string;
-  notes: string;
-  paper_stock: string;
-};
-
 type PaperStock = {
     id: string;
     name: string;
@@ -90,23 +79,6 @@ export default function Dashboard() {
     
   const [showModal, setShowModal] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  
-  // Drag and Drop State
-  const [isDragging, setIsDragging] = useState(false);
-    
-  // --- CART STATE ---
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [selectedBrandId, setSelectedBrandId] = useState('');
-    
-  const [currentFile, setCurrentFile] = useState<File | null>(null);
-  const [jobTitle, setJobTitle] = useState('');
-  const [jobQty, setJobQty] = useState('');
-  const [jobSize, setJobSize] = useState('');
-  const [jobNotes, setJobNotes] = useState('');
-    
-  // PAPER STOCK LOGIC
-  const [selectedStockId, setSelectedStockId] = useState('');
-  const [customStockValue, setCustomStockValue] = useState('');
     
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [isNewCustomer, setIsNewCustomer] = useState(false);
@@ -176,13 +148,11 @@ export default function Dashboard() {
     const { data: stockData } = await supabase.from('paper_stocks').select('*').order('name');
     if (stockData) {
         setStockLibrary(stockData);
-        if (stockData.length > 0) setSelectedStockId(stockData[0].name);
     }
 
     const { data: brandsData } = await supabase.from('brands').select('*');
     if (brandsData) {
         setBrandList(brandsData);
-        if (brandsData.length > 0) setSelectedBrandId(brandsData[0].id);
     }
 
     if (isInternal) {
@@ -227,7 +197,6 @@ export default function Dashboard() {
   // --- PRODUCTION HANDLERS ---
   const handleOpenItemDrawer = async (itemId: string) => {
     setEditingItemId(itemId);
-    // Fetch assets and logs for this item
     const item = jobs.flatMap(j => j.job_items || []).find(i => i.id === itemId);
     if (!item) return;
 
@@ -241,30 +210,23 @@ export default function Dashboard() {
   const handleCompleteItemStep = async (item: any, currentStepName: string) => {
     if (!confirm(`Mark "${currentStepName}" as DONE for ${item.description}?`)) return;
 
-    // 1. Find the step record
     const step = item.job_item_steps?.find((s: any) => s.step_name === currentStepName && s.status !== 'Completed');
     if (!step) return alert("Step not found or already completed.");
 
-    // 2. Update the step to Completed
     const { error: stepErr } = await supabase.from('job_item_steps').update({ status: 'Completed' }).eq('id', step.id);
     if (stepErr) return alert(stepErr.message);
 
-    // 3. Determine next status
     const allSteps = item.job_item_steps || [];
-    // Sort steps by created_at to determine sequence (matching JobInteractiveView logic)
     const sortedSteps = [...allSteps].sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     
-    // Find the next step after the one we just completed
     const currentIndex = sortedSteps.findIndex(s => s.id === step.id);
     const nextStep = sortedSteps[currentIndex + 1];
     
     const newStatus = nextStep ? nextStep.step_name : 'Completed';
 
-    // 4. Update parent item status
     const { error: itemErr } = await supabase.from('job_items').update({ status: newStatus }).eq('id', item.id);
     if (itemErr) return alert(itemErr.message);
 
-    // 5. Log activity
     await supabase.from('job_logs').insert({
         job_id: item.job_id,
         user_id: user.id,
@@ -273,7 +235,6 @@ export default function Dashboard() {
         job_item_id: item.id
     });
 
-    // 6. Refresh data
     fetchDashboardData();
   };
 
@@ -290,10 +251,8 @@ export default function Dashboard() {
   };
 
   const handleToggleStep = async (stepId: string, currentStatus: string) => {
-      const statusOptions = ['Pending', 'Completed'];
       const newStatus = currentStatus === 'Completed' ? 'Pending' : 'Completed';
       await supabase.from('job_item_steps').update({ status: newStatus }).eq('id', stepId);
-      // We should also sync the item status here for consistency
       fetchDashboardData();
   };
 
@@ -316,212 +275,7 @@ export default function Dashboard() {
       fetchDashboardData();
   };
 
-
-  // --- CART HANDLERS ---
-  const handleOpenNewOrder = () => {
-    setCart([]); 
-    resetForm();
-    setIsNewCustomer(false);
-    setNewCustomerEmail('');
-    setShowModal(true);
-  };
-
-  const resetForm = () => {
-    setCurrentFile(null);
-    setJobTitle('');
-    setJobQty('');
-    setJobSize('');
-    setJobNotes('');
-    if (stockLibrary.length > 0) setSelectedStockId(stockLibrary[0].name);
-    setCustomStockValue('');
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  // --- FILE HANDLING (CLICK & DRAG/DROP) ---
-  const triggerFilePicker = () => fileInputRef.current?.click();
-  
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      const file = e.target.files[0];
-      setCurrentFile(file);
-      if (!jobTitle) setJobTitle(file.name.split('.').slice(0, -1).join('.'));
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        const file = e.dataTransfer.files[0];
-        setCurrentFile(file);
-        if (!jobTitle) setJobTitle(file.name.split('.').slice(0, -1).join('.'));
-    }
-  };
-
-  const handleAddToCart = () => {
-    if (!currentFile) return alert("Please upload a file.");
-    if (!jobQty) return alert("Please enter quantity.");
-
-    let finalStock = selectedStockId;
-    if (selectedStockId === 'custom') {
-        if (!customStockValue.trim()) return alert("Please enter custom paper details.");
-        finalStock = customStockValue;
-    }
-
-    const newItem: CartItem = {
-      id: Math.random().toString(36),
-      file: currentFile,
-      title: jobTitle,
-      quantity: parseInt(jobQty),
-      size: jobSize || 'N/A', 
-      notes: jobNotes,
-      paper_stock: finalStock
-    };
-
-    setCart([...cart, newItem]);
-    resetForm();
-  };
-
-  const handleRemoveFromCart = (id: string) => {
-    setCart(cart.filter(item => item.id !== id));
-  };
-
-  // --- SUBMIT LOGIC ---
-  const handleSubmitOrder = async () => {
-    if (cart.length === 0) return alert("Cart is empty.");
-    if (isNewCustomer && !newCustomerEmail.includes('@')) return alert("Invalid email.");
-
-    setIsUploading(true);
-    try {
-      // 1. Determine the REAL User
-      let targetUserId = user?.id; 
-      let targetEmail = user?.email;
-      const isInternal = isInternalRole(role);
-
-      // 2. ADMIN OVERRIDE LOGIC
-      if (isInternal) {
-          if (isNewCustomer) {
-            targetUserId = null; 
-            targetEmail = newCustomerEmail;
-          } else if (selectedCustomerId) {
-            targetUserId = selectedCustomerId;
-            const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
-            targetEmail = selectedCustomer?.email || '';
-          }
-      }
-
-      // 3. Create Order
-      const { data: newOrder, error: orderError } = await supabase
-        .from('orders')
-        .insert({ 
-            user_id: targetUserId, 
-            status: 'New', 
-            brand_id: selectedBrandId 
-        })
-        .select().single();
-
-      if (orderError) throw orderError;
-
-      // 4. Create Job Container
-      const jobTitle = cart.length === 1 ? cart[0].title : `Order #${newOrder.id.substring(0,6).toUpperCase()}`;
-      const totalQty = cart.reduce((acc, item) => acc + item.quantity, 0);
-
-      const { data: newJob, error: jobError } = await supabase
-        .from('jobs')
-        .insert({
-          order_id: newOrder.id,
-          user_id: targetUserId, 
-          guest_email: isNewCustomer ? targetEmail : null,
-          title: jobTitle,
-          quantity: totalQty,
-          status: 'Pending Review',
-          created_by: user.id
-        })
-        .select().single();
-
-      if (jobError) throw jobError;
-
-      // 5. Process Items
-      for (const item of cart) {
-        
-        // A. Insert Item
-        const { data: newItem, error: itemError } = await supabase
-            .from('job_items')
-            .insert({
-                job_id: newJob.id,
-                description: item.title,
-                quantity: item.quantity,
-                paper_stock: item.paper_stock,
-                size: item.size,
-                internal_notes: item.notes,
-                status: 'Pending'
-            })
-            .select().single();
-
-        if (itemError) throw itemError;
-
-        // B. Handle File Upload
-        const fileExt = item.file.name.split('.').pop();
-        const fileName = `${newJob.id}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-        const { data: fileData, error: uploadError } = await supabase.storage.from('uploads').upload(fileName, item.file);
-        
-        if (uploadError) console.error("File upload failed for " + item.title, uploadError);
-
-        // C. Create Asset
-        if (fileData) {
-            await supabase.from('job_assets').insert({
-                job_id: newJob.id,
-                job_item_id: newItem.id,
-                uploader_id: user.id,
-                file_url: fileData.path,
-                file_name: item.file.name,
-                asset_type: 'source',
-                status: 'pending'
-            });
-        }
-
-        // D. Create Initial Step
-        await supabase.from('job_item_steps').insert({
-            job_item_id: newItem.id,
-            step_name: 'Prepress',
-            status: 'Pending',
-            is_internal: true
-        });
-      }
-
-      // 6. Send Email
-      const brandName = brandList.find(b => b.id === selectedBrandId)?.name || 'PrintHQ';
-      if (targetEmail && newJob) {
-         await sendOrderConfirmation(targetEmail, newJob.id, `${cart.length} Item(s) from ${brandName}`);
-      }
-      
-      alert("✅ Order Submitted Successfully!");
-
-      setShowModal(false);
-      setCart([]);
-      fetchDashboardData(); 
-
-    } catch (error) {
-      console.error('Error:', error);
-      alert('Error creating order. ' + (error as any)?.message);
-    } finally {
-      setIsUploading(false);
-    }
-  };
+  const handleOpenNewOrder = () => setShowModal(true);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -611,7 +365,6 @@ export default function Dashboard() {
     if (activeTab === 'All') return true;
     if (activeTab === 'My Queue') return job.assigned_to === user?.id; 
     
-    // SMART FILTER: Match by Main Job Station OR by any child Item Status
     const hasMatchingItem = job.job_items?.some((item: any) => item.status === activeTab);
     return job.current_step === activeTab || hasMatchingItem;
   });
@@ -620,7 +373,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen bg-gray-50 relative">
-      <input type="file" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+      <input type="file" ref={fileInputRef} className="hidden" />
 
       {/* ITEM DETAIL DRAWER */}
       {editingItemId && (() => {
@@ -637,11 +390,11 @@ export default function Dashboard() {
                 onAddStep={handleAddStep}
                 onToggleStep={handleToggleStep}
                 onDeleteStep={handleDeleteStep}
-                onMoveStep={async () => {}} // Not yet implemented on dashboard
-                onReorderSteps={async () => {}} // Not yet implemented on dashboard
+                onMoveStep={async () => {}}
+                onReorderSteps={async () => {}}
                 onLogActivity={async (action, details, itemId) => {
                     await supabase.from('job_logs').insert({ job_id: item.job_id, user_id: user.id, action, details, job_item_id: itemId });
-                    handleOpenItemDrawer(item.id); // Refresh logs
+                    handleOpenItemDrawer(item.id);
                 }}
                 logs={jobLogs}
                 userRole={role}
@@ -650,113 +403,15 @@ export default function Dashboard() {
       })()}
 
       {showModal && (
-  <NewOrderModal
-    user={user}
-    role={role}
-    customers={customers}
-    brandList={brandList}
-    onClose={() => setShowModal(false)}
-    onSubmitted={() => fetchDashboardData()}
-  />
-)}
-
-              {cart.length > 0 && (
-                <div className="border border-gray-200 rounded-xl overflow-hidden">
-                   <div className="bg-gray-100 px-4 py-2 text-xs font-bold uppercase text-gray-500 flex justify-between">
-                     <span>Items in Order ({cart.length})</span>
-                     <span>Qty</span>
-                   </div>
-                   <div className="divide-y divide-gray-100">
-                     {cart.map((item) => (
-                       <div key={item.id} className="p-3 bg-white flex justify-between items-center">
-                         <div className="flex items-center overflow-hidden">
-                           <FileText size={16} className="text-blue-500 mr-3 flex-shrink-0" />
-                           <div className="truncate">
-                             <p className="text-sm font-bold text-gray-900 truncate">{item.title}</p>
-                             <p className="text-xs text-gray-400">{item.size} • {item.paper_stock}</p>
-                           </div>
-                         </div>
-                         <div className="flex items-center gap-4">
-                           <span className="text-sm font-mono font-bold">{item.quantity}</span>
-                           <button onClick={() => handleRemoveFromCart(item.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={16}/></button>
-                         </div>
-                       </div>
-                     ))}
-                   </div>
-                </div>
-              )}
-
-              <div className="border-t border-gray-100 pt-6">
-                  <h4 className="font-bold text-gray-900 mb-4 flex items-center text-sm">
-                    <Plus size={16} className="mr-2 bg-black text-white rounded-full p-0.5" /> Add Item to Order
-                  </h4>
-                  
-                  <div className="space-y-4">
-                    {!currentFile ? (
-                      <div 
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
-                        onClick={triggerFilePicker} 
-                        className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 
-                          ${isDragging ? 'border-blue-500 bg-blue-50 scale-[1.02]' : 'border-gray-300 hover:border-black hover:bg-gray-50'}`}
-                      >
-                        <UploadCloud className={`mx-auto h-8 w-8 mb-2 ${isDragging ? 'text-blue-500' : 'text-gray-400'}`} />
-                        <p className={`text-sm font-bold ${isDragging ? 'text-blue-700' : 'text-gray-600'}`}>
-                          {isDragging ? 'Drop file here!' : 'Click or Drag artwork here'}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl text-blue-900 border border-blue-100 animate-in fade-in slide-in-from-top-2">
-                        <div className="flex items-center overflow-hidden">
-                          <FileText size={20} className="mr-3 text-blue-600 flex-shrink-0" />
-                          <p className="text-sm font-medium truncate">{currentFile.name}</p>
-                        </div>
-                        <button type="button" onClick={() => setCurrentFile(null)} className="ml-2 text-blue-400 hover:text-red-500"><X size={16} /></button>
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className="col-span-3">
-                        <input type="text" placeholder="Item Title (e.g. Business Cards)" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
-                      </div>
-                      <div>
-                        <input type="number" placeholder="Qty" value={jobQty} onChange={(e) => setJobQty(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
-                      </div>
-                      <div className="col-span-2">
-                        <input type="text" placeholder="Size (e.g. 8.5x11)" value={jobSize} onChange={(e) => setJobSize(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black" />
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2">
-                        <select 
-                            value={selectedStockId} 
-                            onChange={(e) => setSelectedStockId(e.target.value)} 
-                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white focus:border-black"
-                        >
-                            {stockLibrary.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-                            <option value="custom">-- Custom / Other --</option>
-                        </select>
-                        
-                        {selectedStockId === 'custom' && (
-                            <input 
-                                type="text" 
-                                placeholder="Enter custom paper details..." 
-                                value={customStockValue}
-                                onChange={(e) => setCustomStockValue(e.target.value)}
-                                className="w-full rounded-lg border border-blue-300 px-3 py-2 text-sm bg-blue-50 focus:bg-white transition-colors"
-                            />
-                        )}
-                    </div>
-                    
-                    <button type="button" onClick={handleAddToCart} disabled={!currentFile || !jobQty} className={`w-full py-3 rounded-lg font-bold text-sm transition-all flex items-center justify-center ${!currentFile || !jobQty ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-800 shadow-md'}`}>
-                      {!currentFile ? 'Select a File first...' : !jobQty ? 'Enter Quantity...' : '+ Add Item to List'}
-                    </button>
-                 </div>
-              </div>
-            </div>
-
-          
+        <NewOrderModal
+          user={user}
+          role={role}
+          customers={customers}
+          brandList={brandList}
+          onClose={() => setShowModal(false)}
+          onSubmitted={() => fetchDashboardData()}
+        />
+      )}
 
       {/* SIDEBAR */}
       <div className="hidden w-64 flex-col bg-white border-r border-gray-200 md:flex">
@@ -876,7 +531,7 @@ export default function Dashboard() {
                       
                       const customerProfile = customers.find(c => c.id === job.user_id);
                       const customerName = customerProfile ? (customerProfile.first_name || customerProfile.email) : (job.guest_email || 'Guest');
-                                            const brandName = job.orders?.brands?.name || 'PrintHQ';
+                      const brandName = job.orders?.brands?.name || 'PrintHQ';
                        
                        return (
                        <React.Fragment key={job.id}>
@@ -949,7 +604,7 @@ export default function Dashboard() {
  
                        </tr>
  
-                       {/* ITEM SUB-ROWS (PHASE 3.12/3.14) */}
+                       {/* ITEM SUB-ROWS */}
                        {job.job_items && job.job_items.length > 0 && job.job_items
                          .filter((item: any) => {
                            if (activeTab === 'All' || activeTab === 'My Queue') return true;
