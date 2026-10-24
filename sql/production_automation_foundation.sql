@@ -88,9 +88,13 @@ begin
         updated_at=now()
   returning id into pjid;
 
+  if coalesce(to_jsonb(new)->>'path',to_jsonb(new)->>'storage_path') is null then
+    raise exception 'job_files record has no storage path';
+  end if;
+
   insert into public.production_assets
     (production_job_id,source_file_id,storage_bucket,storage_path)
-  values (pjid,new.id,coalesce(new.bucket,'art-files'),new.path)
+  values (pjid,new.id,coalesce(new.bucket,'art-files'),coalesce(to_jsonb(new)->>'path',to_jsonb(new)->>'storage_path'))
   on conflict(source_file_id) do nothing;
 
   update public.production_plans set status='invalidated'
@@ -119,7 +123,7 @@ returns boolean language sql stable security definer set search_path=public as $
  select exists (
    select 1 from public.profiles
    where id=auth.uid() and lower(coalesce(role,'')) in
-    ('admin','staff','csr','production','prepress','manager','owner')
+    ('admin','staff','csr','bindery')
  );
 $$;
 revoke all on function public.is_production_staff() from public;
